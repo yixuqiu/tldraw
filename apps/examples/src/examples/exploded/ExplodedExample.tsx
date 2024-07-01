@@ -1,6 +1,7 @@
 import {
 	ContextMenu,
 	DefaultContextMenuContent,
+	DefaultSpinner,
 	ErrorScreen,
 	LoadingScreen,
 	TldrawEditor,
@@ -9,6 +10,7 @@ import {
 	TldrawSelectionBackground,
 	TldrawSelectionForeground,
 	TldrawUi,
+	defaultBindingUtils,
 	defaultEditorAssetUrls,
 	defaultShapeTools,
 	defaultShapeUtils,
@@ -37,7 +39,11 @@ export default function ExplodedExample() {
 	}
 
 	if (!assetLoading.done) {
-		return <LoadingScreen>Loading assets...</LoadingScreen>
+		return (
+			<LoadingScreen>
+				<DefaultSpinner />
+			</LoadingScreen>
+		)
 	}
 
 	return (
@@ -45,6 +51,7 @@ export default function ExplodedExample() {
 			<TldrawEditor
 				initialState="select"
 				shapeUtils={defaultShapeUtils}
+				bindingUtils={defaultBindingUtils}
 				tools={[...defaultTools, ...defaultShapeTools]}
 				components={defaultComponents}
 				persistenceKey="exploded-example"

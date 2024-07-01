@@ -1,12 +1,8 @@
-import { RoomSnapshot, TLSyncRoom } from './TLSyncRoom'
+import { RoomSnapshot } from './TLSyncRoom'
 
 /** @public */
-export type RoomState = {
-	// the slug of the room
-	persistenceKey: string
-	// the room
-	room: TLSyncRoom<any>
+export interface PersistedRoomSnapshotForSupabase {
+	id: string
+	slug: string
+	drawing: RoomSnapshot
 }
-
-/** @public */
-export type PersistedRoomSnapshotForSupabase = { id: string; slug: string; drawing: RoomSnapshot }

@@ -1,6 +1,6 @@
 import { ComponentType } from 'react'
 
-export type Example = {
+export interface Example {
 	title: string
 	description: string
 	details: string
@@ -10,6 +10,7 @@ export type Example = {
 	category: Category
 	priority: number
 	componentFile: string
+	keywords: string[]
 	loadComponent: () => Promise<ComponentType>
 }
 

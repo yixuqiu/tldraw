@@ -45,6 +45,19 @@ export class DictValidator<Key extends string, Value> extends Validator<Record<K
     readonly valueValidator: Validatable<Value>;
 }
 
+// @public (undocumented)
+export type ExtractOptionalKeys<T extends object> = {
+    [K in keyof T]: undefined extends T[K] ? K : never;
+}[keyof T];
+
+// @public (undocumented)
+export type ExtractRequiredKeys<T extends object> = {
+    [K in keyof T]: undefined extends T[K] ? never : K;
+}[keyof T];
+
+// @public
+const httpUrl: Validator<string>;
+
 // @public
 const indexKey: Validator<IndexKey>;
 
@@ -151,6 +164,7 @@ declare namespace T {
         Validator,
         ArrayOfValidator,
         ObjectValidator,
+        UnionValidatorConfig,
         UnionValidator,
         DictValidator,
         unknown,
@@ -166,9 +180,12 @@ declare namespace T {
         bigint,
         array,
         unknownObject,
+        ExtractRequiredKeys,
+        ExtractOptionalKeys,
         jsonValue,
         linkUrl,
         srcUrl,
+        httpUrl,
         indexKey
     }
 }
@@ -187,6 +204,15 @@ export class UnionValidator<Key extends string, Config extends UnionValidatorCon
     validateUnknownVariants<Unknown>(unknownValueValidation: (value: object, variant: string) => Unknown): UnionValidator<Key, Config, Unknown>;
 }
 
+// @public (undocumented)
+export type UnionValidatorConfig<Key extends string, Config> = {
+    readonly [Variant in keyof Config]: Validatable<any> & {
+        validate: (input: any) => {
+            readonly [K in Key]: Variant;
+        };
+    };
+};
+
 // @public
 const unknown: Validator<unknown>;
 
@@ -194,10 +220,11 @@ const unknown: Validator<unknown>;
 const unknownObject: Validator<Record<string, unknown>>;
 
 // @public (undocumented)
-type Validatable<T> = {
-    validateUsingKnownGoodVersion?: (knownGoodValue: T, newValue: unknown) => T;
+interface Validatable<T> {
+    // (undocumented)
     validate: (value: unknown) => T;
-};
+    validateUsingKnownGoodVersion?: (knownGoodValue: T, newValue: unknown) => T;
+}
 
 // @public (undocumented)
 class ValidationError extends Error {

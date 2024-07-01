@@ -9,11 +9,22 @@ export { assetIdValidator, createAssetValidator, type TLBaseAsset } from './asse
 export { type TLBookmarkAsset } from './assets/TLBookmarkAsset'
 export { type TLImageAsset } from './assets/TLImageAsset'
 export { type TLVideoAsset } from './assets/TLVideoAsset'
+export {
+	arrowBindingMigrations,
+	arrowBindingProps,
+	type TLArrowBinding,
+	type TLArrowBindingProps,
+} from './bindings/TLArrowBinding'
+export {
+	bindingIdValidator,
+	createBindingValidator,
+	type TLBaseBinding,
+} from './bindings/TLBaseBinding'
 export { createPresenceStateDerivation } from './createPresenceStateDerivation'
 export {
 	createTLSchema,
 	defaultShapeSchemas,
-	type SchemaShapeInfo,
+	type SchemaPropsInfo,
 	type TLSchema,
 } from './createTLSchema'
 export {
@@ -21,10 +32,10 @@ export {
 	canvasUiColorTypeValidator,
 	type TLCanvasUiColor,
 } from './misc/TLColor'
-export { type TLCursor, type TLCursorType } from './misc/TLCursor'
-export { type TLHandle, type TLHandleType } from './misc/TLHandle'
+export { TL_CURSOR_TYPES, type TLCursor, type TLCursorType } from './misc/TLCursor'
+export { TL_HANDLE_TYPES, type TLHandle, type TLHandleType } from './misc/TLHandle'
 export { opacityValidator, type TLOpacityType } from './misc/TLOpacity'
-export { scribbleValidator, type TLScribble } from './misc/TLScribble'
+export { TL_SCRIBBLE_STATES, scribbleValidator, type TLScribble } from './misc/TLScribble'
 export {
 	boxModelValidator,
 	vecModelValidator,
@@ -41,9 +52,28 @@ export {
 	type TLAssetPartial,
 	type TLAssetShape,
 } from './records/TLAsset'
+export {
+	createBindingId,
+	createBindingPropsMigrationIds,
+	createBindingPropsMigrationSequence,
+	isBinding,
+	isBindingId,
+	rootBindingMigrations,
+	type TLBinding,
+	type TLBindingCreate,
+	type TLBindingId,
+	type TLBindingUpdate,
+	type TLDefaultBinding,
+	type TLUnknownBinding,
+} from './records/TLBinding'
 export { CameraRecordType, type TLCamera, type TLCameraId } from './records/TLCamera'
 export { DocumentRecordType, TLDOCUMENT_ID, type TLDocument } from './records/TLDocument'
-export { TLINSTANCE_ID, type TLInstance, type TLInstanceId } from './records/TLInstance'
+export {
+	TLINSTANCE_ID,
+	pluckPreservingValues,
+	type TLInstance,
+	type TLInstanceId,
+} from './records/TLInstance'
 export {
 	PageRecordType,
 	isPageId,
@@ -51,9 +81,22 @@ export {
 	type TLPage,
 	type TLPageId,
 } from './records/TLPage'
-export { InstancePageStateRecordType, type TLInstancePageState } from './records/TLPageState'
-export { PointerRecordType, TLPOINTER_ID } from './records/TLPointer'
-export { InstancePresenceRecordType, type TLInstancePresence } from './records/TLPresence'
+export {
+	InstancePageStateRecordType,
+	type TLInstancePageState,
+	type TLInstancePageStateId,
+} from './records/TLPageState'
+export {
+	PointerRecordType,
+	TLPOINTER_ID,
+	type TLPointer,
+	type TLPointerId,
+} from './records/TLPointer'
+export {
+	InstancePresenceRecordType,
+	type TLInstancePresence,
+	type TLInstancePresenceID,
+} from './records/TLPresence'
 export { type TLRecord } from './records/TLRecord'
 export {
 	createShapeId,
@@ -68,11 +111,14 @@ export {
 	type TLShape,
 	type TLShapeId,
 	type TLShapePartial,
-	type TLShapeProp,
-	type TLShapeProps,
-	type TLShapePropsMigrations,
 	type TLUnknownShape,
 } from './records/TLShape'
+export {
+	type RecordProps,
+	type RecordPropsType,
+	type TLPropsMigration,
+	type TLPropsMigrations,
+} from './recordsWithProps'
 export {
 	ArrowShapeArrowheadEndStyle,
 	ArrowShapeArrowheadStartStyle,
@@ -81,25 +127,24 @@ export {
 	type TLArrowShape,
 	type TLArrowShapeArrowheadStyle,
 	type TLArrowShapeProps,
-	type TLArrowShapeTerminal,
 } from './shapes/TLArrowShape'
 export {
 	createShapeValidator,
 	parentIdValidator,
 	shapeIdValidator,
-	type ShapeProps,
-	type ShapePropsType,
 	type TLBaseShape,
 } from './shapes/TLBaseShape'
 export {
 	bookmarkShapeMigrations,
 	bookmarkShapeProps,
 	type TLBookmarkShape,
+	type TLBookmarkShapeProps,
 } from './shapes/TLBookmarkShape'
 export {
 	drawShapeMigrations,
 	drawShapeProps,
 	type TLDrawShape,
+	type TLDrawShapeProps,
 	type TLDrawShapeSegment,
 } from './shapes/TLDrawShape'
 export {
@@ -110,21 +155,35 @@ export {
 	type EmbedDefinition,
 	type TLEmbedShape,
 	type TLEmbedShapePermissions,
+	type TLEmbedShapeProps,
 } from './shapes/TLEmbedShape'
-export { frameShapeMigrations, frameShapeProps, type TLFrameShape } from './shapes/TLFrameShape'
+export {
+	frameShapeMigrations,
+	frameShapeProps,
+	type TLFrameShape,
+	type TLFrameShapeProps,
+} from './shapes/TLFrameShape'
 export {
 	GeoShapeGeoStyle,
 	geoShapeMigrations,
 	geoShapeProps,
 	type TLGeoShape,
+	type TLGeoShapeProps,
 } from './shapes/TLGeoShape'
-export { groupShapeMigrations, groupShapeProps, type TLGroupShape } from './shapes/TLGroupShape'
+export {
+	groupShapeMigrations,
+	groupShapeProps,
+	type TLGroupShape,
+	type TLGroupShapeProps,
+} from './shapes/TLGroupShape'
 export {
 	highlightShapeMigrations,
 	highlightShapeProps,
 	type TLHighlightShape,
+	type TLHighlightShapeProps,
 } from './shapes/TLHighlightShape'
 export {
+	ImageShapeCrop,
 	imageShapeMigrations,
 	imageShapeProps,
 	type TLImageShape,
@@ -136,19 +195,31 @@ export {
 	lineShapeMigrations,
 	lineShapeProps,
 	type TLLineShape,
+	type TLLineShapeProps,
 } from './shapes/TLLineShape'
-export { noteShapeMigrations, noteShapeProps, type TLNoteShape } from './shapes/TLNoteShape'
+export {
+	noteShapeMigrations,
+	noteShapeProps,
+	type TLNoteShape,
+	type TLNoteShapeProps,
+} from './shapes/TLNoteShape'
 export {
 	textShapeMigrations,
 	textShapeProps,
 	type TLTextShape,
 	type TLTextShapeProps,
 } from './shapes/TLTextShape'
-export { videoShapeMigrations, videoShapeProps, type TLVideoShape } from './shapes/TLVideoShape'
+export {
+	videoShapeMigrations,
+	videoShapeProps,
+	type TLVideoShape,
+	type TLVideoShapeProps,
+} from './shapes/TLVideoShape'
 export { EnumStyleProp, StyleProp, type StylePropValue } from './styles/StyleProp'
 export {
 	DefaultColorStyle,
 	DefaultColorThemePalette,
+	defaultColorNames,
 	getDefaultColorTheme,
 	type TLDefaultColorStyle,
 	type TLDefaultColorTheme,
@@ -176,3 +247,4 @@ export {
 	getDefaultTranslationLocale,
 	type TLLanguage,
 } from './translations/translations'
+export { type SetValue } from './util-types'

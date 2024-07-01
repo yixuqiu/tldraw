@@ -41,6 +41,7 @@ export const debugFlags = {
 	showFps: createDebugValue('showFps', {
 		defaults: { all: false },
 	}),
+	measurePerformance: createDebugValue('measurePerformance', { defaults: { all: false } }),
 	throwToBlob: createDebugValue('throwToBlob', {
 		defaults: { all: false },
 	}),
@@ -96,7 +97,7 @@ function createDebugValue<T>(
 	{
 		defaults,
 		shouldStoreForSession = true,
-	}: { defaults: Defaults<T>; shouldStoreForSession?: boolean }
+	}: { defaults: DebugFlagDefaults<T>; shouldStoreForSession?: boolean }
 ) {
 	return createDebugValueBase({
 		name,
@@ -187,16 +188,18 @@ function getDefaultValue<T>(def: DebugFlagDef<T>): T {
 	}
 }
 
-interface Defaults<T> {
+/** @internal */
+export interface DebugFlagDefaults<T> {
 	development?: T
 	staging?: T
 	production?: T
 	all: T
 }
 
-interface DebugFlagDef<T> {
+/** @internal */
+export interface DebugFlagDef<T> {
 	name: string
-	defaults: Defaults<T>
+	defaults: DebugFlagDefaults<T>
 	shouldStoreForSession: boolean
 }
 

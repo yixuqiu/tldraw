@@ -10,6 +10,7 @@ import {
 	Vec,
 	createShapeId,
 } from '@tldraw/editor'
+import { getArrowBindings } from '../lib/shapes/arrow/shared'
 import { TestEditor } from './TestEditor'
 import { getSnapLines } from './getSnapLines'
 
@@ -39,7 +40,12 @@ const ids = {
 
 beforeEach(() => {
 	console.error = jest.fn()
-	editor = new TestEditor()
+	editor = new TestEditor({
+		options: {
+			edgeScrollDelay: 0,
+			edgeScrollEaseDuration: 0,
+		},
+	})
 })
 
 const getNumSnapPoints = (snap: SnapIndicator): number => {
@@ -138,10 +144,10 @@ describe('When translating...', () => {
 
 		const before = editor.getShape<TLGeoShape>(ids.box1)!
 
-		jest.advanceTimersByTime(100)
+		editor.forceTick()
 		editor
 			// The change is bigger than expected because the camera moves
-			.expectShapeToMatch({ id: ids.box1, x: -160, y: 10 })
+			.expectShapeToMatch({ id: ids.box1, x: -65, y: 10 })
 			// We'll continue moving in the x postion, but now we'll also move in the y position.
 			// The speed in the y position is smaller since we are further away from the edge.
 			.pointerMove(0, 25)
@@ -160,16 +166,21 @@ describe('When translating...', () => {
 		editor.user.updateUserPreferences({ edgeScrollSpeed: 1 })
 		editor.pointerDown(50, 50, ids.box1).pointerMove(1080, 50)
 
-		jest.advanceTimersByTime(100)
+		editor.forceTick()
+		editor.forceTick()
+		editor.forceTick()
 		editor
 			// The change is bigger than expected because the camera moves
-			.expectShapeToMatch({ id: ids.box1, x: 1160, y: 10 })
+			.expectShapeToMatch({ id: ids.box1, x: 1115, y: 10 })
 			.pointerMove(1080, 800)
-		jest.advanceTimersByTime(100)
+
+		editor.forceTick()
+		editor.forceTick()
+		editor.forceTick()
 		editor
-			.expectShapeToMatch({ id: ids.box1, x: 1320, y: 845.68 })
+			.expectShapeToMatch({ id: ids.box1, x: 1215, y: 805.9 })
 			.pointerUp()
-			.expectShapeToMatch({ id: ids.box1, x: 1340, y: 857.92 })
+			.expectShapeToMatch({ id: ids.box1, x: 1240, y: 821.2 })
 	})
 
 	it('translates multiple shapes', () => {
@@ -322,7 +333,7 @@ describe('When cloning...', () => {
 
 	it('Clones twice', () => {
 		const groupId = createShapeId('g')
-		editor.groupShapes([ids.box1, ids.box2], groupId)
+		editor.groupShapes([ids.box1, ids.box2], { groupId: groupId })
 		const count1 = editor.getCurrentPageShapes().length
 
 		editor.pointerDown(50, 50, { shape: editor.getShape(groupId)!, target: 'shape' })
@@ -1631,84 +1642,115 @@ describe('translating a shape with a bound shape', () => {
 
 	it('should preserve arrow bindings', () => {
 		const arrow1 = createShapeId('arrow1')
-		editor.createShapes([
-			{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
-			{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
-			{
-				id: arrow1,
-				type: 'arrow',
-				x: 150,
-				y: 150,
-				props: {
-					start: {
-						type: 'binding',
-						isExact: false,
-						boundShapeId: ids.box1,
-						normalizedAnchor: { x: 0.5, y: 0.5 },
-						isPrecise: false,
+		editor
+			.createShapes([
+				{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
+				{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
+				{
+					id: arrow1,
+					type: 'arrow',
+					x: 150,
+					y: 150,
+					props: {
+						start: { x: 0, y: 0 },
+						end: { x: 0, y: 0 },
 					},
-					end: {
-						type: 'binding',
+				},
+			])
+			.createBindings([
+				{
+					type: 'arrow',
+					fromId: arrow1,
+					toId: ids.box1,
+					props: {
+						terminal: 'start',
 						isExact: false,
-						boundShapeId: ids.box2,
 						normalizedAnchor: { x: 0.5, y: 0.5 },
 						isPrecise: false,
 					},
 				},
-			},
-		])
+				{
+					type: 'arrow',
+					fromId: arrow1,
+					toId: ids.box2,
+					props: {
+						terminal: 'end',
+						isExact: false,
+						normalizedAnchor: { x: 0.5, y: 0.5 },
+						isPrecise: false,
+					},
+				},
+			])
 
 		editor.select(ids.box1, arrow1)
 		editor.pointerDown(150, 150, ids.box1).pointerMove(0, 0)
 
 		expect(editor.getShape(ids.box1)).toMatchObject({ x: -50, y: -50 })
-		expect(editor.getShape(arrow1)).toMatchObject({
-			props: { start: { type: 'binding' }, end: { type: 'binding' } },
+		expect(getArrowBindings(editor, editor.getShape(arrow1) as TLArrowShape)).toMatchObject({
+			start: { type: 'arrow' },
+			end: { type: 'arrow' },
 		})
 	})
 
 	it('breaks arrow bindings when cloning', () => {
 		const arrow1 = createShapeId('arrow1')
-		editor.createShapes([
-			{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
-			{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
-			{
-				id: arrow1,
-				type: 'arrow',
-				x: 150,
-				y: 150,
-				props: {
-					start: {
-						type: 'binding',
-						isExact: false,
-						boundShapeId: ids.box1,
-						normalizedAnchor: { x: 0.5, y: 0.5 },
-						isPrecise: false,
+		editor
+			.createShapes([
+				{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
+				{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
+				{
+					id: arrow1,
+					type: 'arrow',
+					x: 150,
+					y: 150,
+					props: {
+						start: { x: 0, y: 0 },
+						end: { x: 0, y: 0 },
 					},
-					end: {
-						type: 'binding',
+				},
+			])
+			.createBindings([
+				{
+					type: 'arrow',
+					fromId: arrow1,
+					toId: ids.box1,
+					props: {
+						terminal: 'start',
 						isExact: false,
-						boundShapeId: ids.box2,
 						normalizedAnchor: { x: 0.5, y: 0.5 },
 						isPrecise: false,
 					},
 				},
-			},
-		])
+				{
+					type: 'arrow',
+					fromId: arrow1,
+					toId: ids.box2,
+					props: {
+						terminal: 'end',
+						isExact: false,
+						normalizedAnchor: { x: 0.5, y: 0.5 },
+						isPrecise: false,
+					},
+				},
+			])
 
 		editor.select(ids.box1, arrow1)
 		editor.pointerDown(150, 150, ids.box1).pointerMove(0, 0, { altKey: true })
 
 		expect(editor.getShape(ids.box1)).toMatchObject({ x: 100, y: 100 })
-		expect(editor.getShape(arrow1)).toMatchObject({
-			props: { start: { type: 'binding' }, end: { type: 'binding' } },
+		expect(getArrowBindings(editor, editor.getShape(arrow1) as TLArrowShape)).toMatchObject({
+			start: { type: 'arrow' },
+			end: { type: 'arrow' },
 		})
 
 		const newArrow = editor
 			.getCurrentPageShapes()
-			.find((s) => editor.isShapeOfType<TLArrowShape>(s, 'arrow') && s.id !== arrow1)
-		expect(newArrow).toMatchObject({
-			props: { start: { type: 'binding' }, end: { type: 'point' } },
+			.find(
+				(s) => editor.isShapeOfType<TLArrowShape>(s, 'arrow') && s.id !== arrow1
+			)! as TLArrowShape
+		expect(getArrowBindings(editor, newArrow)).toMatchObject({
+			start: { type: 'arrow' },
+			end: undefined,
 		})
 	})
 })

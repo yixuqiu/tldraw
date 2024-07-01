@@ -1,14 +1,11 @@
 import { T } from '@tldraw/validate'
-import {
-	RETIRED_DOWN_MIGRATION,
-	createShapePropsMigrationIds,
-	createShapePropsMigrationSequence,
-} from '../records/TLShape'
+import { createShapePropsMigrationIds, createShapePropsMigrationSequence } from '../records/TLShape'
+import { RecordPropsType } from '../recordsWithProps'
 import { DefaultColorStyle } from '../styles/TLColorStyle'
 import { DefaultFontStyle } from '../styles/TLFontStyle'
 import { DefaultSizeStyle } from '../styles/TLSizeStyle'
 import { DefaultTextAlignStyle } from '../styles/TLTextAlignStyle'
-import { ShapePropsType, TLBaseShape } from './TLBaseShape'
+import { TLBaseShape } from './TLBaseShape'
 
 /** @public */
 export const textShapeProps = {
@@ -23,7 +20,7 @@ export const textShapeProps = {
 }
 
 /** @public */
-export type TLTextShapeProps = ShapePropsType<typeof textShapeProps>
+export type TLTextShapeProps = RecordPropsType<typeof textShapeProps>
 
 /** @public */
 export type TLTextShape = TLBaseShape<'text', TLTextShapeProps>
@@ -45,7 +42,7 @@ export const textShapeMigrations = createShapePropsMigrationSequence({
 					props.align = 'start'
 				}
 			},
-			down: RETIRED_DOWN_MIGRATION,
+			down: 'retired',
 		},
 		{
 			id: Versions.AddTextAlign,

@@ -1,12 +1,13 @@
-import { MigrationSequence, SerializedStore, Store, StoreSnapshot } from '@tldraw/store'
-import { TLRecord, TLStore } from '@tldraw/tlschema'
-import { Expand, Required, annotateError } from '@tldraw/utils'
+import { MigrationSequence, Store } from '@tldraw/store'
+import { TLStore, TLStoreSnapshot } from '@tldraw/tlschema'
+import { Required, annotateError } from '@tldraw/utils'
 import React, {
 	ReactNode,
 	memo,
 	useCallback,
 	useLayoutEffect,
 	useMemo,
+	useRef,
 	useState,
 	useSyncExternalStore,
 } from 'react'
@@ -14,11 +15,14 @@ import React, {
 import classNames from 'classnames'
 import { OptionalErrorBoundary } from './components/ErrorBoundary'
 import { DefaultErrorFallback } from './components/default-components/DefaultErrorFallback'
+import { TLEditorSnapshot } from './config/TLEditorSnapshot'
+import { TLStoreBaseOptions } from './config/createTLStore'
 import { TLUser, createTLUser } from './config/createTLUser'
+import { TLAnyBindingUtilConstructor } from './config/defaultBindings'
 import { TLAnyShapeUtilConstructor } from './config/defaultShapes'
 import { Editor } from './editor/Editor'
 import { TLStateNodeConstructor } from './editor/tools/StateNode'
-import { TLCameraOptions } from './editor/types/misc-types'
+import { TLAssetOptions, TLCameraOptions } from './editor/types/misc-types'
 import { ContainerProvider, useContainer } from './hooks/useContainer'
 import { useCursor } from './hooks/useCursor'
 import { useDarkMode } from './hooks/useDarkMode'
@@ -29,36 +33,66 @@ import {
 	useEditorComponents,
 } from './hooks/useEditorComponents'
 import { useEvent } from './hooks/useEvent'
-import { useFocusEvents } from './hooks/useFocusEvents'
 import { useForceUpdate } from './hooks/useForceUpdate'
 import { useLocalStore } from './hooks/useLocalStore'
-import { useSafariFocusOutFix } from './hooks/useSafariFocusOutFix'
 import { useZoomCss } from './hooks/useZoomCss'
+import { TldrawOptions } from './options'
 import { stopEventPropagation } from './utils/dom'
 import { TLStoreWithStatus } from './utils/sync/StoreWithStatus'
+
+/**
+ * Props for the {@link tldraw#Tldraw} and {@link TldrawEditor} components, when passing in a
+ * {@link store#TLStore} directly. If you would like tldraw to create a store for you, use
+ * {@link TldrawEditorWithoutStoreProps}.
+ *
+ * @public
+ */
+export interface TldrawEditorWithStoreProps {
+	/**
+	 * The store to use in the editor.
+	 */
+	store: TLStore | TLStoreWithStatus
+}
+
+/**
+ * Props for the {@link tldraw#Tldraw} and {@link TldrawEditor} components, when not passing in a
+ * {@link store#TLStore} directly. If you would like to pass in a store directly, use
+ * {@link TldrawEditorWithStoreProps}.
+ *
+ * @public
+ */
+export interface TldrawEditorWithoutStoreProps extends TLStoreBaseOptions {
+	store?: undefined
+
+	/**
+	 * Additional migrations to use in the store
+	 */
+	migrations?: readonly MigrationSequence[]
+
+	/**
+	 * A starting snapshot of data to pre-populate the store. Do not supply both this and
+	 * `initialData`.
+	 */
+	snapshot?: TLEditorSnapshot | TLStoreSnapshot
+
+	/**
+	 * If you would like to persist the store to the browser's local IndexedDB storage and sync it
+	 * across tabs, provide a key here. Each key represents a single tldraw document.
+	 */
+	persistenceKey?: string
+
+	sessionId?: string
+}
+
+/** @public */
+export type TldrawEditorStoreProps = TldrawEditorWithStoreProps | TldrawEditorWithoutStoreProps
 
 /**
  * Props for the {@link tldraw#Tldraw} and {@link TldrawEditor} components.
  *
  * @public
  **/
-export type TldrawEditorProps = Expand<
-	TldrawEditorBaseProps &
-		(
-			| {
-					store: TLStore | TLStoreWithStatus
-			  }
-			| {
-					store?: undefined
-					migrations?: readonly MigrationSequence[]
-					snapshot?: StoreSnapshot<TLRecord>
-					initialData?: SerializedStore<TLRecord>
-					persistenceKey?: string
-					sessionId?: string
-					defaultName?: string
-			  }
-		)
->
+export type TldrawEditorProps = TldrawEditorBaseProps & TldrawEditorStoreProps
 
 /**
  * Base props for the {@link tldraw#Tldraw} and {@link TldrawEditor} components.
@@ -75,6 +109,11 @@ export interface TldrawEditorBaseProps {
 	 * An array of shape utils to use in the editor.
 	 */
 	shapeUtils?: readonly TLAnyShapeUtilConstructor[]
+
+	/**
+	 * An array of binding utils to use in the editor.
+	 */
+	bindingUtils?: readonly TLAnyBindingUtilConstructor[]
 
 	/**
 	 * An array of tools to add to the editor's state chart.
@@ -120,6 +159,17 @@ export interface TldrawEditorBaseProps {
 	 * Camera options for the editor.
 	 */
 	cameraOptions?: Partial<TLCameraOptions>
+
+	/**
+	 * Asset options for the editor.
+	 * @internal
+	 */
+	assetOptions?: Partial<TLAssetOptions>
+
+	/**
+	 * Options for the editor.
+	 */
+	options?: Partial<TldrawOptions>
 }
 
 /**
@@ -141,9 +191,10 @@ declare global {
 }
 
 const EMPTY_SHAPE_UTILS_ARRAY = [] as const
+const EMPTY_BINDING_UTILS_ARRAY = [] as const
 const EMPTY_TOOLS_ARRAY = [] as const
 
-/** @public */
+/** @public @react */
 export const TldrawEditor = memo(function TldrawEditor({
 	store,
 	components,
@@ -163,6 +214,7 @@ export const TldrawEditor = memo(function TldrawEditor({
 	const withDefaults = {
 		...rest,
 		shapeUtils: rest.shapeUtils ?? EMPTY_SHAPE_UTILS_ARRAY,
+		bindingUtils: rest.bindingUtils ?? EMPTY_BINDING_UTILS_ARRAY,
 		tools: rest.tools ?? EMPTY_TOOLS_ARRAY,
 		components,
 	}
@@ -203,12 +255,25 @@ export const TldrawEditor = memo(function TldrawEditor({
 })
 
 function TldrawEditorWithOwnStore(
-	props: Required<TldrawEditorProps & { store: undefined; user: TLUser }, 'shapeUtils' | 'tools'>
+	props: Required<
+		TldrawEditorProps & { store: undefined; user: TLUser },
+		'shapeUtils' | 'bindingUtils' | 'tools'
+	>
 ) {
-	const { defaultName, snapshot, initialData, shapeUtils, persistenceKey, sessionId, user } = props
+	const {
+		defaultName,
+		snapshot,
+		initialData,
+		shapeUtils,
+		bindingUtils,
+		persistenceKey,
+		sessionId,
+		user,
+	} = props
 
 	const syncedStore = useLocalStore({
 		shapeUtils,
+		bindingUtils,
 		initialData,
 		persistenceKey,
 		sessionId,
@@ -225,12 +290,12 @@ const TldrawEditorWithLoadingStore = memo(function TldrawEditorBeforeLoading({
 	...rest
 }: Required<
 	TldrawEditorProps & { store: TLStoreWithStatus; user: TLUser },
-	'shapeUtils' | 'tools'
+	'shapeUtils' | 'bindingUtils' | 'tools'
 >) {
 	const container = useContainer()
 
 	useLayoutEffect(() => {
-		if (user.userPreferences.get().isDarkMode) {
+		if (user.userPreferences.get().colorScheme === 'dark') {
 			container.classList.remove('tl-theme__light')
 			container.classList.add('tl-theme__dark')
 		}
@@ -268,39 +333,72 @@ function TldrawEditorWithReadyStore({
 	store,
 	tools,
 	shapeUtils,
+	bindingUtils,
 	user,
 	initialState,
 	autoFocus = true,
 	inferDarkMode,
 	cameraOptions,
+	assetOptions,
+	options,
 }: Required<
 	TldrawEditorProps & {
 		store: TLStore
 		user: TLUser
 	},
-	'shapeUtils' | 'tools'
+	'shapeUtils' | 'bindingUtils' | 'tools'
 >) {
 	const { ErrorFallback } = useEditorComponents()
 	const container = useContainer()
-	const [editor, setEditor] = useState<Editor | null>(null)
+	const editorRef = useRef<Editor | null>(null)
+	// we need to store the editor instance in a ref so that it persists across strict-mode
+	// remounts, but that won't trigger re-renders, so we use this hook to make sure all child
+	// components get the most up to date editor reference when needed.
+	const [renderEditor, setRenderEditor] = useState<Editor | null>(null)
+
+	const editor = editorRef.current
+	if (renderEditor !== editor) {
+		setRenderEditor(editor)
+	}
+
+	const [initialAutoFocus] = useState(autoFocus)
 
 	useLayoutEffect(() => {
 		const editor = new Editor({
 			store,
 			shapeUtils,
+			bindingUtils,
 			tools,
 			getContainer: () => container,
 			user,
 			initialState,
+			autoFocus: initialAutoFocus,
 			inferDarkMode,
 			cameraOptions,
+			assetOptions,
+			options,
 		})
-		setEditor(editor)
+
+		editorRef.current = editor
+		setRenderEditor(editor)
 
 		return () => {
 			editor.dispose()
 		}
-	}, [container, shapeUtils, tools, store, user, initialState, inferDarkMode, cameraOptions])
+	}, [
+		container,
+		shapeUtils,
+		bindingUtils,
+		tools,
+		store,
+		user,
+		initialState,
+		initialAutoFocus,
+		inferDarkMode,
+		cameraOptions,
+		assetOptions,
+		options,
+	])
 
 	const crashingError = useSyncExternalStore(
 		useCallback(
@@ -341,48 +439,21 @@ function TldrawEditorWithReadyStore({
 				<Crash crashingError={crashingError} />
 			) : (
 				<EditorContext.Provider value={editor}>
-					<Layout autoFocus={autoFocus} onMount={onMount}>
-						{children ?? (Canvas ? <Canvas /> : null)}
-					</Layout>
+					<Layout onMount={onMount}>{children ?? (Canvas ? <Canvas /> : null)}</Layout>
 				</EditorContext.Provider>
 			)}
 		</OptionalErrorBoundary>
 	)
 }
 
-function Layout({
-	children,
-	onMount,
-	autoFocus,
-}: {
-	children: ReactNode
-	autoFocus: boolean
-	onMount?: TLOnMountHandler
-}) {
+function Layout({ children, onMount }: { children: ReactNode; onMount?: TLOnMountHandler }) {
 	useZoomCss()
 	useCursor()
 	useDarkMode()
-	useSafariFocusOutFix()
 	useForceUpdate()
-	useFocusEvents(autoFocus)
 	useOnMount(onMount)
 
-	return (
-		<>
-			{children}
-			<InFrontOfTheCanvasWrapper />
-		</>
-	)
-}
-
-function InFrontOfTheCanvasWrapper() {
-	const { InFrontOfTheCanvas } = useEditorComponents()
-	if (!InFrontOfTheCanvas) return null
-	return (
-		<div className="tl-front">
-			<InFrontOfTheCanvas />
-		</div>
-	)
+	return <>{children}</>
 }
 
 function Crash({ crashingError }: { crashingError: unknown }): null {
@@ -390,12 +461,17 @@ function Crash({ crashingError }: { crashingError: unknown }): null {
 }
 
 /** @public */
-export function LoadingScreen({ children }: { children: ReactNode }) {
+export interface LoadingScreenProps {
+	children: ReactNode
+}
+
+/** @public @react */
+export function LoadingScreen({ children }: LoadingScreenProps) {
 	return <div className="tl-loading">{children}</div>
 }
 
-/** @public */
-export function ErrorScreen({ children }: { children: ReactNode }) {
+/** @public @react */
+export function ErrorScreen({ children }: LoadingScreenProps) {
 	return <div className="tl-loading">{children}</div>
 }
 

@@ -13,29 +13,44 @@ import {
 	TLTextShapeProps,
 	Vec,
 	VecLike,
+	WeakCache,
 	assert,
 	compact,
 	createShapeId,
+	fetch,
 	getHashForBuffer,
 	getHashForString,
 } from '@tldraw/editor'
+import { getAssetFromIndexedDb, storeAssetInIndexedDb } from './AssetBlobStore'
 import { FONT_FAMILIES, FONT_SIZES, TEXT_PROPS } from './shapes/shared/default-shape-constants'
 import { TLUiToastsContextType } from './ui/context/toasts'
 import { useTranslation } from './ui/hooks/useTranslation/useTranslation'
-import { containBoxSize, downsizeImage, isGifAnimated } from './utils/assets/assets'
+import { containBoxSize } from './utils/assets/assets'
 import { getEmbedInfo } from './utils/embeds/embeds'
-import { cleanupText, isRightToLeftLanguage, truncateStringWithEllipsis } from './utils/text/text'
+import { cleanupText, isRightToLeftLanguage } from './utils/text/text'
 
 /** @public */
-export type TLExternalContentProps = {
-	// The maximum dimension (width or height) of an image. Images larger than this will be rescaled to fit. Defaults to infinity.
-	maxImageDimension: number
-	// The maximum size (in bytes) of an asset. Assets larger than this will be rejected. Defaults to 10mb (10 * 1024 * 1024).
-	maxAssetSize: number
-	// The mime types of images that are allowed to be handled. Defaults to ['image/jpeg', 'image/png', 'image/gif', 'image/svg+xml'].
-	acceptedImageMimeTypes: readonly string[]
-	// The mime types of videos that are allowed to be handled. Defaults to ['video/mp4', 'video/webm', 'video/quicktime'].
-	acceptedVideoMimeTypes: readonly string[]
+export interface TLExternalContentProps {
+	/**
+	 * The maximum dimension (width or height) of an image. Images larger than this will be rescaled
+	 * to fit. Defaults to infinity.
+	 */
+	maxImageDimension?: number
+	/**
+	 * The maximum size (in bytes) of an asset. Assets larger than this will be rejected. Defaults
+	 * to 10mb (10 * 1024 * 1024).
+	 */
+	maxAssetSize?: number
+	/**
+	 * The mime types of images that are allowed to be handled. Defaults to
+	 * DEFAULT_SUPPORTED_IMAGE_TYPES.
+	 */
+	acceptedImageMimeTypes?: readonly string[]
+	/**
+	 * The mime types of videos that are allowed to be handled. Defaults to
+	 * DEFAULT_SUPPORT_VIDEO_TYPES.
+	 */
+	acceptedVideoMimeTypes?: readonly string[]
 }
 
 export function registerDefaultExternalContentHandlers(
@@ -45,8 +60,9 @@ export function registerDefaultExternalContentHandlers(
 		maxAssetSize,
 		acceptedImageMimeTypes,
 		acceptedVideoMimeTypes,
-	}: TLExternalContentProps,
-	{ toasts, msg }: { toasts: TLUiToastsContextType; msg: ReturnType<typeof useTranslation> }
+	}: Required<TLExternalContentProps>,
+	{ toasts, msg }: { toasts: TLUiToastsContextType; msg: ReturnType<typeof useTranslation> },
+	persistenceKey?: string
 ) {
 	// files -> asset
 	editor.registerExternalAssetHandler('file', async ({ file: _file }) => {
@@ -70,59 +86,73 @@ export function registerDefaultExternalContentHandlers(
 			? await MediaHelpers.getImageSize(file)
 			: await MediaHelpers.getVideoSize(file)
 
-		const isAnimated = file.type === 'image/gif' ? await isGifAnimated(file) : isVideoType
+		const isAnimated = (await MediaHelpers.isAnimated(file)) || isVideoType
 
 		const hash = await getHashForBuffer(await file.arrayBuffer())
 
 		if (isFinite(maxImageDimension)) {
 			const resizedSize = containBoxSize(size, { w: maxImageDimension, h: maxImageDimension })
-			if (size !== resizedSize && (file.type === 'image/jpeg' || file.type === 'image/png')) {
+			if (size !== resizedSize && MediaHelpers.isStaticImageType(file.type)) {
 				size = resizedSize
 			}
 		}
 
-		// Always rescale the image
-		if (file.type === 'image/jpeg' || file.type === 'image/png') {
-			file = await downsizeImage(file, size.w, size.h, {
-				type: file.type,
-				quality: 0.92,
-			})
-		}
-
 		const assetId: TLAssetId = AssetRecordType.createId(hash)
-
-		const asset = AssetRecordType.create({
+		const assetInfo = {
 			id: assetId,
 			type: isImageType ? 'image' : 'video',
 			typeName: 'asset',
 			props: {
 				name,
-				src: await FileHelpers.blobToDataUrl(file),
+				src: '',
 				w: size.w,
 				h: size.h,
+				fileSize: file.size,
 				mimeType: file.type,
 				isAnimated,
 			},
-		})
+		} as TLAsset
 
-		return asset
+		if (persistenceKey) {
+			assetInfo.props.src = assetId
+			await storeAssetInIndexedDb({
+				persistenceKey,
+				assetId,
+				blob: file,
+			})
+		} else {
+			assetInfo.props.src = await FileHelpers.blobToDataUrl(file)
+		}
+
+		return AssetRecordType.create(assetInfo)
 	})
 
 	// urls -> bookmark asset
 	editor.registerExternalAssetHandler('url', async ({ url }) => {
-		let meta: { image: string; title: string; description: string }
+		let meta: { image: string; favicon: string; title: string; description: string }
 
 		try {
-			const resp = await fetch(url, { method: 'GET', mode: 'no-cors' })
+			const resp = await fetch(url, {
+				method: 'GET',
+				mode: 'no-cors',
+			})
 			const html = await resp.text()
 			const doc = new DOMParser().parseFromString(html, 'text/html')
 			meta = {
 				image: doc.head.querySelector('meta[property="og:image"]')?.getAttribute('content') ?? '',
-				title:
-					doc.head.querySelector('meta[property="og:title"]')?.getAttribute('content') ??
-					truncateStringWithEllipsis(url, 32),
+				favicon:
+					doc.head.querySelector('link[rel="apple-touch-icon"]')?.getAttribute('href') ??
+					doc.head.querySelector('link[rel="icon"]')?.getAttribute('href') ??
+					'',
+				title: doc.head.querySelector('meta[property="og:title"]')?.getAttribute('content') ?? url,
 				description:
 					doc.head.querySelector('meta[property="og:description"]')?.getAttribute('content') ?? '',
+			}
+			if (!meta.image.startsWith('http')) {
+				meta.image = new URL(meta.image, url).href
+			}
+			if (!meta.favicon.startsWith('http')) {
+				meta.favicon = new URL(meta.favicon, url).href
 			}
 		} catch (error) {
 			console.error(error)
@@ -130,7 +160,7 @@ export function registerDefaultExternalContentHandlers(
 				title: msg('assets.url.failed'),
 				severity: 'error',
 			})
-			meta = { image: '', title: truncateStringWithEllipsis(url, 32), description: '' }
+			meta = { image: '', favicon: '', title: '', description: '' }
 		}
 
 		// Create the bookmark asset from the meta
@@ -142,6 +172,7 @@ export function registerDefaultExternalContentHandlers(
 				src: url,
 				description: meta.description,
 				image: meta.image,
+				favicon: meta.favicon,
 				title: meta.title,
 			},
 			meta: {},
@@ -431,14 +462,15 @@ export async function createShapesForAssets(
 	const currentPoint = Vec.From(position)
 	const partials: TLShapePartial[] = []
 
-	for (const asset of assets) {
+	for (let i = 0; i < assets.length; i++) {
+		const asset = assets[i]
 		switch (asset.type) {
 			case 'bookmark': {
 				partials.push({
 					id: createShapeId(),
 					type: 'bookmark',
-					x: currentPoint.x - 150,
-					y: currentPoint.y - 160,
+					x: currentPoint.x,
+					y: currentPoint.y,
 					opacity: 1,
 					props: {
 						assetId: asset.id,
@@ -446,15 +478,15 @@ export async function createShapesForAssets(
 					},
 				})
 
-				currentPoint.x += 300
+				currentPoint.x += 300 // BOOKMARK_WIDTH
 				break
 			}
 			case 'image': {
 				partials.push({
 					id: createShapeId(),
 					type: 'image',
-					x: currentPoint.x - asset.props.w / 2,
-					y: currentPoint.y - asset.props.h / 2,
+					x: currentPoint.x,
+					y: currentPoint.y,
 					opacity: 1,
 					props: {
 						assetId: asset.id,
@@ -470,8 +502,8 @@ export async function createShapesForAssets(
 				partials.push({
 					id: createShapeId(),
 					type: 'video',
-					x: currentPoint.x - asset.props.w / 2,
-					y: currentPoint.y - asset.props.h / 2,
+					x: currentPoint.x,
+					y: currentPoint.y,
 					opacity: 1,
 					props: {
 						assetId: asset.id,
@@ -554,4 +586,37 @@ export function createEmptyBookmarkShape(
 	})
 
 	return editor.getShape(partial.id) as TLBookmarkShape
+}
+
+const objectURLCache = new WeakCache<TLAsset, ReturnType<typeof getLocalAssetObjectURL>>()
+export const defaultResolveAsset =
+	(persistenceKey?: string) => async (asset: TLAsset | null | undefined) => {
+		if (!asset || !asset.props.src) return null
+
+		// Retrieve a local image from the DB.
+		if (persistenceKey && asset.props.src.startsWith('asset:')) {
+			return await objectURLCache.get(
+				asset,
+				async () => await getLocalAssetObjectURL(persistenceKey, asset.id)
+			)
+		}
+
+		// We don't deal with videos at the moment.
+		if (asset.type === 'video') return asset.props.src
+
+		// Assert it's an image to make TS happy.
+		if (asset.type !== 'image') return null
+
+		return asset.props.src
+	}
+
+async function getLocalAssetObjectURL(persistenceKey: string, assetId: TLAssetId) {
+	const blob = await getAssetFromIndexedDb({
+		assetId: assetId,
+		persistenceKey,
+	})
+	if (blob) {
+		return URL.createObjectURL(blob)
+	}
+	return null
 }

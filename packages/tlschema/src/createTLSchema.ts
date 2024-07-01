@@ -1,10 +1,12 @@
-import { LegacyMigrations, MigrationSequence, StoreSchema } from '@tldraw/store'
+import { LegacyMigrations, MigrationSequence, StoreSchema, StoreValidator } from '@tldraw/store'
 import { objectMapValues } from '@tldraw/utils'
 import { TLStoreProps, createIntegrityChecker, onValidationFailure } from './TLStore'
 import { bookmarkAssetMigrations } from './assets/TLBookmarkAsset'
 import { imageAssetMigrations } from './assets/TLImageAsset'
 import { videoAssetMigrations } from './assets/TLVideoAsset'
+import { arrowBindingMigrations, arrowBindingProps } from './bindings/TLArrowBinding'
 import { AssetRecordType, assetMigrations } from './records/TLAsset'
+import { TLBinding, TLDefaultBinding, createBindingRecordType } from './records/TLBinding'
 import { CameraRecordType, cameraMigrations } from './records/TLCamera'
 import { DocumentRecordType, documentMigrations } from './records/TLDocument'
 import { createInstanceRecordType, instanceMigrations } from './records/TLInstance'
@@ -15,12 +17,12 @@ import { InstancePresenceRecordType, instancePresenceMigrations } from './record
 import { TLRecord } from './records/TLRecord'
 import {
 	TLDefaultShape,
-	TLShapePropsMigrations,
+	TLShape,
 	createShapeRecordType,
 	getShapePropKeysByStyle,
-	processShapeMigrations,
 	rootShapeMigrations,
 } from './records/TLShape'
+import { TLPropsMigrations, processPropsMigrations } from './recordsWithProps'
 import { arrowShapeMigrations, arrowShapeProps } from './shapes/TLArrowShape'
 import { bookmarkShapeMigrations, bookmarkShapeProps } from './shapes/TLBookmarkShape'
 import { drawShapeMigrations, drawShapeProps } from './shapes/TLDrawShape'
@@ -37,23 +39,18 @@ import { videoShapeMigrations, videoShapeProps } from './shapes/TLVideoShape'
 import { storeMigrations } from './store-migrations'
 import { StyleProp } from './styles/StyleProp'
 
-type AnyValidator = {
-	validate: (prop: any) => any
-	validateUsingKnownGoodVersion?: (prevVersion: any, newVersion: any) => any
-}
-
 /** @public */
-export type SchemaShapeInfo = {
-	migrations?: LegacyMigrations | TLShapePropsMigrations | MigrationSequence
-	props?: Record<string, AnyValidator>
-	meta?: Record<string, AnyValidator>
+export interface SchemaPropsInfo {
+	migrations?: LegacyMigrations | TLPropsMigrations | MigrationSequence
+	props?: Record<string, StoreValidator<any>>
+	meta?: Record<string, StoreValidator<any>>
 }
 
 /** @public */
 export type TLSchema = StoreSchema<TLRecord, TLStoreProps>
 
 /** @public */
-export const defaultShapeSchemas: { [T in TLDefaultShape['type']]: SchemaShapeInfo } = {
+export const defaultShapeSchemas: { [T in TLDefaultShape['type']]: SchemaPropsInfo } = {
 	arrow: { migrations: arrowShapeMigrations, props: arrowShapeProps },
 	bookmark: { migrations: bookmarkShapeMigrations, props: bookmarkShapeProps },
 	draw: { migrations: drawShapeMigrations, props: drawShapeProps },
@@ -69,6 +66,11 @@ export const defaultShapeSchemas: { [T in TLDefaultShape['type']]: SchemaShapeIn
 	video: { migrations: videoShapeMigrations, props: videoShapeProps },
 }
 
+/** @public */
+export const defaultBindingSchemas: { [T in TLDefaultBinding['type']]: SchemaPropsInfo } = {
+	arrow: { migrations: arrowBindingMigrations, props: arrowBindingProps },
+}
+
 /**
  * Create a TLSchema with custom shapes. Custom shapes cannot override default shapes.
  *
@@ -77,9 +79,11 @@ export const defaultShapeSchemas: { [T in TLDefaultShape['type']]: SchemaShapeIn
  * @public */
 export function createTLSchema({
 	shapes = defaultShapeSchemas,
+	bindings = defaultBindingSchemas,
 	migrations,
 }: {
-	shapes?: Record<string, SchemaShapeInfo>
+	shapes?: Record<string, SchemaPropsInfo>
+	bindings?: Record<string, SchemaPropsInfo>
 	migrations?: readonly MigrationSequence[]
 } = {}): TLSchema {
 	const stylesById = new Map<string, StyleProp<unknown>>()
@@ -93,11 +97,13 @@ export function createTLSchema({
 	}
 
 	const ShapeRecordType = createShapeRecordType(shapes)
+	const BindingRecordType = createBindingRecordType(bindings)
 	const InstanceRecordType = createInstanceRecordType(stylesById)
 
 	return StoreSchema.create(
 		{
 			asset: AssetRecordType,
+			binding: BindingRecordType,
 			camera: CameraRecordType,
 			document: DocumentRecordType,
 			instance: InstanceRecordType,
@@ -124,7 +130,8 @@ export function createTLSchema({
 				imageAssetMigrations,
 				videoAssetMigrations,
 
-				...processShapeMigrations(shapes),
+				...processPropsMigrations<TLShape>('shape', shapes),
+				...processPropsMigrations<TLBinding>('binding', bindings),
 
 				...(migrations ?? []),
 			],

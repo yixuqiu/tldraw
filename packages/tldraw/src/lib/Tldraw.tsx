@@ -1,17 +1,15 @@
 import {
+	DEFAULT_SUPPORTED_IMAGE_TYPES,
+	DEFAULT_SUPPORT_VIDEO_TYPES,
+	DefaultSpinner,
 	Editor,
 	ErrorScreen,
-	Expand,
 	LoadingScreen,
-	MigrationSequence,
-	StoreSnapshot,
 	TLEditorComponents,
 	TLOnMountHandler,
-	TLRecord,
-	TLStore,
-	TLStoreWithStatus,
 	TldrawEditor,
 	TldrawEditorBaseProps,
+	TldrawEditorStoreProps,
 	useEditor,
 	useEditorComponents,
 	useEvent,
@@ -23,8 +21,10 @@ import { TldrawHandles } from './canvas/TldrawHandles'
 import { TldrawScribble } from './canvas/TldrawScribble'
 import { TldrawSelectionBackground } from './canvas/TldrawSelectionBackground'
 import { TldrawSelectionForeground } from './canvas/TldrawSelectionForeground'
+import { defaultBindingUtils } from './defaultBindingUtils'
 import {
 	TLExternalContentProps,
+	defaultResolveAsset,
 	registerDefaultExternalContentHandlers,
 } from './defaultExternalContentHandlers'
 import { defaultShapeTools } from './defaultShapeTools'
@@ -38,37 +38,21 @@ import { usePreloadAssets } from './ui/hooks/usePreloadAssets'
 import { useTranslation } from './ui/hooks/useTranslation/useTranslation'
 import { useDefaultEditorAssetsWithOverrides } from './utils/static-assets/assetUrls'
 
-/**@public */
-export type TLComponents = Expand<TLEditorComponents & TLUiComponents>
+/** @public */
+export interface TLComponents extends TLEditorComponents, TLUiComponents {}
 
 /** @public */
-export type TldrawProps = Expand<
-	// combine components from base editor and ui
-	(Omit<TldrawUiProps, 'components'> &
-		Omit<TldrawEditorBaseProps, 'components'> & {
-			components?: TLComponents
-		}) &
-		// external content
-		Partial<TLExternalContentProps> &
-		// store stuff
-		(| {
-					store: TLStore | TLStoreWithStatus
-			  }
-			| {
-					store?: undefined
-					migrations?: readonly MigrationSequence[]
-					persistenceKey?: string
-					sessionId?: string
-					defaultName?: string
-					/**
-					 * A snapshot to load for the store's initial data / schema.
-					 */
-					snapshot?: StoreSnapshot<TLRecord>
-			  }
-		)
->
+export interface TldrawBaseProps
+	extends TldrawUiProps,
+		TldrawEditorBaseProps,
+		TLExternalContentProps {
+	components?: TLComponents
+}
 
 /** @public */
+export type TldrawProps = TldrawBaseProps & TldrawEditorStoreProps
+
+/** @public @react */
 export function Tldraw(props: TldrawProps) {
 	const {
 		children,
@@ -79,6 +63,7 @@ export function Tldraw(props: TldrawProps) {
 		onMount,
 		components = {},
 		shapeUtils = [],
+		bindingUtils = [],
 		tools = [],
 		...rest
 	} = props
@@ -102,19 +87,34 @@ export function Tldraw(props: TldrawProps) {
 		[_shapeUtils]
 	)
 
+	const _bindingUtils = useShallowArrayIdentity(bindingUtils)
+	const bindingUtilsWithDefaults = useMemo(
+		() => [...defaultBindingUtils, ..._bindingUtils],
+		[_bindingUtils]
+	)
+
 	const _tools = useShallowArrayIdentity(tools)
 	const toolsWithDefaults = useMemo(
 		() => [...defaultTools, ...defaultShapeTools, ..._tools],
 		[_tools]
 	)
 
+	const persistenceKey = 'persistenceKey' in rest ? rest.persistenceKey : undefined
 	const assets = useDefaultEditorAssetsWithOverrides(rest.assetUrls)
+	const assetOptions = useMemo(
+		() => ({ onResolveAsset: defaultResolveAsset(persistenceKey), ...rest.assetOptions }),
+		[persistenceKey, rest.assetOptions]
+	)
 	const { done: preloadingComplete, error: preloadingError } = usePreloadAssets(assets)
 	if (preloadingError) {
 		return <ErrorScreen>Could not load assets. Please refresh the page.</ErrorScreen>
 	}
 	if (!preloadingComplete) {
-		return <LoadingScreen>Loading assets...</LoadingScreen>
+		return (
+			<LoadingScreen>
+				<DefaultSpinner />
+			</LoadingScreen>
+		)
 	}
 
 	return (
@@ -123,7 +123,9 @@ export function Tldraw(props: TldrawProps) {
 			{...rest}
 			components={componentsWithDefault}
 			shapeUtils={shapeUtilsWithDefaults}
+			bindingUtils={bindingUtilsWithDefaults}
 			tools={toolsWithDefaults}
+			assetOptions={assetOptions}
 		>
 			<TldrawUi {...rest} components={componentsWithDefault}>
 				<InsideOfEditorAndUiContext
@@ -131,6 +133,7 @@ export function Tldraw(props: TldrawProps) {
 					maxAssetSize={maxAssetSize}
 					acceptedImageMimeTypes={acceptedImageMimeTypes}
 					acceptedVideoMimeTypes={acceptedVideoMimeTypes}
+					persistenceKey={persistenceKey}
 					onMount={onMount}
 				/>
 				{children}
@@ -139,23 +142,15 @@ export function Tldraw(props: TldrawProps) {
 	)
 }
 
-const defaultAcceptedImageMimeTypes = Object.freeze([
-	'image/jpeg',
-	'image/png',
-	'image/gif',
-	'image/svg+xml',
-])
-
-const defaultAcceptedVideoMimeTypes = Object.freeze(['video/mp4', 'video/quicktime'])
-
 // We put these hooks into a component here so that they can run inside of the context provided by TldrawEditor and TldrawUi.
 function InsideOfEditorAndUiContext({
 	maxImageDimension = 1000,
 	maxAssetSize = 10 * 1024 * 1024, // 10mb
-	acceptedImageMimeTypes = defaultAcceptedImageMimeTypes,
-	acceptedVideoMimeTypes = defaultAcceptedVideoMimeTypes,
+	acceptedImageMimeTypes = DEFAULT_SUPPORTED_IMAGE_TYPES,
+	acceptedVideoMimeTypes = DEFAULT_SUPPORT_VIDEO_TYPES,
 	onMount,
-}: Partial<TLExternalContentProps & { onMount: TLOnMountHandler }>) {
+	persistenceKey,
+}: TLExternalContentProps & { onMount?: TLOnMountHandler; persistenceKey?: string }) {
 	const editor = useEditor()
 	const toasts = useToasts()
 	const msg = useTranslation()
@@ -177,7 +172,8 @@ function InsideOfEditorAndUiContext({
 			{
 				toasts,
 				msg,
-			}
+			},
+			persistenceKey
 		)
 
 		// ...then we run the onMount prop, which may override the above

@@ -1,10 +1,7 @@
 import { T } from '@tldraw/validate'
-import {
-	RETIRED_DOWN_MIGRATION,
-	createShapePropsMigrationIds,
-	createShapePropsMigrationSequence,
-} from '../records/TLShape'
-import { ShapePropsType, TLBaseShape } from './TLBaseShape'
+import { createShapePropsMigrationIds, createShapePropsMigrationSequence } from '../records/TLShape'
+import { RecordPropsType } from '../recordsWithProps'
+import { TLBaseShape } from './TLBaseShape'
 
 // Only allow multiplayer embeds. If we add additional routes later for example '/help' this won't match
 const TLDRAW_APP_RE = /(^\/r\/[^/]+\/?$)/
@@ -635,13 +632,13 @@ export const embedShapeProps = {
 }
 
 /** @public */
-export type TLEmbedShapeProps = ShapePropsType<typeof embedShapeProps>
+export type TLEmbedShapeProps = RecordPropsType<typeof embedShapeProps>
 
 /** @public */
 export type TLEmbedShape = TLBaseShape<'embed', TLEmbedShapeProps>
 
 /** @public */
-export type EmbedDefinition = {
+export interface EmbedDefinition {
 	readonly type: string
 	readonly title: string
 	readonly hostnames: readonly string[]
@@ -697,28 +694,28 @@ export const embedShapeMigrations = createShapePropsMigrationSequence({
 					props.tmpOldUrl = props.url
 				}
 			},
-			down: RETIRED_DOWN_MIGRATION,
+			down: 'retired',
 		},
 		{
 			id: Versions.RemoveDoesResize,
 			up: (props) => {
 				delete props.doesResize
 			},
-			down: RETIRED_DOWN_MIGRATION,
+			down: 'retired',
 		},
 		{
 			id: Versions.RemoveTmpOldUrl,
 			up: (props) => {
 				delete props.tmpOldUrl
 			},
-			down: RETIRED_DOWN_MIGRATION,
+			down: 'retired',
 		},
 		{
 			id: Versions.RemovePermissionOverrides,
 			up: (props) => {
 				delete props.overridePermissions
 			},
-			down: RETIRED_DOWN_MIGRATION,
+			down: 'retired',
 		},
 	],
 })

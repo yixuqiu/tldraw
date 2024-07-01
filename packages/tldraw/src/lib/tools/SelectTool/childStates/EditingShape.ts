@@ -23,6 +23,8 @@ export class EditingShape extends StateNode {
 		// Clear the editing shape
 		this.editor.setEditingShape(null)
 
+		updateHoveredShapeId.cancel()
+
 		const shape = this.editor.getShape(editingShapeId)!
 		const util = this.editor.getShapeUtil(shape)
 
@@ -35,6 +37,7 @@ export class EditingShape extends StateNode {
 		// and if they are, we need to transition to translating instead.
 		if (this.hitShapeForPointerUp && this.editor.inputs.isDragging) {
 			if (this.editor.getInstanceState().isReadonly) return
+			if (this.hitShapeForPointerUp.isLocked) return
 			this.editor.select(this.hitShapeForPointerUp)
 			this.parent.transition('translating', info)
 			this.hitShapeForPointerUp = null
@@ -135,6 +138,8 @@ export class EditingShape extends StateNode {
 
 		// Stay in edit mode to maintain flow of editing.
 		const util = this.editor.getShapeUtil(hitShape)
+		if (hitShape.isLocked) return
+
 		if (this.editor.getInstanceState().isReadonly) {
 			if (!util.canEditInReadOnly(hitShape)) {
 				this.parent.transition('pointing_shape', info)

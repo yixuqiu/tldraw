@@ -6,6 +6,7 @@ let editor: Editor
 beforeEach(() => {
 	editor = new Editor({
 		shapeUtils: [],
+		bindingUtils: [],
 		tools: [],
 		store: createTLStore({ shapeUtils: [] }),
 		getContainer: () => document.body,
@@ -18,7 +19,7 @@ describe('user', () => {
 	})
 
 	it('gets a user with the correct', () => {
-		editor.user.updateUserPreferences({ isDarkMode: true })
+		editor.user.updateUserPreferences({ colorScheme: 'dark' })
 		expect(editor.user.getIsDarkMode()).toBe(true)
 	})
 })

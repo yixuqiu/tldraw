@@ -3,7 +3,6 @@ import { TLHandle, TLShapeId } from '@tldraw/tlschema'
 import { dedupe, modulate, objectMapValues } from '@tldraw/utils'
 import classNames from 'classnames'
 import { Fragment, JSX, useEffect, useRef, useState } from 'react'
-import { COARSE_HANDLE_RADIUS, HANDLE_RADIUS, TEXT_SHADOW_LOD } from '../../constants'
 import { useCanvasEvents } from '../../hooks/useCanvasEvents'
 import { useCoarsePointer } from '../../hooks/useCoarsePointer'
 import { useContainer } from '../../hooks/useContainer'
@@ -26,9 +25,11 @@ import { LiveCollaborators } from '../LiveCollaborators'
 import { Shape } from '../Shape'
 
 /** @public */
-export type TLCanvasComponentProps = { className?: string }
+export interface TLCanvasComponentProps {
+	className?: string
+}
 
-/** @public */
+/** @public @react */
 export function DefaultCanvas({ className }: TLCanvasComponentProps) {
 	const editor = useEditor()
 
@@ -63,16 +64,12 @@ export function DefaultCanvas({ className }: TLCanvasComponentProps) {
 			// If we're below the lod distance for text shadows, turn them off
 			if (
 				rMemoizedStuff.current.allowTextOutline &&
-				z < TEXT_SHADOW_LOD !== rMemoizedStuff.current.lodDisableTextOutline
+				z < editor.options.textShadowLod !== rMemoizedStuff.current.lodDisableTextOutline
 			) {
-				const lodDisableTextOutline = z < TEXT_SHADOW_LOD
+				const lodDisableTextOutline = z < editor.options.textShadowLod
 				container.style.setProperty(
 					'--tl-text-outline',
-					lodDisableTextOutline
-						? 'none'
-						: `0 var(--b) 0 var(--color-background), 0 var(--a) 0 var(--color-background),
-				var(--b) var(--b) 0 var(--color-background), var(--a) var(--b) 0 var(--color-background),
-				var(--a) var(--a) 0 var(--color-background), var(--b) var(--a) 0 var(--color-background)`
+					lodDisableTextOutline ? 'none' : `var(--tl-text-outline-reference)`
 				)
 				rMemoizedStuff.current.lodDisableTextOutline = lodDisableTextOutline
 			}
@@ -128,51 +125,60 @@ export function DefaultCanvas({ className }: TLCanvasComponentProps) {
 	)
 
 	return (
-		<div
-			ref={rCanvas}
-			draggable={false}
-			data-iseditinganything={isEditingAnything}
-			data-isselectinganything={isSelectingAnything}
-			className={classNames('tl-canvas', className)}
-			data-testid="canvas"
-			{...events}
-		>
-			<svg className="tl-svg-context">
-				<defs>
-					{shapeSvgDefs}
-					<CursorDef />
-					<CollaboratorHintDef />
-					{SvgDefs && <SvgDefs />}
-				</defs>
-			</svg>
-			{Background && (
-				<div className="tl-background__wrapper">
-					<Background />
+		<>
+			<div
+				ref={rCanvas}
+				draggable={false}
+				data-iseditinganything={isEditingAnything}
+				data-isselectinganything={isSelectingAnything}
+				className={classNames('tl-canvas', className)}
+				data-testid="canvas"
+				{...events}
+			>
+				<svg className="tl-svg-context">
+					<defs>
+						{shapeSvgDefs}
+						<CursorDef />
+						<CollaboratorHintDef />
+						{SvgDefs && <SvgDefs />}
+					</defs>
+				</svg>
+				{Background && (
+					<div className="tl-background__wrapper">
+						<Background />
+					</div>
+				)}
+				<GridWrapper />
+				<div ref={rHtmlLayer} className="tl-html-layer tl-shapes" draggable={false}>
+					<OnTheCanvasWrapper />
+					<SelectionBackgroundWrapper />
+					{hideShapes ? null : debugSvg ? <ShapesWithSVGs /> : <ShapesToDisplay />}
 				</div>
-			)}
-			<GridWrapper />
-			<div ref={rHtmlLayer} className="tl-html-layer tl-shapes" draggable={false}>
-				<OnTheCanvasWrapper />
-				<SelectionBackgroundWrapper />
-				{hideShapes ? null : debugSvg ? <ShapesWithSVGs /> : <ShapesToDisplay />}
-			</div>
-			<div className="tl-overlays">
-				<div ref={rHtmlLayer2} className="tl-html-layer">
-					{debugGeometry ? <GeometryDebuggingView /> : null}
-					<HandlesWrapper />
-					<BrushWrapper />
-					<ScribbleWrapper />
-					<ZoomBrushWrapper />
-					<ShapeIndicators />
-					<HintedShapeIndicator />
-					<SnapIndicatorWrapper />
-					<SelectionForegroundWrapper />
-					<LiveCollaborators />
+				<div className="tl-overlays">
+					<div ref={rHtmlLayer2} className="tl-html-layer">
+						{debugGeometry ? <GeometryDebuggingView /> : null}
+						<HandlesWrapper />
+						<BrushWrapper />
+						<ScribbleWrapper />
+						<ZoomBrushWrapper />
+						<ShapeIndicators />
+						<HintedShapeIndicator />
+						<SnapIndicatorWrapper />
+						<SelectionForegroundWrapper />
+						<LiveCollaborators />
+					</div>
 				</div>
+				<MovingCameraHitTestBlocker />
 			</div>
-			<MovingCameraHitTestBlocker />
-		</div>
+			<InFrontOfTheCanvasWrapper />
+		</>
 	)
+}
+
+function InFrontOfTheCanvasWrapper() {
+	const { InFrontOfTheCanvas } = useEditorComponents()
+	if (!InFrontOfTheCanvas) return null
+	return <InFrontOfTheCanvas />
 }
 
 function GridWrapper() {
@@ -295,7 +301,8 @@ function HandlesWrapperInner({ shapeId }: { shapeId: TLShapeId }) {
 			if (!handles) return null
 
 			const minDistBetweenVirtualHandlesAndRegularHandles =
-				((isCoarse ? COARSE_HANDLE_RADIUS : HANDLE_RADIUS) / zoomLevel) * 2
+				((isCoarse ? editor.options.coarseHandleRadius : editor.options.handleRadius) / zoomLevel) *
+				2
 
 			return (
 				handles
@@ -598,6 +605,7 @@ function DebugSvgCopy({ id }: { id: TLShapeId }) {
 			src={image.src}
 			width={image.bounds.width}
 			height={image.bounds.height}
+			referrerPolicy="no-referrer"
 			style={{
 				position: 'absolute',
 				top: 0,

@@ -17,6 +17,7 @@ import { bookmarkShapeVersions } from './shapes/TLBookmarkShape'
 import { drawShapeVersions } from './shapes/TLDrawShape'
 import { embedShapeVersions } from './shapes/TLEmbedShape'
 import { geoShapeVersions } from './shapes/TLGeoShape'
+import { highlightShapeVersions } from './shapes/TLHighlightShape'
 import { imageShapeVersions } from './shapes/TLImageShape'
 import { lineShapeVersions } from './shapes/TLLineShape'
 import { noteShapeVersions } from './shapes/TLNoteShape'
@@ -89,6 +90,78 @@ describe('TLImageAsset AddIsAnimated', () => {
 	}
 
 	const { up, down } = getTestMigration(imageAssetVersions.AddIsAnimated)
+
+	test('up works as expected', () => {
+		expect(up(oldAsset)).toEqual(newAsset)
+	})
+	test('down works as expected', () => {
+		expect(down(newAsset)).toEqual(oldAsset)
+	})
+})
+
+describe('TLVideoAsset AddFileSize', () => {
+	const oldAsset = {
+		id: '1',
+		type: 'video',
+		props: {
+			src: 'https://www.youtube.com/watch?v=1',
+			name: 'video',
+			width: 100,
+			height: 100,
+			mimeType: 'video/mp4',
+		},
+	}
+
+	const newAsset = {
+		id: '1',
+		type: 'video',
+		props: {
+			src: 'https://www.youtube.com/watch?v=1',
+			name: 'video',
+			width: 100,
+			height: 100,
+			mimeType: 'video/mp4',
+			fileSize: -1,
+		},
+	}
+
+	const { up, down } = getTestMigration(videoAssetVersions.AddFileSize)
+
+	test('up works as expected', () => {
+		expect(up(oldAsset)).toEqual(newAsset)
+	})
+	test('down works as expected', () => {
+		expect(down(newAsset)).toEqual(oldAsset)
+	})
+})
+
+describe('TLImageAsset AddFileSize', () => {
+	const oldAsset = {
+		id: '1',
+		type: 'image',
+		props: {
+			src: 'https://www.youtube.com/watch?v=1',
+			name: 'image',
+			width: 100,
+			height: 100,
+			mimeType: 'image/gif',
+		},
+	}
+
+	const newAsset = {
+		id: '1',
+		type: 'image',
+		props: {
+			src: 'https://www.youtube.com/watch?v=1',
+			name: 'image',
+			width: 100,
+			height: 100,
+			mimeType: 'image/gif',
+			fileSize: -1,
+		},
+	}
+
+	const { up, down } = getTestMigration(imageAssetVersions.AddFileSize)
 
 	test('up works as expected', () => {
 		expect(up(oldAsset)).toEqual(newAsset)
@@ -1314,6 +1387,32 @@ describe('Make urls valid for all the assets', () => {
 	}
 })
 
+describe('Ensure favicons are on bookmarks', () => {
+	const { up, down } = getTestMigration(bookmarkAssetVersions.AddFavicon)
+	it('up works as expected', () => {
+		expect(
+			up({
+				props: {},
+			})
+		).toEqual({
+			props: {
+				favicon: '',
+			},
+		})
+	})
+	it('down works as expected', () => {
+		expect(
+			down({
+				props: {
+					favicon: 'https://tldraw.com/favicon.ico',
+				},
+			})
+		).toEqual({
+			props: {},
+		})
+	})
+})
+
 describe('Add duplicate props to instance', () => {
 	const { up, down } = getTestMigration(instanceVersions.AddDuplicateProps)
 	it('up works as expected', () => {
@@ -1570,6 +1669,308 @@ describe('Add text align to text shapes', () => {
 
 	test('down works as expected', () => {
 		expect(down({ props: { textAlign: 'middle' } })).toEqual({ props: { align: 'middle' } })
+	})
+})
+
+describe('Extract bindings from arrows', () => {
+	const { up } = getTestMigration(arrowShapeVersions.ExtractBindings)
+
+	test('up works as expected', () => {
+		expect(
+			up({
+				'shape:arrow1': {
+					id: 'shape:arrow1',
+					type: 'arrow',
+					props: {
+						start: {
+							type: 'binding',
+							boundShapeId: 'shape:box1',
+							normalizedAnchor: {
+								x: 0.4383437225516159,
+								y: 0.5065334673177019,
+							},
+							isPrecise: false,
+							isExact: false,
+						},
+						end: {
+							type: 'binding',
+							boundShapeId: 'shape:box2',
+							normalizedAnchor: {
+								x: 0.5848167203201774,
+								y: 0.5766996080606552,
+							},
+							isPrecise: false,
+							isExact: false,
+						},
+					},
+					typeName: 'shape',
+				},
+				'shape:arrow2': {
+					id: 'shape:arrow2',
+					type: 'arrow',
+					props: {
+						start: {
+							type: 'binding',
+							boundShapeId: 'shape:arrow2',
+							normalizedAnchor: {
+								x: 0.4383437225516159,
+								y: 0.5065334673177019,
+							},
+							isPrecise: false,
+							isExact: false,
+						},
+						end: {
+							type: 'point',
+							x: 174.75451263561803,
+							y: -1.4725753187527948,
+						},
+					},
+					typeName: 'shape',
+				},
+				'shape:arrow3': {
+					id: 'shape:arrow3',
+					type: 'arrow',
+					props: {
+						start: {
+							type: 'point',
+							x: 68.25440152898136,
+							y: -1.0404886613512332,
+						},
+						end: {
+							type: 'binding',
+							boundShapeId: 'shape:box3',
+							normalizedAnchor: {
+								x: 0.5848167203201774,
+								y: 0.5766996080606552,
+							},
+							isPrecise: true,
+							isExact: false,
+						},
+					},
+					typeName: 'shape',
+				},
+				'shape:arrow4': {
+					id: 'shape:arrow4',
+					type: 'arrow',
+					props: {
+						start: {
+							type: 'point',
+							x: 68.25440152898136,
+							y: -1.0404886613512758,
+						},
+						end: {
+							type: 'point',
+							x: 174.75451263561803,
+							y: -1.4725753187527948,
+						},
+					},
+					typeName: 'shape',
+				},
+			})
+		).toMatchInlineSnapshot(`
+		{
+		  "binding:nanoid_1": {
+		    "fromId": "shape:arrow1",
+		    "id": "binding:nanoid_1",
+		    "meta": {},
+		    "props": {
+		      "isExact": false,
+		      "isPrecise": false,
+		      "normalizedAnchor": {
+		        "x": 0.4383437225516159,
+		        "y": 0.5065334673177019,
+		      },
+		      "terminal": "start",
+		    },
+		    "toId": "shape:box1",
+		    "type": "arrow",
+		    "typeName": "binding",
+		  },
+		  "binding:nanoid_2": {
+		    "fromId": "shape:arrow1",
+		    "id": "binding:nanoid_2",
+		    "meta": {},
+		    "props": {
+		      "isExact": false,
+		      "isPrecise": false,
+		      "normalizedAnchor": {
+		        "x": 0.5848167203201774,
+		        "y": 0.5766996080606552,
+		      },
+		      "terminal": "end",
+		    },
+		    "toId": "shape:box2",
+		    "type": "arrow",
+		    "typeName": "binding",
+		  },
+		  "binding:nanoid_3": {
+		    "fromId": "shape:arrow2",
+		    "id": "binding:nanoid_3",
+		    "meta": {},
+		    "props": {
+		      "isExact": false,
+		      "isPrecise": false,
+		      "normalizedAnchor": {
+		        "x": 0.4383437225516159,
+		        "y": 0.5065334673177019,
+		      },
+		      "terminal": "start",
+		    },
+		    "toId": "shape:arrow2",
+		    "type": "arrow",
+		    "typeName": "binding",
+		  },
+		  "binding:nanoid_4": {
+		    "fromId": "shape:arrow3",
+		    "id": "binding:nanoid_4",
+		    "meta": {},
+		    "props": {
+		      "isExact": false,
+		      "isPrecise": true,
+		      "normalizedAnchor": {
+		        "x": 0.5848167203201774,
+		        "y": 0.5766996080606552,
+		      },
+		      "terminal": "end",
+		    },
+		    "toId": "shape:box3",
+		    "type": "arrow",
+		    "typeName": "binding",
+		  },
+		  "shape:arrow1": {
+		    "id": "shape:arrow1",
+		    "props": {
+		      "end": {
+		        "x": 0,
+		        "y": 0,
+		      },
+		      "start": {
+		        "x": 0,
+		        "y": 0,
+		      },
+		    },
+		    "type": "arrow",
+		    "typeName": "shape",
+		  },
+		  "shape:arrow2": {
+		    "id": "shape:arrow2",
+		    "props": {
+		      "end": {
+		        "x": 174.75451263561803,
+		        "y": -1.4725753187527948,
+		      },
+		      "start": {
+		        "x": 0,
+		        "y": 0,
+		      },
+		    },
+		    "type": "arrow",
+		    "typeName": "shape",
+		  },
+		  "shape:arrow3": {
+		    "id": "shape:arrow3",
+		    "props": {
+		      "end": {
+		        "x": 0,
+		        "y": 0,
+		      },
+		      "start": {
+		        "x": 68.25440152898136,
+		        "y": -1.0404886613512332,
+		      },
+		    },
+		    "type": "arrow",
+		    "typeName": "shape",
+		  },
+		  "shape:arrow4": {
+		    "id": "shape:arrow4",
+		    "props": {
+		      "end": {
+		        "x": 174.75451263561803,
+		        "y": -1.4725753187527948,
+		      },
+		      "start": {
+		        "x": 68.25440152898136,
+		        "y": -1.0404886613512758,
+		      },
+		    },
+		    "type": "arrow",
+		    "typeName": "shape",
+		  },
+		}
+	`)
+	})
+})
+
+describe('Add scale to draw shape', () => {
+	const { up, down } = getTestMigration(drawShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add scale to highlight shape', () => {
+	const { up, down } = getTestMigration(highlightShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add scale to geo shape', () => {
+	const { up, down } = getTestMigration(geoShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add scale to arrow shape', () => {
+	const { up, down } = getTestMigration(arrowShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add scale to note shape', () => {
+	const { up, down } = getTestMigration(noteShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add scale to line shape', () => {
+	const { up, down } = getTestMigration(lineShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
 	})
 })
 

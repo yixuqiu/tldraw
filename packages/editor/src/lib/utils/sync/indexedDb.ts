@@ -6,6 +6,9 @@ import { TLSessionStateSnapshot } from '../../config/TLSessionStateSnapshot'
 
 // DO NOT CHANGE THESE WITHOUT ADDING MIGRATION LOGIC. DOING SO WOULD WIPE ALL EXISTING DATA.
 const STORE_PREFIX = 'TLDRAW_DOCUMENT_v2'
+// N.B. This isn't very clean but this value is also echoed in AssetBlobStore.ts.
+// You need to keep them in sync.
+// This is to make sure that hard reset also clears this asset store.
 const dbNameIndexKey = 'TLDRAW_DB_NAME_INDEX_v2'
 
 const Table = {
@@ -38,13 +41,13 @@ async function withDb<T>(storeId: string, cb: (db: IDBPDatabase<StoreName>) => P
 	}
 }
 
-type LoadResult = {
+interface LoadResult {
 	records: TLRecord[]
 	schema?: SerializedSchema
 	sessionStateSnapshot?: TLSessionStateSnapshot | null
 }
 
-type SessionStateSnapshotRow = {
+interface SessionStateSnapshotRow {
 	id: string
 	snapshot: TLSessionStateSnapshot
 	updatedAt: number

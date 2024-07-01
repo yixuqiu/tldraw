@@ -10,6 +10,8 @@ import {
 	RequiredKeys,
 	RotateCorner,
 	SelectionHandle,
+	TLArrowBinding,
+	TLArrowShape,
 	TLContent,
 	TLEditorOptions,
 	TLEventInfo,
@@ -22,11 +24,13 @@ import {
 	TLWheelEventInfo,
 	Vec,
 	VecLike,
+	compact,
 	computed,
 	createShapeId,
 	createTLStore,
 	rotateSelectionHandle,
 } from '@tldraw/editor'
+import { defaultBindingUtils } from '../lib/defaultBindingUtils'
 import { defaultShapeTools } from '../lib/defaultShapeTools'
 import { defaultShapeUtils } from '../lib/defaultShapeUtils'
 import { defaultTools } from '../lib/defaultTools'
@@ -61,12 +65,17 @@ export class TestEditor extends Editor {
 		elm.tabIndex = 0
 
 		const shapeUtilsWithDefaults = [...defaultShapeUtils, ...(options.shapeUtils ?? [])]
+		const bindingUtilsWithDefaults = [...defaultBindingUtils, ...(options.bindingUtils ?? [])]
 
 		super({
 			...options,
-			shapeUtils: [...shapeUtilsWithDefaults],
+			shapeUtils: shapeUtilsWithDefaults,
+			bindingUtils: bindingUtilsWithDefaults,
 			tools: [...defaultTools, ...defaultShapeTools, ...(options.tools ?? [])],
-			store: createTLStore({ shapeUtils: [...shapeUtilsWithDefaults] }),
+			store: createTLStore({
+				shapeUtils: shapeUtilsWithDefaults,
+				bindingUtils: bindingUtilsWithDefaults,
+			}),
 			getContainer: () => elm,
 			initialState: 'select',
 		})
@@ -244,10 +253,10 @@ export class TestEditor extends Editor {
 	}
 
 	expectShapeToMatch = <T extends TLShape = TLShape>(
-		...model: RequiredKeys<TLShapePartial<T>, 'id'>[]
+		...model: RequiredKeys<Partial<TLShapePartial<T>>, 'id'>[]
 	) => {
 		model.forEach((model) => {
-			const shape = this.getShape(model.id)!
+			const shape = this.getShape(model.id!)!
 			const next = { ...shape, ...model }
 			expect(shape).toCloselyMatchObject(next)
 		})
@@ -701,6 +710,13 @@ export class TestEditor extends Editor {
 
 	getPageRotation(shape: TLShape) {
 		return this.getPageRotationById(shape.id)
+	}
+
+	getArrowsBoundTo(shapeId: TLShapeId) {
+		const ids = new Set(
+			this.getBindingsToShape<TLArrowBinding>(shapeId, 'arrow').map((b) => b.fromId)
+		)
+		return compact(Array.from(ids, (id) => this.getShape<TLArrowShape>(id)))
 	}
 }
 
