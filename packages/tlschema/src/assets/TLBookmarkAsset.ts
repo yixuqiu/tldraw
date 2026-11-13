@@ -1,6 +1,6 @@
 import { createMigrationIds, createRecordMigrationSequence } from '@tldraw/store'
 import { T } from '@tldraw/validate'
-import { TLAsset } from '../records/TLAsset'
+import { RecordProps } from '../recordsWithProps'
 import { TLBaseAsset, createAssetValidator } from './TLBaseAsset'
 
 /**
@@ -13,32 +13,65 @@ export type TLBookmarkAsset = TLBaseAsset<
 		title: string
 		description: string
 		image: string
+		favicon: string
 		src: string | null
 	}
 >
 
 /** @public */
+export const bookmarkAssetProps = {
+	title: T.string,
+	description: T.string,
+	image: T.string,
+	favicon: T.string,
+	src: T.srcUrl.nullable(),
+} satisfies RecordProps<TLBookmarkAsset>
+
+/** Validator for bookmark assets. @public */
 export const bookmarkAssetValidator: T.Validator<TLBookmarkAsset> = createAssetValidator(
 	'bookmark',
-	T.object({
-		title: T.string,
-		description: T.string,
-		image: T.string,
-		src: T.srcUrl.nullable(),
-	})
+	T.object(bookmarkAssetProps)
 )
 
 const Versions = createMigrationIds('com.tldraw.asset.bookmark', {
 	MakeUrlsValid: 1,
+	AddFavicon: 2,
 } as const)
 
+/**
+ * Migration version identifiers for bookmark assets. These versions track
+ * the evolution of the bookmark asset schema over time.
+ *
+ * Available versions:
+ * - `MakeUrlsValid` (v1): Ensures src URLs are valid or empty
+ * - `AddFavicon` (v2): Adds favicon property to bookmark assets
+ *
+ * @example
+ * ```ts
+ * import { bookmarkAssetVersions } from '@tldraw/tlschema'
+ *
+ * // Check if a migration exists
+ * console.log(bookmarkAssetVersions.AddFavicon) // 2
+ * ```
+ *
+ * @public
+ */
 export { Versions as bookmarkAssetVersions }
 
-/** @public */
+/**
+ * Migration sequence for bookmark assets. Handles the evolution of bookmark asset
+ * data structure over time, ensuring backward and forward compatibility.
+ *
+ * The migration sequence includes:
+ * 1. **MakeUrlsValid** (v1): Validates and cleans up src URLs, setting invalid URLs to empty string
+ * 2. **AddFavicon** (v2): Adds the favicon property and validates it, setting invalid favicons to empty string
+ *
+ * @public
+ */
 export const bookmarkAssetMigrations = createRecordMigrationSequence({
 	sequenceId: 'com.tldraw.asset.bookmark',
 	recordType: 'asset',
-	filter: (asset) => (asset as TLAsset).type === 'bookmark',
+	filter: (asset) => (asset as TLBookmarkAsset).type === 'bookmark',
 	sequence: [
 		{
 			id: Versions.MakeUrlsValid,
@@ -49,6 +82,17 @@ export const bookmarkAssetMigrations = createRecordMigrationSequence({
 			},
 			down: (_asset) => {
 				// noop
+			},
+		},
+		{
+			id: Versions.AddFavicon,
+			up: (asset: any) => {
+				if (!T.srcUrl.isValid(asset.props.favicon)) {
+					asset.props.favicon = ''
+				}
+			},
+			down: (asset: any) => {
+				delete asset.props.favicon
 			},
 		},
 	],

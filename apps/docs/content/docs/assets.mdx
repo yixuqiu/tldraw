@@ -3,7 +3,7 @@ title: Assets
 status: published
 author: steveruizok
 date: 6/9/2023
-order: 3
+order: 5
 keywords:
   - image
   - video
@@ -13,14 +13,51 @@ keywords:
   - files
 ---
 
-Assets are dynamic records that store data about a shared asset. For example, our image and video shapes refer to assets rather than embedding their source files directly. This is essential because, by default, these asset sources are stored in base64 data.
+Assets are records that store data about shared resources like images and videos. Shapes reference assets by ID rather than embedding files directly, so you can reuse the same image across multiple shapes without duplicating data.
 
-You can use assets for any shared piece of information, however they're best used for images, videos, and files.
+For the complete guide to working with assets, see the [Assets](/sdk-features/assets) reference.
+
+## Default storage behavior
+
+[TLAssetStore](?) controls how assets are uploaded and resolved. The default depends on your store setup:
+
+| Setup                                         | Asset store                                  | Where files go                                                                            |
+| --------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| In-memory only (default)                      | [inlineBase64AssetStore](?)                  | Data URLs inside the document                                                             |
+| [`persistenceKey`](/sdk-features/persistence) | Built in, overridable with the `assets` prop | The browser's [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) |
+| [Sync server](/docs/sync)                     | Your own `TLAssetStore`, passed to `useSync` | A storage service like S3 or R2                                                           |
+
+To use your own storage, implement `upload` and `resolve` and pass the store to `<Tldraw>` (or to `useSync`):
+
+```tsx
+import { Tldraw, TLAssetStore } from 'tldraw'
+import 'tldraw/tldraw.css'
+
+const myAssetStore: TLAssetStore = {
+	async upload(asset, file) {
+		const url = await uploadToMyServer(file)
+		return { src: url }
+	},
+	resolve(asset) {
+		return asset.props.src
+	},
+}
+
+export default function App() {
+	return (
+		<div style={{ position: 'fixed', inset: 0 }}>
+			<Tldraw assets={myAssetStore} />
+		</div>
+	)
+}
+```
+
+`resolve` also receives a [TLAssetContext](?) with the current screen scale and DPR, so you can serve a resized image instead of the original. Pasted and dropped files go through the [external content](/sdk-features/external-content) handlers before they become assets.
 
 ## Examples
 
-While we're working on docs for this part of the project, please refer to the examples below:
-
-- [Using images hosted](https://github.com/tldraw/tldraw/blob/main/apps/examples/src/examples/hosted-images/HostedImagesExample.tsx)
-- [Customizing the default asset options](https://github.com/tldraw/tldraw/blob/main/apps/examples/src/examples/asset-props/AssetPropsExample.tsx)
-- [Handling pasted / dropped external content](https://github.com/tldraw/tldraw/blob/main/apps/examples/src/examples/external-content-sources/ExternalContentSourcesExample.tsx)
+- [Using hosted images](/examples/data/assets/hosted-images) — Reference images by URL without uploading them
+- [Customizing default asset options](/examples/configuration/asset-props) — Size and dimension limits for uploaded assets
+- [Handling pasted/dropped external content](/examples/data/assets/external-content-sources) — Turn pasted content into assets
+- [Simple asset store with server upload](https://github.com/tldraw/tldraw/blob/main/templates/simple-server-example/src/client/App.tsx) — Upload files to a Node server
+- [Asset store with image optimization](https://github.com/tldraw/tldraw/blob/main/packages/sync/src/useSyncDemo.ts) — The demo server's `createDemoAssetStore`, which resolves resized images

@@ -1,57 +1,60 @@
-import { Analytics } from '@vercel/analytics/react'
+import { GeistSans } from 'geist/font/sans'
 import { Metadata, Viewport } from 'next'
-import AutoRefresh from '../components/AutoRefresh'
-import '../styles/globals.css'
-import '../styles/hljs.css'
-import '../styles/parameters-table.css'
-import { Providers } from './providers'
+import { ThemeProvider } from 'next-themes'
+import localFont from 'next/font/local'
+import AutoRefresh from '@/components/common/autorefresh'
+import { Footer } from '@/components/navigation/footer'
+import { Header } from '@/components/navigation/header'
+import { assetUrl } from '@/utils/asset-url'
+import { cn } from '@/utils/cn'
+import Analytics from './analytics'
+import './globals.css'
 
-const TITLE = 'tldraw SDK'
-const DESCRIPTION =
-	'Infinite canvas SDK from tldraw. Build whiteboards, design tools, and canvas experiences for the web.'
-const TWITTER_HANDLE = '@tldraw'
-const TWITTER_CARD = 'social-twitter.png'
-const FACEBOOK_CARD = 'social-og.png'
-const THEME_COLOR = '#FFFFFF'
+function Wrapper({ children }: { children: React.ReactNode }) {
+	if (process.env.NODE_ENV === 'development') {
+		return <AutoRefresh>{children}</AutoRefresh>
+	}
+
+	return children
+}
 
 export const metadata: Metadata = {
 	metadataBase: new URL('https://tldraw.dev'),
 	title: {
-		default: TITLE,
-		template: `%s • ${TITLE}`,
+		default: 'tldraw: Build whiteboards in React with the tldraw SDK',
+		template: `%s • tldraw`,
 	},
-	description: DESCRIPTION,
-	openGraph: {
-		title: TITLE,
-		description: DESCRIPTION,
-		siteName: TITLE,
-		type: 'website',
-		url: 'https://tldraw.dev',
-		images: FACEBOOK_CARD,
-	},
+	description:
+		'The tldraw SDK provides tools, services, and APIs to build beautiful whiteboards and infinite canvas applications with real-time collaboration and a powerful React-based canvas.',
 	twitter: {
-		creator: TWITTER_HANDLE,
-		description: DESCRIPTION,
-		card: 'summary_large_image',
-		images: TWITTER_CARD,
+		creator: '@tldraw',
 	},
-	applicationName: TITLE,
+	applicationName: 'tldraw SDK',
 	appleWebApp: {
 		capable: true,
-		title: TITLE,
+		title: 'tldraw SDK',
 		statusBarStyle: 'black',
 	},
-	formatDetection: {
-		telephone: false,
-	},
 	icons: [
-		{ rel: 'shortcut icon', url: '/favicon.svg' },
-		{ rel: 'icon', url: 'favicon-32x32.svg', sizes: '32x32' },
-		{ rel: 'icon', url: 'favicon-16x16.svg', sizes: '16x16' },
-		{ rel: 'apple-touch-icon', url: 'apple-touch-icon.png' },
-		{ rel: 'apple-touch-icon', url: 'apple-touch-icon-152x152.svg', sizes: '152x152' },
-		{ rel: 'apple-touch-icon', url: 'apple-touch-icon-180x180.svg', sizes: '180x180' },
-		{ rel: 'apple-touch-icon', url: 'apple-touch-icon-167x167.svg', sizes: '167x167' },
+		{ rel: 'shortcut icon', url: assetUrl('/favicon.svg') },
+		{ rel: 'icon', url: assetUrl('/favicon-32x32.svg'), sizes: '32x32' },
+		{ rel: 'icon', url: assetUrl('/favicon-16x16.svg'), sizes: '16x16' },
+		{ rel: 'apple-touch-icon', url: assetUrl('/apple-touch-icon.png') },
+		{
+			rel: 'apple-touch-icon',
+			url: assetUrl('/apple-touch-icon-152x152.svg'),
+			sizes: '152x152',
+		},
+		{
+			rel: 'apple-touch-icon',
+			url: assetUrl('/apple-touch-icon-180x180.svg'),
+			sizes: '180x180',
+		},
+		{
+			rel: 'apple-touch-icon',
+			url: assetUrl('/apple-touch-icon-167x167.svg'),
+			sizes: '167x167',
+		},
 	],
 }
 
@@ -60,20 +63,40 @@ export const viewport: Viewport = {
 	maximumScale: 1,
 	width: 'device-width',
 	height: 'device-height',
-	themeColor: THEME_COLOR,
+	themeColor: '#ffffff',
 }
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
+const ShantellSans = localFont({
+	src: './shantell-sans.woff2',
+	weight: '400',
+	display: 'swap',
+	variable: '--font-shantell-sans',
+})
+
+export default async function Layout({ children }: { children: React.ReactNode }) {
 	return (
-		<AutoRefresh>
-			<html suppressHydrationWarning>
-				<body>
-					<Providers>
+		<Wrapper>
+			<html
+				lang="en"
+				className={cn(GeistSans.variable, ShantellSans.variable, 'font-sans antialiased')}
+			>
+				<body className="overflow-x-hidden bg-white text-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+					<ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+						<Header />
 						{children}
+						<Footer />
 						<Analytics />
-					</Providers>
+					</ThemeProvider>
+					<noscript>
+						<iframe
+							src="https://www.googletagmanager.com/ns.html?id=GTM-KMMLPMMN"
+							height="0"
+							width="0"
+							style={{ display: 'none', visibility: 'hidden' }}
+						/>
+					</noscript>
 				</body>
 			</html>
-		</AutoRefresh>
+		</Wrapper>
 	)
 }

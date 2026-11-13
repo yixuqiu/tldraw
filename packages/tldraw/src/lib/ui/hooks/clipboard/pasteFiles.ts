@@ -1,7 +1,8 @@
 import { Editor, TLExternalContentSource, VecLike } from '@tldraw/editor'
+import { putPastedExternalContent } from './putPastedContent'
 
 /**
- * When the clipboard has a file, create an image shape from the file and paste it into the scene
+ * When the clipboard has a file, create an image/video shape from the file and paste it into the scene.
  *
  * @param editor - The editor instance.
  * @param urls - The file urls.
@@ -10,22 +11,25 @@ import { Editor, TLExternalContentSource, VecLike } from '@tldraw/editor'
  */
 export async function pasteFiles(
 	editor: Editor,
-	urls: string[],
+	blobs: (File | Blob)[],
 	point?: VecLike,
-	sources?: TLExternalContentSource[]
+	sources?: TLExternalContentSource[],
+	clipboardPasteSource: 'native-event' | 'clipboard-read' = 'native-event'
 ) {
-	const blobs = await Promise.all(urls.map(async (url) => await (await fetch(url)).blob()))
-	const files = blobs.map((blob) => new File([blob], 'tldrawFile', { type: blob.type }))
+	const files = blobs.map((blob) =>
+		blob instanceof File ? blob : new File([blob], 'tldrawFile', { type: blob.type })
+	)
 
-	editor.mark('paste')
+	editor.markHistoryStoppingPoint('paste')
 
-	await editor.putExternalContent({
-		type: 'files',
-		files,
-		point,
-		ignoreParent: false,
-		sources,
-	})
-
-	urls.forEach((url) => URL.revokeObjectURL(url))
+	await putPastedExternalContent(
+		editor,
+		{
+			type: 'files',
+			files,
+			point,
+			sources,
+		},
+		{ source: clipboardPasteSource, point }
+	)
 }

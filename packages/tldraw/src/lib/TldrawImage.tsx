@@ -1,53 +1,87 @@
 import {
 	Editor,
-	ErrorScreen,
-	Expand,
-	LoadingScreen,
-	StoreSnapshot,
+	TLAnyBindingUtilConstructor,
 	TLAnyShapeUtilConstructor,
+	TLAssetStore,
+	TLEditorSnapshot,
+	TLImageExportOptions,
 	TLPageId,
-	TLRecord,
-	TLSvgOptions,
+	TLStoreSnapshot,
+	TLTextOptions,
+	TldrawOptions,
+	mergeArraysAndReplaceDefaults,
 	useShallowArrayIdentity,
 	useTLStore,
 } from '@tldraw/editor'
-import { memo, useLayoutEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { defaultBindingUtils } from './defaultBindingUtils'
 import { defaultShapeUtils } from './defaultShapeUtils'
-import { usePreloadAssets } from './ui/hooks/usePreloadAssets'
-import { getSvgAsImage } from './utils/export/export'
+import { TLUiAssetUrlOverrides } from './ui/assetUrls'
 import { useDefaultEditorAssetsWithOverrides } from './utils/static-assets/assetUrls'
+import { defaultAddFontsFromNode, tipTapDefaultExtensions } from './utils/text/richText'
+
+/** @public */
+export interface TldrawImageProps extends TLImageExportOptions {
+	/**
+	 * The snapshot to display.
+	 */
+	snapshot: Partial<TLEditorSnapshot> | TLStoreSnapshot
+
+	/**
+	 * The image format to use. Defaults to 'svg'.
+	 */
+	format?: 'svg' | 'png'
+
+	/**
+	 * The page to display. Defaults to the first page.
+	 */
+	pageId?: TLPageId
+
+	/**
+	 * Additional shape utils to use.
+	 */
+	shapeUtils?: readonly TLAnyShapeUtilConstructor[]
+	/**
+	 * Additional binding utils to use.
+	 */
+	bindingUtils?: readonly TLAnyBindingUtilConstructor[]
+	/**
+	 * The license key.
+	 */
+	licenseKey?: string
+	/**
+	 * Asset URL overrides.
+	 */
+	assetUrls?: TLUiAssetUrlOverrides
+	/**
+	 * The asset store to use for resolving the snapshot's assets, matching the `assets` prop on
+	 * {@link Tldraw}. Without one, assets that aren't stored inline (as data URLs) can't be
+	 * resolved and won't appear in the image.
+	 */
+	assets?: TLAssetStore
+	/**
+	 * Options for the editor.
+	 */
+	options?: Partial<TldrawOptions>
+	/**
+	 * Text options for the editor.
+	 *
+	 * @deprecated Use `options.text` instead. This prop will be removed in a future release.
+	 */
+	textOptions?: TLTextOptions
+}
+
+const defaultOptions: Partial<TldrawOptions> = {
+	text: {
+		tipTapConfig: {
+			extensions: tipTapDefaultExtensions,
+		},
+		addFontsFromNode: defaultAddFontsFromNode,
+	},
+}
 
 /**
- * Props for the {@link tldraw#TldrawImage} component.
- *
- * @public
- **/
-export type TldrawImageProps = Expand<
-	{
-		/**
-		 * The snapshot to display.
-		 */
-		snapshot: StoreSnapshot<TLRecord>
-
-		/**
-		 * The image format to use. Defaults to 'svg'.
-		 */
-		format?: 'svg' | 'png'
-
-		/**
-		 * The page to display. Defaults to the first page.
-		 */
-		pageId?: TLPageId
-
-		/**
-		 * Additional shape utils to use.
-		 */
-		shapeUtils?: readonly TLAnyShapeUtilConstructor[]
-	} & Partial<TLSvgOptions>
->
-
-/**
- * A renderered SVG image of a Tldraw snapshot.
+ * A rendered SVG image of a Tldraw snapshot.
  *
  * @example
  * ```tsx
@@ -62,45 +96,77 @@ export type TldrawImageProps = Expand<
  * ```
  *
  * @public
+ * @react
  */
 export const TldrawImage = memo(function TldrawImage(props: TldrawImageProps) {
 	const [url, setUrl] = useState<string | null>(null)
 	const [container, setContainer] = useState<HTMLDivElement | null>(null)
 
-	const shapeUtils = useShallowArrayIdentity(props.shapeUtils ?? [])
-	const shapeUtilsWithDefaults = useMemo(() => [...defaultShapeUtils, ...shapeUtils], [shapeUtils])
-	const store = useTLStore({ snapshot: props.snapshot, shapeUtils: shapeUtilsWithDefaults })
-
-	const assets = useDefaultEditorAssetsWithOverrides()
-	const { done: preloadingComplete, error: preloadingError } = usePreloadAssets(assets)
+	const _shapeUtils = useShallowArrayIdentity(props.shapeUtils ?? [])
+	const shapeUtilsWithDefaults = useMemo(
+		() => mergeArraysAndReplaceDefaults('type', _shapeUtils, defaultShapeUtils),
+		[_shapeUtils]
+	)
+	const _bindingUtils = useShallowArrayIdentity(props.bindingUtils ?? [])
+	const bindingUtilsWithDefaults = useMemo(
+		() => mergeArraysAndReplaceDefaults('type', _bindingUtils, defaultBindingUtils),
+		[_bindingUtils]
+	)
+	const store = useTLStore({
+		snapshot: props.snapshot,
+		shapeUtils: shapeUtilsWithDefaults,
+		assets: props.assets,
+	})
 
 	const {
 		pageId,
 		bounds,
 		scale,
+		pixelRatio,
 		background,
 		padding,
 		darkMode,
 		preserveAspectRatio,
 		format = 'svg',
+		licenseKey,
+		assetUrls,
+		options: _options,
+		// eslint-disable-next-line @typescript-eslint/no-deprecated
+		textOptions: _textOptions,
 	} = props
+
+	const options = useMemo(
+		() => ({
+			...defaultOptions,
+			..._options,
+			text: {
+				...defaultOptions.text,
+				...(_options?.text ?? _textOptions),
+			},
+		}),
+		[_options, _textOptions]
+	)
+	const assetUrlsWithOverrides = useDefaultEditorAssetsWithOverrides(assetUrls)
 
 	useLayoutEffect(() => {
 		if (!container) return
 		if (!store) return
-		if (!preloadingComplete) return
 
 		let isCancelled = false
 
-		const tempElm = document.createElement('div')
+		const tempElm = container.ownerDocument.createElement('div')
 		container.appendChild(tempElm)
 		container.classList.add('tl-container', 'tl-theme__light')
 
 		const editor = new Editor({
 			store,
-			shapeUtils: shapeUtilsWithDefaults ?? [],
+			shapeUtils: shapeUtilsWithDefaults,
+			bindingUtils: bindingUtilsWithDefaults,
 			tools: [],
 			getContainer: () => tempElm,
+			licenseKey,
+			fontAssetUrls: assetUrlsWithOverrides.fonts,
+			options,
 		})
 
 		if (pageId) editor.setCurrentPage(pageId)
@@ -108,36 +174,21 @@ export const TldrawImage = memo(function TldrawImage(props: TldrawImageProps) {
 		const shapeIds = editor.getCurrentPageShapeIds()
 
 		async function setSvg() {
-			const svgResult = await editor.getSvgString([...shapeIds], {
+			// toImage waits for the required fonts to load (so text is measured correctly) before
+			// it renders, so we don't need to do it here.
+			const imageResult = await editor.toImage([...shapeIds], {
 				bounds,
 				scale,
 				background,
 				padding,
 				darkMode,
 				preserveAspectRatio,
+				format,
 			})
+			if (!imageResult || isCancelled) return
 
-			if (svgResult && !isCancelled) {
-				if (format === 'svg') {
-					if (!isCancelled) {
-						const blob = new Blob([svgResult.svg], { type: 'image/svg+xml' })
-						const url = URL.createObjectURL(blob)
-						setUrl(url)
-					}
-				} else if (format === 'png') {
-					const blob = await getSvgAsImage(svgResult.svg, editor.environment.isSafari, {
-						type: format,
-						quality: 1,
-						scale: 2,
-						width: svgResult.width,
-						height: svgResult.height,
-					})
-					if (blob && !isCancelled) {
-						const url = URL.createObjectURL(blob)
-						setUrl(url)
-					}
-				}
-			}
+			const url = URL.createObjectURL(imageResult.blob)
+			setUrl(url)
 
 			editor.dispose()
 		}
@@ -152,6 +203,7 @@ export const TldrawImage = memo(function TldrawImage(props: TldrawImageProps) {
 		container,
 		store,
 		shapeUtilsWithDefaults,
+		bindingUtilsWithDefaults,
 		pageId,
 		bounds,
 		scale,
@@ -159,21 +211,27 @@ export const TldrawImage = memo(function TldrawImage(props: TldrawImageProps) {
 		padding,
 		darkMode,
 		preserveAspectRatio,
-		preloadingComplete,
-		preloadingError,
+		licenseKey,
+		pixelRatio,
+		assetUrlsWithOverrides,
+		options,
 	])
 
-	if (preloadingError) {
-		return <ErrorScreen>Could not load assets.</ErrorScreen>
-	}
-
-	if (!preloadingComplete) {
-		return <LoadingScreen>Loading assets...</LoadingScreen>
-	}
+	useEffect(() => {
+		return () => {
+			if (url) URL.revokeObjectURL(url)
+		}
+	}, [url])
 
 	return (
 		<div ref={setContainer} style={{ position: 'relative', width: '100%', height: '100%' }}>
-			{url && <img src={url} style={{ width: '100%', height: '100%' }} />}
+			{url && (
+				<img
+					src={url}
+					referrerPolicy="strict-origin-when-cross-origin"
+					style={{ width: '100%', height: '100%' }}
+				/>
+			)}
 		</div>
 	)
 })

@@ -1,4 +1,5 @@
-import { EMBED_DEFINITIONS, EmbedDefinition } from '@tldraw/editor'
+import { safeParseUrl } from '@tldraw/editor'
+import { TLEmbedDefinition } from '../../defaultEmbedDefinitions'
 
 // https://github.com/sindresorhus/escape-string-regexp/blob/main/index.js
 function escapeStringRegexp(string: string) {
@@ -12,9 +13,11 @@ function escapeStringRegexp(string: string) {
 }
 
 /** @public */
-export function matchEmbedUrl(url: string) {
-	const host = new URL(url).host.replace('www.', '')
-	for (const localEmbedDef of EMBED_DEFINITIONS) {
+export function matchEmbedUrl(definitions: readonly TLEmbedDefinition[], url: string) {
+	const parsed = safeParseUrl(url)
+	if (!parsed) return undefined
+	const host = parsed.host.replace('www.', '')
+	for (const localEmbedDef of definitions) {
 		if (checkHostnames(localEmbedDef.hostnames, host)) {
 			const originalUrl = localEmbedDef.fromEmbedUrl(url)
 			if (originalUrl) {
@@ -26,6 +29,7 @@ export function matchEmbedUrl(url: string) {
 			}
 		}
 	}
+	return undefined
 }
 
 const globlikeRegExp = (input: string) => {
@@ -37,17 +41,26 @@ const globlikeRegExp = (input: string) => {
 
 const checkHostnames = (hostnames: readonly string[], targetHostname: string) => {
 	return !!hostnames.find((hostname) => {
-		const re = new RegExp(globlikeRegExp(hostname))
+		// The host must be the pattern or a subdomain of it. Unanchored, `tldraw.com` would
+		// also match `tldraw.com.evil.io`, which would then inherit that definition's relaxed
+		// iframe sandbox permissions.
+		const re = new RegExp(`^(?:.+\\.)?${globlikeRegExp(hostname)}$`)
 		return targetHostname.match(re)
 	})
 }
 
 /** @public */
-export function matchUrl(url: string) {
-	const host = new URL(url).host.replace('www.', '')
-	for (const localEmbedDef of EMBED_DEFINITIONS) {
+export function matchUrl(
+	definitions: readonly TLEmbedDefinition[],
+	url: string,
+	embedConfig?: Record<string, unknown>
+) {
+	const parsed = safeParseUrl(url)
+	if (!parsed) return undefined
+	const host = parsed.host.replace('www.', '')
+	for (const localEmbedDef of definitions) {
 		if (checkHostnames(localEmbedDef.hostnames, host)) {
-			const embedUrl = localEmbedDef.toEmbedUrl(url)
+			const embedUrl = localEmbedDef.toEmbedUrl(url, embedConfig?.[localEmbedDef.type])
 
 			if (embedUrl) {
 				return {
@@ -58,42 +71,63 @@ export function matchUrl(url: string) {
 			}
 		}
 	}
+	return undefined
 }
 
 /** @public */
 export type TLEmbedResult =
 	| {
-			definition: EmbedDefinition
+			definition: TLEmbedDefinition
 			url: string
 			embedUrl: string
 	  }
 	| undefined
 
 /**
- * Tests whether an URL supports embedding and returns the result.
- *
- * @param inputUrl - The URL to match
- * @public
- */
-export function getEmbedInfoUnsafely(inputUrl: string): TLEmbedResult {
-	const result = matchUrl(inputUrl) ?? matchEmbedUrl(inputUrl)
-	return result
-}
-
-/**
  * Tests whether an URL supports embedding and returns the result. If we encounter an error, we
  * return undefined.
  *
  * @param inputUrl - The URL to match
+ * @param embedConfig - Optional per-embed config, keyed by embed type, passed to `toEmbedUrl`
  * @public
  */
-export function getEmbedInfo(inputUrl: string): TLEmbedResult {
+export function getEmbedInfo(
+	definitions: readonly TLEmbedDefinition[],
+	inputUrl: string,
+	embedConfig?: Record<string, unknown>
+): TLEmbedResult {
 	try {
-		return getEmbedInfoUnsafely(inputUrl)
-	} catch (e) {
-		// Don't throw here! We'll throw it from the embed shape's shape util
-		console.error(e)
+		return matchUrl(definitions, inputUrl, embedConfig) ?? matchEmbedUrl(definitions, inputUrl)
+	} catch {
+		return undefined
 	}
+}
 
-	return undefined
+const ASPECT_RATIO_EPSILON = 0.001
+
+/**
+ * Given an embed shape's current size and a newly-resolved aspect ratio, return the size it should
+ * be corrected to, or `null` when no change is needed — either because there's no resolved ratio or
+ * the shape is already at it. The correction preserves the box's area, so a portrait video takes the
+ * same visual footprint as a landscape one instead of ballooning the shape's height.
+ *
+ * @param opts - The current `w`/`h` and the `resolvedRatio` (`width / height`) discovered at runtime.
+ * @internal
+ */
+export function getCorrectedEmbedSize({
+	w,
+	h,
+	resolvedRatio,
+}: {
+	w: number
+	h: number
+	resolvedRatio: number | undefined
+}): { w: number; h: number } | null {
+	if (!resolvedRatio || resolvedRatio <= 0) return null
+
+	// Already at the resolved ratio: nothing to do.
+	if (Math.abs(w / h - resolvedRatio) <= ASPECT_RATIO_EPSILON) return null
+
+	const area = w * h
+	return { w: Math.sqrt(area * resolvedRatio), h: Math.sqrt(area / resolvedRatio) }
 }

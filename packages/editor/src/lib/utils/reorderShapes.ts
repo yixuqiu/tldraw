@@ -1,11 +1,21 @@
 import { TLParentId, TLShape, TLShapeId, TLShapePartial } from '@tldraw/tlschema'
 import { IndexKey, compact, getIndicesBetween, sortByIndex } from '@tldraw/utils'
-import { Editor } from '../editor/Editor'
+import type { Editor } from '../editor/Editor'
 
+/**
+ * Gets the changes for reordering shapes.
+ * @param editor - The editor.
+ * @param operation - The operation to perform.
+ * @param ids - The ids of the shapes to reorder.
+ * @param opts - The options.
+ * @returns The changes.
+ * @public
+ */
 export function getReorderingShapesChanges(
 	editor: Editor,
 	operation: 'toBack' | 'toFront' | 'forward' | 'backward',
-	ids: TLShapeId[]
+	ids: TLShapeId[],
+	opts?: { considerAllShapes?: boolean }
 ) {
 	if (ids.length === 0) return []
 
@@ -37,11 +47,15 @@ export function getReorderingShapesChanges(
 			break
 		}
 		case 'forward': {
-			parents.forEach(({ moving, children }) => reorderForward(moving, children, changes))
+			parents.forEach(({ moving, children }) =>
+				reorderForward(editor, moving, children, changes, opts)
+			)
 			break
 		}
 		case 'backward': {
-			parents.forEach(({ moving, children }) => reorderBackward(moving, children, changes))
+			parents.forEach(({ moving, children }) =>
+				reorderBackward(editor, moving, children, changes, opts)
+			)
 			break
 		}
 	}
@@ -147,14 +161,43 @@ function reorderToFront(moving: Set<TLShape>, children: TLShape[], changes: TLSh
 	}
 }
 
+function getOverlapChecker(editor: Editor, moving: Set<TLShape>) {
+	const movingBounds = compact(
+		Array.from(moving).map((shape) => {
+			const bounds = editor.getShapePageBounds(shape)
+			if (!bounds) return null
+			return { shape, bounds }
+		})
+	)
+	const isContaining = (child: TLShape) => {
+		const bounds = editor.getShapePageBounds(child)
+		if (!bounds) return false
+		return movingBounds.some((other) => {
+			return other.bounds.includes(bounds)
+		})
+	}
+
+	return isContaining
+}
+
 /**
  * Reorders the moving shapes forward in the parent's children.
  *
+ * @param editor The editor
  * @param moving The set of shapes that are moving
  * @param children The parent's children
  * @param changes The changes array to push changes to
+ * @param opts The options
  */
-function reorderForward(moving: Set<TLShape>, children: TLShape[], changes: TLShapePartial[]) {
+function reorderForward(
+	editor: Editor,
+	moving: Set<TLShape>,
+	children: TLShape[],
+	changes: TLShapePartial[],
+	opts?: { considerAllShapes?: boolean }
+) {
+	const isContaining = getOverlapChecker(editor, moving)
+
 	const len = children.length
 
 	// If all of the children are moving, there's nothing to do
@@ -177,11 +220,17 @@ function reorderForward(moving: Set<TLShape>, children: TLShape[], changes: TLSh
 			}
 			case 'selecting': {
 				if (isMoving) continue
-				// if we find a non-moving shape while selecting, move all selected
+				if (!opts?.considerAllShapes && !isContaining(children[i])) continue
+				// if we find a non-moving and overlapping shape while selecting, move all selected
 				// shapes in front of the not moving shape; and start skipping
 				const { selectIndex } = state
 				getIndicesBetween(children[i].index, children[i + 1]?.index, i - selectIndex).forEach(
-					(index, k) => changes.push({ ...children[selectIndex + k], index })
+					(index, k) => {
+						const child = children[selectIndex + k]
+						// If the shape is not moving (therefore also not overlapping), skip it
+						if (!moving.has(child)) return
+						changes.push({ ...child, index })
+					}
 				)
 				state = { name: 'skipping' }
 				break
@@ -193,11 +242,21 @@ function reorderForward(moving: Set<TLShape>, children: TLShape[], changes: TLSh
 /**
  * Reorders the moving shapes backward in the parent's children.
  *
+ * @param editor The editor
  * @param moving The set of shapes that are moving
  * @param children The parent's children
  * @param changes The changes array to push changes to
+ * @param opts The options
  */
-function reorderBackward(moving: Set<TLShape>, children: TLShape[], changes: TLShapePartial[]) {
+function reorderBackward(
+	editor: Editor,
+	moving: Set<TLShape>,
+	children: TLShape[],
+	changes: TLShapePartial[],
+	opts?: { considerAllShapes?: boolean }
+) {
+	const isContaining = getOverlapChecker(editor, moving)
+
 	const len = children.length
 
 	if (moving.size === len) return
@@ -219,11 +278,15 @@ function reorderBackward(moving: Set<TLShape>, children: TLShape[], changes: TLS
 			}
 			case 'selecting': {
 				if (isMoving) continue
-				// if we find a non-moving shape while selecting, move all selected
-				// shapes in behind of the not moving shape; and start skipping
+				if (!opts?.considerAllShapes && !isContaining(children[i])) continue
+				// if we find a non-moving and overlapping shape while selecting, move all selected
+				// shapes behind the non-moving shape; and start skipping
 				getIndicesBetween(children[i - 1]?.index, children[i].index, state.selectIndex - i).forEach(
 					(index, k) => {
-						changes.push({ ...children[i + k + 1], index })
+						const child = children[i + k + 1]
+						// If the shape is not moving (therefore also not overlapping), skip it
+						if (!moving.has(child)) return
+						changes.push({ ...child, index })
 					}
 				)
 				state = { name: 'skipping' }

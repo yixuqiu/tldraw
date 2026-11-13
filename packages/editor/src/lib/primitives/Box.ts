@@ -1,6 +1,6 @@
 import { BoxModel } from '@tldraw/tlschema'
+import { approximatelyLte, PI, PI2, toPrecision } from './utils'
 import { Vec, VecLike } from './Vec'
-import { PI, PI2, toPrecision } from './utils'
 
 /** @public */
 export type BoxLike = BoxModel | Box
@@ -36,115 +36,135 @@ export class Box {
 	w = 0
 	h = 0
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get point() {
 		return new Vec(this.x, this.y)
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	set point(val: Vec) {
 		this.x = val.x
 		this.y = val.y
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get minX() {
 		return this.x
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	set minX(n: number) {
 		this.x = n
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
+	get left() {
+		return this.x
+	}
+
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get midX() {
 		return this.x + this.w / 2
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get maxX() {
 		return this.x + this.w
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
+	get right() {
+		return this.x + this.w
+	}
+
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get minY() {
 		return this.y
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	set minY(n: number) {
 		this.y = n
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
+	get top() {
+		return this.y
+	}
+
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get midY() {
 		return this.y + this.h / 2
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get maxY() {
 		return this.y + this.h
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
+	get bottom() {
+		return this.y + this.h
+	}
+
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get width() {
 		return this.w
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	set width(n: number) {
 		this.w = n
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get height() {
 		return this.h
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	set height(n: number) {
 		this.h = n
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get aspectRatio() {
 		return this.width / this.height
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get center() {
-		return new Vec(this.midX, this.midY)
+		return new Vec(this.x + this.w / 2, this.y + this.h / 2)
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	set center(v: Vec) {
-		this.minX = v.x - this.width / 2
-		this.minY = v.y - this.height / 2
+		this.x = v.x - this.w / 2
+		this.y = v.y - this.h / 2
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get corners() {
 		return [
-			new Vec(this.minX, this.minY),
-			new Vec(this.maxX, this.minY),
-			new Vec(this.maxX, this.maxY),
-			new Vec(this.minX, this.maxY),
+			new Vec(this.x, this.y),
+			new Vec(this.x + this.w, this.y),
+			new Vec(this.x + this.w, this.y + this.h),
+			new Vec(this.x, this.y + this.h),
 		]
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get cornersAndCenter() {
 		return [
-			new Vec(this.minX, this.minY),
-			new Vec(this.maxX, this.minY),
-			new Vec(this.maxX, this.maxY),
-			new Vec(this.minX, this.maxY),
-			this.center,
+			new Vec(this.x, this.y),
+			new Vec(this.x + this.w, this.y),
+			new Vec(this.x + this.w, this.y + this.h),
+			new Vec(this.x, this.y + this.h),
+			new Vec(this.x + this.w / 2, this.y + this.h / 2),
 		]
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get sides(): Array<[Vec, Vec]> {
 		const { corners } = this
 		return [
@@ -155,9 +175,18 @@ export class Box {
 		]
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get size(): Vec {
 		return new Vec(this.w, this.h)
+	}
+
+	isValid() {
+		return (
+			Number.isFinite(this.x) &&
+			Number.isFinite(this.y) &&
+			Number.isFinite(this.w) &&
+			Number.isFinite(this.h)
+		)
 	}
 
 	toFixed() {
@@ -185,10 +214,10 @@ export class Box {
 	}
 
 	expand(A: Box) {
-		const minX = Math.min(this.minX, A.minX)
-		const minY = Math.min(this.minY, A.minY)
-		const maxX = Math.max(this.maxX, A.maxX)
-		const maxY = Math.max(this.maxY, A.maxY)
+		const minX = Math.min(this.x, A.x)
+		const minY = Math.min(this.y, A.y)
+		const maxX = Math.max(this.x + this.w, A.x + A.w)
+		const maxY = Math.max(this.y + this.h, A.y + A.h)
 
 		this.x = minX
 		this.y = minY
@@ -225,10 +254,10 @@ export class Box {
 	}
 
 	snapToGrid(size: number) {
-		const minX = Math.round(this.minX / size) * size
-		const minY = Math.round(this.minY / size) * size
-		const maxX = Math.round(this.maxX / size) * size
-		const maxY = Math.round(this.maxY / size) * size
+		const minX = Math.round(this.x / size) * size
+		const minY = Math.round(this.y / size) * size
+		const maxX = Math.round((this.x + this.w) / size) * size
+		const maxY = Math.round((this.y + this.h) / size) * size
 		this.minX = minX
 		this.minY = minY
 		this.width = Math.max(1, maxX - minX)
@@ -254,26 +283,26 @@ export class Box {
 	getHandlePoint(handle: SelectionCorner | SelectionEdge) {
 		switch (handle) {
 			case 'top_left':
-				return new Vec(this.minX, this.minY)
+				return new Vec(this.x, this.y)
 			case 'top_right':
-				return new Vec(this.maxX, this.minY)
+				return new Vec(this.x + this.w, this.y)
 			case 'bottom_left':
-				return new Vec(this.minX, this.maxY)
+				return new Vec(this.x, this.y + this.h)
 			case 'bottom_right':
-				return new Vec(this.maxX, this.maxY)
+				return new Vec(this.x + this.w, this.y + this.h)
 			case 'top':
-				return new Vec(this.midX, this.minY)
+				return new Vec(this.x + this.w / 2, this.y)
 			case 'right':
-				return new Vec(this.maxX, this.midY)
+				return new Vec(this.x + this.w, this.y + this.h / 2)
 			case 'bottom':
-				return new Vec(this.midX, this.maxY)
+				return new Vec(this.x + this.w / 2, this.y + this.h)
 			case 'left':
-				return new Vec(this.minX, this.midY)
+				return new Vec(this.x, this.y + this.h / 2)
 		}
 	}
 
 	toJson(): BoxModel {
-		return { x: this.minX, y: this.minY, w: this.w, h: this.h }
+		return { x: this.x, y: this.y, w: this.w, h: this.h }
 	}
 
 	resize(handle: SelectionCorner | SelectionEdge | string, dx: number, dy: number) {
@@ -337,10 +366,10 @@ export class Box {
 	}
 
 	union(box: BoxModel) {
-		const minX = Math.min(this.minX, box.x)
-		const minY = Math.min(this.minY, box.y)
-		const maxX = Math.max(this.maxX, box.w + box.x)
-		const maxY = Math.max(this.maxY, box.h + box.y)
+		const minX = Math.min(this.x, box.x)
+		const minY = Math.min(this.y, box.y)
+		const maxX = Math.max(this.x + this.w, box.x + box.w)
+		const maxY = Math.max(this.y + this.h, box.y + box.h)
 
 		this.x = minX
 		this.y = minY
@@ -389,19 +418,28 @@ export class Box {
 		return new Box(A.minX - n, A.minY - n, A.width + n * 2, A.height + n * 2)
 	}
 
-	static Collides = (A: Box, B: Box) => {
+	static Collides(A: Box, B: Box) {
 		return !(A.maxX < B.minX || A.minX > B.maxX || A.maxY < B.minY || A.minY > B.maxY)
 	}
 
-	static Contains = (A: Box, B: Box) => {
+	static Contains(A: Box, B: Box) {
 		return A.minX < B.minX && A.minY < B.minY && A.maxY > B.maxY && A.maxX > B.maxX
 	}
 
-	static Includes = (A: Box, B: Box) => {
+	static ContainsApproximately(A: Box, B: Box, precision?: number) {
+		return (
+			approximatelyLte(A.minX, B.minX, precision) &&
+			approximatelyLte(A.minY, B.minY, precision) &&
+			approximatelyLte(B.maxX, A.maxX, precision) &&
+			approximatelyLte(B.maxY, A.maxY, precision)
+		)
+	}
+
+	static Includes(A: Box, B: Box) {
 		return Box.Collides(A, B) || Box.Contains(A, B)
 	}
 
-	static ContainsPoint = (A: Box, B: VecLike, margin = 0) => {
+	static ContainsPoint(A: Box, B: VecLike, margin = 0) {
 		return !(
 			B.x < A.minX - margin ||
 			B.y < A.minY - margin ||
@@ -410,7 +448,7 @@ export class Box {
 		)
 	}
 
-	static Common = (boxes: Box[]): Box => {
+	static Common(boxes: Box[]) {
 		let minX = Infinity
 		let minY = Infinity
 		let maxX = -Infinity
@@ -427,7 +465,7 @@ export class Box {
 		return new Box(minX, minY, maxX - minX, maxY - minY)
 	}
 
-	static Sides = (A: Box, inset = 0) => {
+	static Sides(A: Box, inset = 0) {
 		const { corners } = A
 		if (inset) {
 			// TODO: Inset the corners by the inset amount.
@@ -640,7 +678,9 @@ export function rotateSelectionHandle(handle: SelectionHandle, rotation: number)
 	const numSteps = Math.round(rotation / (PI / 4))
 
 	const currentIndex = ORDERED_SELECTION_HANDLES.indexOf(handle)
-	return ORDERED_SELECTION_HANDLES[(currentIndex + numSteps) % ORDERED_SELECTION_HANDLES.length]
+	// numSteps is negative for negative rotations, so wrap the index into range
+	const n = ORDERED_SELECTION_HANDLES.length
+	return ORDERED_SELECTION_HANDLES[(((currentIndex + numSteps) % n) + n) % n]
 }
 
 /** @public */

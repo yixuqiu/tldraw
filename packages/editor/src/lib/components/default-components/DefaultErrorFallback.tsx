@@ -1,29 +1,97 @@
-import { useValue } from '@tldraw/state'
+import { useValue } from '@tldraw/state-react'
+import { noop } from '@tldraw/utils'
 import classNames from 'classnames'
-import { ComponentType, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ComponentType, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+	defineMessages,
+	translateMessage,
+	type TLI18nMessage,
+	type TLI18nValues,
+} from '../../config/TLI18n'
 import { Editor } from '../../editor/Editor'
-import { EditorContext } from '../../hooks/useEditor'
-import { useEditorComponents } from '../../hooks/useEditorComponents'
-import { hardResetEditor } from '../../utils/hardResetEditor'
-import { refreshPage } from '../../utils/refreshPage'
+import { getOwnerDocument } from '../../exports/domUtils'
+import { useEditorComponents } from '../../hooks/EditorComponentsContext'
+import { EditorProvider } from '../../hooks/useEditor'
+import { getGlobalWindow } from '../../utils/dom'
+import { hardResetEditor, refreshPage } from '../../utils/runtime'
 import { ErrorBoundary } from '../ErrorBoundary'
 
 const BASE_ERROR_URL = 'https://github.com/tldraw/tldraw/issues/new'
 
-// eslint-disable-next-line @typescript-eslint/no-empty-function
-function noop() {}
+const messages = defineMessages({
+	confirmResetTitle: { id: 'error.confirm-reset.title', defaultMessage: 'Are you sure?' },
+	confirmResetDescription: {
+		id: 'error.confirm-reset.description',
+		defaultMessage: 'Resetting your data will delete your drawing and cannot be undone.',
+	},
+	cancel: { id: 'error.cancel', defaultMessage: 'Cancel' },
+	resetData: { id: 'error.reset-data', defaultMessage: 'Reset data' },
+	title: { id: 'error.title', defaultMessage: 'Something went wrong' },
+	refreshHint: { id: 'error.refresh-hint', defaultMessage: 'Please refresh your browser.' },
+	resetHint: {
+		id: 'error.reset-hint',
+		defaultMessage:
+			'If the issue continues after refreshing, you may need to reset the tldraw data stored on your device.',
+	},
+	noteLabel: { id: 'error.note-label', defaultMessage: 'Note:' },
+	resetNote: {
+		id: 'error.reset-note',
+		defaultMessage: 'Resetting will erase your current project and any unsaved work.',
+	},
+	messageLabel: { id: 'error.message-label', defaultMessage: 'Message:' },
+	stackTraceLabel: { id: 'error.stack-trace-label', defaultMessage: 'Stack trace:' },
+	copy: { id: 'error.copy', defaultMessage: 'Copy' },
+	copied: { id: 'error.copied', defaultMessage: 'Copied!' },
+	showDetails: { id: 'error.show-details', defaultMessage: 'Show details' },
+	hideDetails: { id: 'error.hide-details', defaultMessage: 'Hide details' },
+	refreshPage: { id: 'error.refresh-page', defaultMessage: 'Refresh page' },
+})
+
+// This renders because something already threw, so reading the editor is done defensively the way
+// the rest of this component reads it: English beats a second crash on the error screen.
+function useErrorMsg(editor: Editor | undefined) {
+	return useCallback(
+		(message: TLI18nMessage, values?: TLI18nValues) => {
+			try {
+				return translateMessage(editor?.i18n(), message, values)
+			} catch {
+				return message.defaultMessage
+			}
+		},
+		[editor]
+	)
+}
 
 /** @public */
-export type TLErrorFallbackComponent = ComponentType<{ error: unknown; editor?: Editor }>
+export interface TLErrorFallbackProps {
+	/** The error that was caught. */
+	error: unknown
+	/**
+	 * Only set when the caller renders the fallback with an editor; the editor's own error
+	 * boundaries pass just `error`.
+	 */
+	editor?: Editor
+}
 
 /** @public */
-export const DefaultErrorFallback: TLErrorFallbackComponent = ({ error, editor }) => {
+export type TLErrorFallbackComponent = ComponentType<TLErrorFallbackProps>
+
+/** @public @react */
+export function DefaultErrorFallback({ error, editor }: TLErrorFallbackProps) {
+	const msg = useErrorMsg(editor)
 	const containerRef = useRef<HTMLDivElement>(null)
 	const [shouldShowError, setShouldShowError] = useState(process.env.NODE_ENV === 'development')
 	const [didCopy, setDidCopy] = useState(false)
 	const [shouldShowResetConfirmation, setShouldShowResetConfirmation] = useState(false)
 
-	const { Canvas } = useEditorComponents()
+	let Canvas: React.ComponentType | null = null
+	try {
+		// eslint-disable-next-line react-hooks/rules-of-hooks
+		const components = useEditorComponents()
+		Canvas = components.Canvas ?? null
+	} catch {
+		// allow this to fail silently
+	}
 
 	const errorMessage = error instanceof Error ? error.message : String(error)
 	const errorStack = error instanceof Error ? error.stack : null
@@ -71,25 +139,28 @@ export const DefaultErrorFallback: TLErrorFallbackComponent = ({ error, editor }
 
 		// if we can't find a theme class from the app or from a parent, we have
 		// to fall back on using a media query:
-		setIsDarkMode(window.matchMedia('(prefers-color-scheme: dark)').matches)
+		if (typeof window !== 'undefined' && getGlobalWindow().matchMedia) {
+			setIsDarkMode(getGlobalWindow().matchMedia('(prefers-color-scheme: dark)').matches)
+		}
 	}, [isDarkModeFromApp])
 
 	useEffect(() => {
 		if (didCopy) {
-			const timeout = setTimeout(() => {
+			const timeout = editor?.timers.setTimeout(() => {
 				setDidCopy(false)
 			}, 2000)
 			return () => clearTimeout(timeout)
 		}
-	}, [didCopy])
+	}, [didCopy, editor])
 
 	const copyError = () => {
-		const textarea = document.createElement('textarea')
+		const doc = getOwnerDocument(containerRef.current)
+		const textarea = doc.createElement('textarea')
 		textarea.value = errorStack ?? errorMessage
-		document.body.appendChild(textarea)
+		doc.body.appendChild(textarea)
 		textarea.select()
-		// eslint-disable-next-line deprecation/deprecation
-		document.execCommand('copy')
+		// eslint-disable-next-line @typescript-eslint/no-deprecated
+		doc.execCommand('copy')
 		textarea.remove()
 		setDidCopy(true)
 	}
@@ -136,9 +207,9 @@ My browser: ${navigator.userAgent}`
 				// not a big deal if it doesn't work - in that case we just have
 				// a plain grey background.
 				<ErrorBoundary onError={noop} fallback={() => null}>
-					<EditorContext.Provider value={editor}>
+					<EditorProvider editor={editor}>
 						<div className="tl-overlay tl-error-boundary__canvas">{Canvas ? <Canvas /> : null}</div>
-					</EditorContext.Provider>
+					</EditorProvider>
 				</ErrorBoundary>
 			)}
 			<div
@@ -148,51 +219,64 @@ My browser: ${navigator.userAgent}`
 			>
 				{shouldShowResetConfirmation ? (
 					<>
-						<h2>Are you sure?</h2>
-						<p>Resetting your data will delete your drawing and cannot be undone.</p>
+						<h2>{msg(messages.confirmResetTitle)}</h2>
+						<p>{msg(messages.confirmResetDescription)}</p>
 						<div className="tl-error-boundary__content__actions">
-							<button onClick={() => setShouldShowResetConfirmation(false)}>Cancel</button>
-							<button className="tl-error-boundary__reset" onClick={resetLocalState}>
-								Reset data
+							<button className="tlui-button" onClick={() => setShouldShowResetConfirmation(false)}>
+								{msg(messages.cancel)}
+							</button>
+							<button className="tlui-button tl-error-boundary__reset" onClick={resetLocalState}>
+								{msg(messages.resetData)}
 							</button>
 						</div>
 					</>
 				) : (
 					<>
-						<h2>Something&apos;s gone wrong.</h2>
+						<h2>{msg(messages.title)}</h2>
+						<p>{msg(messages.refreshHint)}</p>
+						<p>{msg(messages.resetHint)}</p>
 						<p>
-							Sorry, we encountered an error. Please refresh the page to continue. If you keep
-							seeing this error, you can <a href={url.toString()}>create a GitHub issue</a> or{' '}
-							<a href="https://discord.gg/Cq6cPsTfNy">ask for help on Discord</a>.
+							<strong>{msg(messages.noteLabel)}</strong> {msg(messages.resetNote)}
 						</p>
+						{process.env.NODE_ENV !== 'production' && (
+							<p>
+								If you&apos;re developing with the SDK and need help, join us on{' '}
+								<a href="https://discord.tldraw.com/?utm_source=sdk&utm_medium=organic&utm_campaign=error-screen">
+									Discord
+								</a>
+								.
+							</p>
+						)}
 						{shouldShowError && (
 							<>
-								Message:
+								{msg(messages.messageLabel)}
 								<h4>
 									<code>{errorMessage}</code>
 								</h4>
-								Stack trace:
+								{msg(messages.stackTraceLabel)}
 								<div className="tl-error-boundary__content__error">
 									<pre>
 										<code>{errorStack ?? errorMessage}</code>
 									</pre>
-									<button onClick={copyError}>{didCopy ? 'Copied!' : 'Copy'}</button>
+									<button className="tlui-button" onClick={copyError}>
+										{didCopy ? msg(messages.copied) : msg(messages.copy)}
+									</button>
 								</div>
 							</>
 						)}
 						<div className="tl-error-boundary__content__actions">
-							<button onClick={() => setShouldShowError(!shouldShowError)}>
-								{shouldShowError ? 'Hide details' : 'Show details'}
+							<button className="tlui-button" onClick={() => setShouldShowError(!shouldShowError)}>
+								{shouldShowError ? msg(messages.hideDetails) : msg(messages.showDetails)}
 							</button>
 							<div className="tl-error-boundary__content__actions__group">
 								<button
-									className="tl-error-boundary__reset"
+									className="tlui-button tl-error-boundary__reset"
 									onClick={() => setShouldShowResetConfirmation(true)}
 								>
-									Reset data
+									{msg(messages.resetData)}
 								</button>
-								<button className="tl-error-boundary__refresh" onClick={refresh}>
-									Refresh Page
+								<button className="tlui-button tl-error-boundary__refresh" onClick={refresh}>
+									{msg(messages.refreshPage)}
 								</button>
 							</div>
 						</div>

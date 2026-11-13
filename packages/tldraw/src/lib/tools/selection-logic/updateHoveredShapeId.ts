@@ -1,15 +1,36 @@
-import { Editor, HIT_TEST_MARGIN, TLShape, throttle } from '@tldraw/editor'
+import { Editor, TLShape, TLShapeId, throttle, type ThrottledFunction } from '@tldraw/editor'
 
-function _updateHoveredShapeId(editor: Editor) {
-	// todo: consider replacing `get hoveredShapeId` with this; it would mean keeping hoveredShapeId in memory rather than in the store and possibly re-computing it more often than necessary
-	const hitShape = editor.getShapeAtPoint(editor.inputs.currentPagePoint, {
+/*
+Perf optimization: Skip hover updates while panning.
+
+Hit-testing shapes is expensive in large documents. When panning, we don't need
+continuous hover updates - we just need to resume when the camera stops.
+
+The logic:
+1. Camera idle → update hover normally, unlock
+2. Camera moving + locked → skip entirely (no hit-testing)
+3. Camera moving + no current hover → lock immediately
+4. Camera moving + same shape → keep current hover (no change needed)
+5. Camera moving + different shape → clear hover and lock
+
+This means: when you start panning over a shape, it stays hovered until
+your cursor moves off it, then hover clears and we stop hit-testing until
+the camera stops.
+*/
+
+// Track per-editor state for hover updates during camera movement
+const hoverLockedEditors = new WeakMap<Editor, boolean>()
+
+function getShapeToHover(editor: Editor): TLShapeId | null {
+	const hitShape = editor.getShapeAtPoint(editor.inputs.getCurrentPagePoint(), {
 		hitInside: false,
 		hitLabels: false,
-		margin: HIT_TEST_MARGIN / editor.getZoomLevel(),
+		hitLocked: editor.options.selectLockedShapes,
+		margin: editor.getHitTestMargin(),
 		renderingOnly: true,
 	})
 
-	if (!hitShape) return editor.setHoveredShape(null)
+	if (!hitShape) return null
 
 	let shapeToHover: TLShape | undefined = undefined
 
@@ -28,9 +49,59 @@ function _updateHoveredShapeId(editor: Editor) {
 		}
 	}
 
-	return editor.setHoveredShape(shapeToHover.id)
+	return shapeToHover.id
+}
+
+function _updateHoveredShapeId(editor: Editor) {
+	if (editor.isDisposed) return
+
+	const cameraMoving = editor.getCameraState() === 'moving'
+
+	if (!cameraMoving) {
+		hoverLockedEditors.set(editor, false)
+		const nextHoveredId = getShapeToHover(editor)
+		return editor.setHoveredShape(nextHoveredId)
+	}
+
+	if (hoverLockedEditors.get(editor)) {
+		return undefined
+	}
+
+	const currentHoveredId = editor.getHoveredShapeId()
+
+	if (!currentHoveredId) {
+		hoverLockedEditors.set(editor, true)
+		return undefined
+	}
+
+	const nextHoveredId = getShapeToHover(editor)
+	if (nextHoveredId === currentHoveredId) {
+		return undefined
+	}
+
+	editor.setHoveredShape(null)
+	hoverLockedEditors.set(editor, true)
+	return undefined
+}
+
+const THROTTLE_MS = process.env.NODE_ENV === 'test' ? 0 : 32
+const editorThrottles = new WeakMap<Editor, ThrottledFunction<typeof _updateHoveredShapeId>>()
+
+function getThrottled(editor: Editor) {
+	let throttled = editorThrottles.get(editor)
+	if (!throttled) {
+		throttled = throttle(_updateHoveredShapeId, THROTTLE_MS)
+		editorThrottles.set(editor, throttled)
+	}
+	return throttled
 }
 
 /** @internal */
-export const updateHoveredShapeId =
-	process.env.NODE_ENV === 'test' ? _updateHoveredShapeId : throttle(_updateHoveredShapeId, 32)
+export function updateHoveredShapeId(editor: Editor) {
+	getThrottled(editor)(editor)
+}
+
+/** @internal */
+export function cancelUpdateHoveredShapeId(editor: Editor) {
+	editorThrottles.get(editor)?.cancel()
+}

@@ -1,13 +1,13 @@
-/// <reference types="react" />
 import {
+	createShapeId,
 	DefaultColorStyle,
 	ReadonlySharedStyleMap,
 	SharedStyle,
 	TLGeoShape,
 	TLGroupShape,
+	toRichText,
 } from '@tldraw/editor'
-import { TestEditor, createDefaultShapes, defaultShapesIds } from './TestEditor'
-import { TL } from './test-jsx'
+import { createDefaultShapes, defaultShapesIds, TestEditor } from './TestEditor'
 
 let editor: TestEditor
 
@@ -103,7 +103,7 @@ describe('Editor.styles', () => {
 				type: 'geo',
 				props: {
 					align: 'start',
-					text: 'hello world this is a long sentence that should wrap',
+					richText: toRichText('hello world this is a long sentence that should wrap'),
 					w: 100,
 					url: 'https://aol.com',
 					verticalAlign: 'start',
@@ -146,9 +146,13 @@ describe('Editor.styles', () => {
 
 describe('Editor.setStyle', () => {
 	it('should set style for selected shapes', () => {
-		const ids = editor.createShapesFromJsx([
-			<TL.geo ref="A" x={0} y={0} color="blue" />,
-			<TL.geo ref="B" x={0} y={0} color="green" />,
+		const ids = {
+			A: createShapeId('A'),
+			B: createShapeId('B'),
+		}
+		editor.createShapes([
+			{ id: ids.A, type: 'geo', x: 0, y: 0, props: { color: 'blue' } },
+			{ id: ids.B, type: 'geo', x: 0, y: 0, props: { color: 'green' } },
 		])
 
 		editor.setSelectedShapes([ids.A, ids.B])
@@ -160,15 +164,21 @@ describe('Editor.setStyle', () => {
 	})
 
 	it('should traverse into groups and set styles in their children', () => {
-		const ids = editor.createShapesFromJsx([
-			<TL.geo ref="boxA" x={0} y={0} />,
-			<TL.group ref="groupA" x={0} y={0}>
-				<TL.geo ref="boxB" x={0} y={0} />
-				<TL.group ref="groupB" x={0} y={0}>
-					<TL.geo ref="boxC" x={0} y={0} />
-					<TL.geo ref="boxD" x={0} y={0} />
-				</TL.group>
-			</TL.group>,
+		const ids = {
+			boxA: createShapeId('boxA'),
+			groupA: createShapeId('groupA'),
+			boxB: createShapeId('boxB'),
+			groupB: createShapeId('groupB'),
+			boxC: createShapeId('boxC'),
+			boxD: createShapeId('boxD'),
+		}
+		editor.createShapes([
+			{ id: ids.boxA, type: 'geo', x: 0, y: 0, props: {} },
+			{ id: ids.groupA, type: 'group', x: 0, y: 0, props: {} },
+			{ id: ids.boxB, type: 'geo', x: 0, y: 0, parentId: ids.groupA, props: {} },
+			{ id: ids.groupB, type: 'group', x: 0, y: 0, parentId: ids.groupA, props: {} },
+			{ id: ids.boxC, type: 'geo', x: 0, y: 0, parentId: ids.groupB, props: {} },
+			{ id: ids.boxD, type: 'geo', x: 0, y: 0, parentId: ids.groupB, props: {} },
 		])
 
 		editor.setSelectedShapes([ids.groupA])

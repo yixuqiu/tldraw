@@ -1,11 +1,9 @@
 import {
 	AssetRecordType,
 	Editor,
-	MAX_SHAPES_PER_PAGE,
 	PageRecordType,
 	TLArrowShape,
 	TLArrowShapeArrowheadStyle,
-	TLArrowShapeTerminal,
 	TLAsset,
 	TLAssetId,
 	TLDefaultColorStyle,
@@ -14,25 +12,26 @@ import {
 	TLDefaultHorizontalAlignStyle,
 	TLDefaultSizeStyle,
 	TLDefaultTextAlignStyle,
-	TLDrawShape,
 	TLGeoShape,
-	TLImageShape,
-	TLNoteShape,
 	TLPageId,
 	TLShapeId,
-	TLTextShape,
-	TLVideoShape,
 	Vec,
 	VecModel,
+	b64Vecs,
 	clamp,
 	createShapeId,
+	fetch,
+	structuredClone,
+	toRichText,
 } from '@tldraw/editor'
+import { getArrowBindings } from '../../shapes/arrow/shared'
 
 const TLDRAW_V1_VERSION = 15.5
 
 /** @internal */
-export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocument) {
-	editor.batch(() => {
+export function buildFromV1Document(editor: Editor, _document: unknown) {
+	let document = _document as TLV1Document
+	editor.run(() => {
 		document = migrate(document, TLDRAW_V1_VERSION)
 		// Cancel any interactions / states
 		editor.cancel().cancel().cancel().cancel()
@@ -56,7 +55,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 
 		Object.values(document.assets ?? {}).forEach((v1Asset) => {
 			switch (v1Asset.type) {
-				case TDAssetType.Image: {
+				case TLV1AssetType.Image: {
 					const assetId: TLAssetId = AssetRecordType.createId()
 					v1AssetIdsToV2AssetIds.set(v1Asset.id, assetId)
 					const placeholderAsset: TLAsset = {
@@ -77,7 +76,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 					tryMigrateAsset(editor, placeholderAsset)
 					break
 				}
-				case TDAssetType.Video:
+				case TLV1AssetType.Video:
 					{
 						const assetId: TLAssetId = AssetRecordType.createId()
 						v1AssetIdsToV2AssetIds.set(v1Asset.id, assetId)
@@ -129,18 +128,18 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 
 				const v1Shapes = Object.values(v1Page.shapes ?? {})
 					.sort((a, b) => (a.childIndex < b.childIndex ? -1 : 1))
-					.slice(0, MAX_SHAPES_PER_PAGE)
+					.slice(0, editor.options.maxShapesPerPage)
 
 				// Groups only
 				v1Shapes.forEach((v1Shape) => {
-					if (v1Shape.type !== TDShapeType.Group) return
+					if (v1Shape.type !== TLV1ShapeType.Group) return
 
 					const shapeId = createShapeId()
 					v1ShapeIdsToV2ShapeIds.set(v1Shape.id, shapeId)
 					v1GroupShapeIdsToV1ChildIds.set(v1Shape.id, [])
 				})
 
-				function decideNotToCreateShape(v1Shape: TDShape) {
+				function decideNotToCreateShape(v1Shape: TLV1Shape) {
 					v1ShapeIdsToV2ShapeIds.delete(v1Shape.id)
 					const v1GroupParent = v1GroupShapeIdsToV1ChildIds.has(v1Shape.parentId)
 					if (v1GroupParent) {
@@ -154,7 +153,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 				// Non-groups only
 				v1Shapes.forEach((v1Shape) => {
 					// Skip groups for now, we'll create groups via the app's API
-					if (v1Shape.type === TDShapeType.Group) {
+					if (v1Shape.type === TLV1ShapeType.Group) {
 						return
 					}
 
@@ -183,13 +182,13 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 					}
 
 					switch (v1Shape.type) {
-						case TDShapeType.Sticky: {
-							editor.createShapes<TLNoteShape>([
+						case TLV1ShapeType.Sticky: {
+							editor.createShapes([
 								{
 									...inCommon,
 									type: 'note',
 									props: {
-										text: v1Shape.text ?? '',
+										richText: toRichText(v1Shape.text ?? ''),
 										color: getV2Color(v1Shape.style.color),
 										size: getV2Size(v1Shape.style.size),
 										font: getV2Font(v1Shape.style.font),
@@ -199,8 +198,8 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 							])
 							break
 						}
-						case TDShapeType.Rectangle: {
-							editor.createShapes<TLGeoShape>([
+						case TLV1ShapeType.Rectangle: {
+							editor.createShapes([
 								{
 									...inCommon,
 									type: 'geo',
@@ -208,7 +207,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 										geo: 'rectangle',
 										w: coerceDimension(v1Shape.size[0]),
 										h: coerceDimension(v1Shape.size[1]),
-										text: v1Shape.label ?? '',
+										richText: toRichText(v1Shape.label ?? ''),
 										fill: getV2Fill(v1Shape.style.isFilled, v1Shape.style.color),
 										labelColor: getV2Color(v1Shape.style.color),
 										color: getV2Color(v1Shape.style.color),
@@ -227,7 +226,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 									id: inCommon.id,
 									type: 'geo',
 									props: {
-										text: v1Shape.label ?? '',
+										richText: toRichText(v1Shape.label ?? ''),
 									},
 								},
 							])
@@ -255,8 +254,8 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 							}
 							break
 						}
-						case TDShapeType.Triangle: {
-							editor.createShapes<TLGeoShape>([
+						case TLV1ShapeType.Triangle: {
+							editor.createShapes([
 								{
 									...inCommon,
 									type: 'geo',
@@ -282,7 +281,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 									id: inCommon.id,
 									type: 'geo',
 									props: {
-										text: v1Shape.label ?? '',
+										richText: toRichText(v1Shape.label ?? ''),
 									},
 								},
 							])
@@ -310,8 +309,8 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 							}
 							break
 						}
-						case TDShapeType.Ellipse: {
-							editor.createShapes<TLGeoShape>([
+						case TLV1ShapeType.Ellipse: {
+							editor.createShapes([
 								{
 									...inCommon,
 									type: 'geo',
@@ -337,7 +336,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 									id: inCommon.id,
 									type: 'geo',
 									props: {
-										text: v1Shape.label ?? '',
+										richText: toRichText(v1Shape.label ?? ''),
 									},
 								},
 							])
@@ -366,13 +365,16 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 
 							break
 						}
-						case TDShapeType.Draw: {
+						case TLV1ShapeType.Draw: {
 							if (v1Shape.points.length === 0) {
 								decideNotToCreateShape(v1Shape)
 								break
 							}
 
-							editor.createShapes<TLDrawShape>([
+							const points = v1Shape.points.map(getV2Point)
+							const base64Points = b64Vecs.encodePoints(points)
+
+							editor.createShapes([
 								{
 									...inCommon,
 									type: 'draw',
@@ -383,13 +385,16 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 										dash: getV2Dash(v1Shape.style.dash),
 										isPen: false,
 										isComplete: v1Shape.isComplete,
-										segments: [{ type: 'free', points: v1Shape.points.map(getV2Point) }],
+										segments: [{ type: 'free', path: base64Points }],
+										scale: 1,
+										scaleX: 1,
+										scaleY: 1,
 									},
 								},
 							])
 							break
 						}
-						case TDShapeType.Arrow: {
+						case TLV1ShapeType.Arrow: {
 							const v1Bend = coerceNumber(v1Shape.bend)
 							const v1Start = getV2Point(v1Shape.handles.start.point)
 							const v1End = getV2Point(v1Shape.handles.end.point)
@@ -397,12 +402,12 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 							const v2Bend = (dist * -v1Bend) / 2
 
 							// Could also be a line... but we'll use it as an arrow anyway
-							editor.createShapes<TLArrowShape>([
+							editor.createShapes([
 								{
 									...inCommon,
 									type: 'arrow',
 									props: {
-										text: v1Shape.label ?? '',
+										richText: toRichText(v1Shape.label ?? ''),
 										color: getV2Color(v1Shape.style.color),
 										labelColor: getV2Color(v1Shape.style.color),
 										size: getV2Size(v1Shape.style.size),
@@ -411,12 +416,10 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 										arrowheadStart: getV2Arrowhead(v1Shape.decorations?.start),
 										arrowheadEnd: getV2Arrowhead(v1Shape.decorations?.end),
 										start: {
-											type: 'point',
 											x: coerceNumber(v1Shape.handles.start.point[0]),
 											y: coerceNumber(v1Shape.handles.start.point[1]),
 										},
 										end: {
-											type: 'point',
 											x: coerceNumber(v1Shape.handles.end.point[0]),
 											y: coerceNumber(v1Shape.handles.end.point[1]),
 										},
@@ -427,13 +430,13 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 
 							break
 						}
-						case TDShapeType.Text: {
-							editor.createShapes<TLTextShape>([
+						case TLV1ShapeType.Text: {
+							editor.createShapes([
 								{
 									...inCommon,
 									type: 'text',
 									props: {
-										text: v1Shape.text ?? ' ',
+										richText: toRichText(v1Shape.text ?? ' '),
 										color: getV2Color(v1Shape.style.color),
 										size: getV2TextSize(v1Shape.style.size),
 										font: getV2Font(v1Shape.style.font),
@@ -444,7 +447,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 							])
 							break
 						}
-						case TDShapeType.Image: {
+						case TLV1ShapeType.Image: {
 							const assetId = v1AssetIdsToV2AssetIds.get(v1Shape.assetId)
 
 							if (!assetId) {
@@ -452,7 +455,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 								return
 							}
 
-							editor.createShapes<TLImageShape>([
+							editor.createShapes([
 								{
 									...inCommon,
 									type: 'image',
@@ -465,7 +468,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 							])
 							break
 						}
-						case TDShapeType.Video: {
+						case TLV1ShapeType.Video: {
 							const assetId = v1AssetIdsToV2AssetIds.get(v1Shape.assetId)
 
 							if (!assetId) {
@@ -473,7 +476,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 								return
 							}
 
-							editor.createShapes<TLVideoShape>([
+							editor.createShapes([
 								{
 									...inCommon,
 									type: 'video',
@@ -500,7 +503,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 				v1GroupShapeIdsToV1ChildIds.forEach((v1ChildIds, v1GroupId) => {
 					const v2ChildShapeIds = v1ChildIds.map((id) => v1ShapeIdsToV2ShapeIds.get(id)!)
 					const v2GroupId = v1ShapeIdsToV2ShapeIds.get(v1GroupId)!
-					editor.groupShapes(v2ChildShapeIds, v2GroupId)
+					editor.groupShapes(v2ChildShapeIds, { groupId: v2GroupId })
 
 					const v1Group = v1Page.shapes[v1GroupId]
 					const rotation = coerceNumber(v1Group.rotation)
@@ -514,7 +517,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 				// Bind arrows to shapes
 
 				v1Shapes.forEach((v1Shape) => {
-					if (v1Shape.type !== TDShapeType.Arrow) {
+					if (v1Shape.type !== TLV1ShapeType.Arrow) {
 						return
 					}
 
@@ -522,7 +525,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 					const util = editor.getShapeUtil<TLArrowShape>('arrow')
 
 					// dumb but necessary
-					editor.inputs.ctrlKey = false
+					editor.inputs.setCtrlKey(false)
 
 					for (const handleId of ['start', 'end'] as const) {
 						const bindingId = v1Shape.handles[handleId].bindingId
@@ -561,22 +564,28 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 										y: point.y,
 									},
 									isPrecise: point.x !== 0.5 || point.y !== 0.5,
+									isCreatingShape: true,
 								})
 
 								if (change) {
-									if (change.props?.[handleId]) {
-										const terminal = change.props?.[handleId] as TLArrowShapeTerminal
-										if (terminal.type === 'binding') {
-											terminal.isExact = binding.distance === 0
+									editor.updateShape(change)
+								}
 
-											if (terminal.boundShapeId !== targetId) {
-												console.warn('Hit the wrong shape!')
-												terminal.boundShapeId = targetId
-												terminal.normalizedAnchor = { x: 0.5, y: 0.5 }
-											}
-										}
+								const freshBinding = getArrowBindings(
+									editor,
+									editor.getShape<TLArrowShape>(v2ShapeId)!
+								)[handleId]
+								if (freshBinding) {
+									const updatedFreshBinding = structuredClone(freshBinding)
+									if (binding.distance === 0) {
+										updatedFreshBinding.props.isExact = true
 									}
-									editor.updateShapes([change])
+									if (updatedFreshBinding.toId !== targetId) {
+										updatedFreshBinding.toId = targetId
+										updatedFreshBinding.props.normalizedAnchor = { x: nx, y: ny }
+									}
+
+									editor.updateBinding(updatedFreshBinding)
 								}
 							}
 						}
@@ -587,7 +596,7 @@ export function buildFromV1Document(editor: Editor, document: LegacyTldrawDocume
 		// Set the current page to the first page again
 		editor.setCurrentPage(firstPageId)
 
-		editor.history.clear()
+		editor.clearHistory()
 		editor.selectNone()
 
 		const bounds = editor.getCurrentPageBounds()
@@ -643,12 +652,12 @@ async function tryMigrateAsset(editor: Editor, placeholderAsset: TLAsset) {
 				},
 			},
 		])
-	} catch (err) {
+	} catch {
 		// not a big deal, we'll just keep the placeholder asset
 	}
 }
 
-function migrate(document: LegacyTldrawDocument, newVersion: number): LegacyTldrawDocument {
+function migrate(document: TLV1Document, newVersion: number): TLV1Document {
 	const { version = 0 } = document
 
 	if (!document.assets) {
@@ -672,7 +681,7 @@ function migrate(document: LegacyTldrawDocument, newVersion: number): LegacyTldr
 				shape.parentId = page.id
 			}
 
-			if (shape.type === TDShapeType.Group && children) {
+			if (shape.type === TLV1ShapeType.Group && children) {
 				children.forEach((childId) => {
 					if (!page.shapes[childId]) {
 						console.warn('Encountered a parent with a missing child!', shape.id, childId)
@@ -695,10 +704,10 @@ function migrate(document: LegacyTldrawDocument, newVersion: number): LegacyTldr
 		if (version < 14) {
 			Object.values(document.pages).forEach((page) => {
 				Object.values(page.shapes)
-					.filter((shape) => shape.type === TDShapeType.Text)
+					.filter((shape) => shape.type === TLV1ShapeType.Text)
 					.forEach((shape) => {
-						if ((shape as TextShape).style.font === undefined) {
-							;(shape as TextShape).style.font === FontStyle.Script
+						if ((shape as TLV1TextShape).style.font === undefined) {
+							;(shape as TLV1TextShape).style.font = TLV1FontStyle.Script
 						}
 					})
 			})
@@ -719,13 +728,13 @@ function migrate(document: LegacyTldrawDocument, newVersion: number): LegacyTldr
 						}
 					})
 
-					if (shape.type === TDShapeType.Arrow) {
+					if (shape.type === TLV1ShapeType.Arrow) {
 						if (shape.decorations) {
 							Object.entries(shape.decorations).forEach(([id, decoration]) => {
 								if ((decoration as unknown) === 'Arrow') {
 									shape.decorations = {
 										...shape.decorations,
-										[id]: Decoration.Arrow,
+										[id]: TLV1Decoration.Arrow,
 									}
 								}
 							})
@@ -748,7 +757,7 @@ function migrate(document: LegacyTldrawDocument, newVersion: number): LegacyTldr
 			Object.values(page.shapes).forEach((shape) => {
 				if (version < 15.2) {
 					if (
-						(shape.type === TDShapeType.Image || shape.type === TDShapeType.Video) &&
+						(shape.type === TLV1ShapeType.Image || shape.type === TLV1ShapeType.Video) &&
 						shape.style.isFilled == null
 					) {
 						shape.style.isFilled = true
@@ -757,10 +766,10 @@ function migrate(document: LegacyTldrawDocument, newVersion: number): LegacyTldr
 
 				if (version < 15.3) {
 					if (
-						shape.type === TDShapeType.Rectangle ||
-						shape.type === TDShapeType.Triangle ||
-						shape.type === TDShapeType.Ellipse ||
-						shape.type === TDShapeType.Arrow
+						shape.type === TLV1ShapeType.Rectangle ||
+						shape.type === TLV1ShapeType.Triangle ||
+						shape.type === TLV1ShapeType.Ellipse ||
+						shape.type === TLV1ShapeType.Arrow
 					) {
 						if ('text' in shape && typeof shape.text === 'string') {
 							shape.label = shape.text
@@ -795,21 +804,109 @@ function migrate(document: LegacyTldrawDocument, newVersion: number): LegacyTldr
 
 /* -------------------- TLV1 Types -------------------- */
 
-interface TLV1Handle {
+/** @internal */
+export interface TLV1Handle {
 	id: string
 	index: number
 	point: number[]
+	canBind?: boolean
+	bindingId?: string
 }
 
-interface TLV1Binding {
+/** @internal */
+export interface TLV1BaseBinding {
 	id: string
 	toId: string
 	fromId: string
 }
 
-interface TLV1Shape {
+/** @internal */
+export const TLV1ShapeType = {
+	Sticky: 'sticky',
+	Ellipse: 'ellipse',
+	Rectangle: 'rectangle',
+	Triangle: 'triangle',
+	Draw: 'draw',
+	Arrow: 'arrow',
+	Text: 'text',
+	Group: 'group',
+	Image: 'image',
+	Video: 'video',
+} as const
+/** @internal */
+export type TLV1ShapeType = (typeof TLV1ShapeType)[keyof typeof TLV1ShapeType]
+
+/** @internal */
+export const TLV1ColorStyle = {
+	White: 'white',
+	LightGray: 'lightGray',
+	Gray: 'gray',
+	Black: 'black',
+	Green: 'green',
+	Cyan: 'cyan',
+	Blue: 'blue',
+	Indigo: 'indigo',
+	Violet: 'violet',
+	Red: 'red',
+	Orange: 'orange',
+	Yellow: 'yellow',
+} as const
+/** @internal */
+export type TLV1ColorStyle = (typeof TLV1ColorStyle)[keyof typeof TLV1ColorStyle]
+
+/** @internal */
+export const TLV1SizeStyle = {
+	Small: 'small',
+	Medium: 'medium',
+	Large: 'large',
+} as const
+/** @internal */
+export type TLV1SizeStyle = (typeof TLV1SizeStyle)[keyof typeof TLV1SizeStyle]
+
+/** @internal */
+export const TLV1DashStyle = {
+	Draw: 'draw',
+	Solid: 'solid',
+	Dashed: 'dashed',
+	Dotted: 'dotted',
+} as const
+/** @internal */
+export type TLV1DashStyle = (typeof TLV1DashStyle)[keyof typeof TLV1DashStyle]
+
+/** @internal */
+export const TLV1AlignStyle = {
+	Start: 'start',
+	Middle: 'middle',
+	End: 'end',
+	Justify: 'justify',
+} as const
+/** @internal */
+export type TLV1AlignStyle = (typeof TLV1AlignStyle)[keyof typeof TLV1AlignStyle]
+
+/** @internal */
+export const TLV1FontStyle = {
+	Script: 'script',
+	Sans: 'sans',
+	Serif: 'serif',
+	Mono: 'mono',
+} as const
+/** @internal */
+export type TLV1FontStyle = (typeof TLV1FontStyle)[keyof typeof TLV1FontStyle]
+
+/** @internal */
+export interface TLV1ShapeStyles {
+	color: TLV1ColorStyle
+	size: TLV1SizeStyle
+	dash: TLV1DashStyle
+	font?: TLV1FontStyle
+	textAlign?: TLV1AlignStyle
+	isFilled?: boolean
+	scale?: number
+}
+
+/** @internal */
+export interface TLV1BaseShape {
 	id: string
-	type: string
 	parentId: string
 	childIndex: number
 	name: string
@@ -817,157 +914,94 @@ interface TLV1Shape {
 	assetId?: string
 	rotation?: number
 	children?: string[]
-	handles?: Record<string, TLV1Handle>
 	isGhost?: boolean
 	isHidden?: boolean
 	isLocked?: boolean
 	isGenerated?: boolean
 	isAspectRatioLocked?: boolean
-}
-
-enum TDShapeType {
-	Sticky = 'sticky',
-	Ellipse = 'ellipse',
-	Rectangle = 'rectangle',
-	Triangle = 'triangle',
-	Draw = 'draw',
-	Arrow = 'arrow',
-	Text = 'text',
-	Group = 'group',
-	Image = 'image',
-	Video = 'video',
-}
-
-enum ColorStyle {
-	White = 'white',
-	LightGray = 'lightGray',
-	Gray = 'gray',
-	Black = 'black',
-	Green = 'green',
-	Cyan = 'cyan',
-	Blue = 'blue',
-	Indigo = 'indigo',
-	Violet = 'violet',
-	Red = 'red',
-	Orange = 'orange',
-	Yellow = 'yellow',
-}
-
-enum SizeStyle {
-	Small = 'small',
-	Medium = 'medium',
-	Large = 'large',
-}
-
-enum DashStyle {
-	Draw = 'draw',
-	Solid = 'solid',
-	Dashed = 'dashed',
-	Dotted = 'dotted',
-}
-
-enum AlignStyle {
-	Start = 'start',
-	Middle = 'middle',
-	End = 'end',
-	Justify = 'justify',
-}
-
-enum FontStyle {
-	Script = 'script',
-	Sans = 'sans',
-	Serif = 'serif',
-	Mono = 'mono',
-}
-
-type ShapeStyles = {
-	color: ColorStyle
-	size: SizeStyle
-	dash: DashStyle
-	font?: FontStyle
-	textAlign?: AlignStyle
-	isFilled?: boolean
-	scale?: number
-}
-
-interface TDBaseShape extends TLV1Shape {
-	style: ShapeStyles
-	type: TDShapeType
+	style: TLV1ShapeStyles
+	type: TLV1ShapeType
 	label?: string
-	handles?: Record<string, TDHandle>
+	handles?: Record<string, TLV1Handle>
 }
 
-interface DrawShape extends TDBaseShape {
-	type: TDShapeType.Draw
+/** @internal */
+export interface TLV1DrawShape extends TLV1BaseShape {
+	type: typeof TLV1ShapeType.Draw
 	points: number[][]
 	isComplete: boolean
 }
 
-// The extended handle (used for arrows)
-interface TDHandle extends TLV1Handle {
-	canBind?: boolean
-	bindingId?: string
-}
-
-interface RectangleShape extends TDBaseShape {
-	type: TDShapeType.Rectangle
+/** @internal */
+export interface TLV1RectangleShape extends TLV1BaseShape {
+	type: typeof TLV1ShapeType.Rectangle
 	size: number[]
 	label?: string
 	labelPoint?: number[]
 }
 
-interface EllipseShape extends TDBaseShape {
-	type: TDShapeType.Ellipse
+/** @internal */
+export interface TLV1EllipseShape extends TLV1BaseShape {
+	type: typeof TLV1ShapeType.Ellipse
 	radius: number[]
 	label?: string
 	labelPoint?: number[]
 }
 
-interface TriangleShape extends TDBaseShape {
-	type: TDShapeType.Triangle
+/** @internal */
+export interface TLV1TriangleShape extends TLV1BaseShape {
+	type: typeof TLV1ShapeType.Triangle
 	size: number[]
 	label?: string
 	labelPoint?: number[]
 }
 
-enum Decoration {
-	Arrow = 'arrow',
-}
+/** @internal */
+export const TLV1Decoration = {
+	Arrow: 'arrow',
+} as const
+/** @internal */
+export type TLV1Decoration = (typeof TLV1Decoration)[keyof typeof TLV1Decoration]
 
 // The shape created with the arrow tool
-interface ArrowShape extends TDBaseShape {
-	type: TDShapeType.Arrow
+/** @internal */
+export interface TLV1ArrowShape extends TLV1BaseShape {
+	type: typeof TLV1ShapeType.Arrow
 	bend: number
 	handles: {
-		start: TDHandle
-		bend: TDHandle
-		end: TDHandle
+		start: TLV1Handle
+		bend: TLV1Handle
+		end: TLV1Handle
 	}
 	decorations?: {
-		start?: Decoration
-		end?: Decoration
-		middle?: Decoration
+		start?: TLV1Decoration
+		end?: TLV1Decoration
+		middle?: TLV1Decoration
 	}
 	label?: string
 	labelPoint?: number[]
 }
 
-interface ArrowBinding extends TLV1Binding {
-	handleId: keyof ArrowShape['handles']
+/** @internal */
+export interface TLV1ArrowBinding extends TLV1BaseBinding {
+	handleId: keyof TLV1ArrowShape['handles']
 	distance: number
 	point: number[]
 }
 
-type TDBinding = ArrowBinding
+/** @internal */
+export type TLV1Binding = TLV1ArrowBinding
 
-interface ImageShape extends TDBaseShape {
-	type: TDShapeType.Image
+/** @internal */
+export interface TLV1ImageShape extends TLV1BaseShape {
+	type: typeof TLV1ShapeType.Image
 	size: number[]
 	assetId: string
 }
 
-interface VideoShape extends TDBaseShape {
-	type: TDShapeType.Video
+/** @internal */
+export interface TLV1VideoShape extends TLV1BaseShape {
+	type: typeof TLV1ShapeType.Video
 	size: number[]
 	assetId: string
 	isPlaying: boolean
@@ -975,46 +1009,52 @@ interface VideoShape extends TDBaseShape {
 }
 
 // The shape created by the text tool
-interface TextShape extends TDBaseShape {
-	type: TDShapeType.Text
+/** @internal */
+export interface TLV1TextShape extends TLV1BaseShape {
+	type: typeof TLV1ShapeType.Text
 	text: string
 }
 
 // The shape created by the sticky tool
-interface StickyShape extends TDBaseShape {
-	type: TDShapeType.Sticky
+/** @internal */
+export interface TLV1StickyShape extends TLV1BaseShape {
+	type: typeof TLV1ShapeType.Sticky
 	size: number[]
 	text: string
 }
 
 // The shape created when multiple shapes are grouped
-interface GroupShape extends TDBaseShape {
-	type: TDShapeType.Group
+/** @internal */
+export interface TLV1GroupShape extends TLV1BaseShape {
+	type: typeof TLV1ShapeType.Group
 	size: number[]
 	children: string[]
 }
 
-type TDShape =
-	| RectangleShape
-	| EllipseShape
-	| TriangleShape
-	| DrawShape
-	| ArrowShape
-	| TextShape
-	| GroupShape
-	| StickyShape
-	| ImageShape
-	| VideoShape
+/** @internal */
+export type TLV1Shape =
+	| TLV1RectangleShape
+	| TLV1EllipseShape
+	| TLV1TriangleShape
+	| TLV1DrawShape
+	| TLV1ArrowShape
+	| TLV1TextShape
+	| TLV1GroupShape
+	| TLV1StickyShape
+	| TLV1ImageShape
+	| TLV1VideoShape
 
-type TDPage = {
+/** @internal */
+export interface TLV1Page {
 	id: string
 	name?: string
 	childIndex?: number
-	shapes: Record<string, TDShape>
-	bindings: Record<string, TDBinding>
+	shapes: Record<string, TLV1Shape>
+	bindings: Record<string, TLV1Binding>
 }
 
-interface TLV1Bounds {
+/** @internal */
+export interface TLV1Bounds {
 	minX: number
 	minY: number
 	maxX: number
@@ -1024,7 +1064,8 @@ interface TLV1Bounds {
 	rotation?: number
 }
 
-interface TLV1PageState {
+/** @internal */
+export interface TLV1PageState {
 	id: string
 	selectedIds: string[]
 	camera: {
@@ -1038,127 +1079,132 @@ interface TLV1PageState {
 	bindingId?: string | null
 }
 
-enum TDAssetType {
-	Image = 'image',
-	Video = 'video',
-}
+/** @internal */
+export const TLV1AssetType = {
+	Image: 'image',
+	Video: 'video',
+} as const
+/** @internal */
+export type TLV1AssetType = (typeof TLV1AssetType)[keyof typeof TLV1AssetType]
 
-interface TDImageAsset extends TLV1Asset {
-	type: TDAssetType.Image
+/** @internal */
+export interface TLV1ImageAsset extends TLV1BaseAsset {
+	type: typeof TLV1AssetType.Image
 	fileName: string
 	src: string
 	size: number[]
 }
 
-interface TDVideoAsset extends TLV1Asset {
-	type: TDAssetType.Video
+/** @internal */
+export interface TLV1VideoAsset extends TLV1BaseAsset {
+	type: typeof TLV1AssetType.Video
 	fileName: string
 	src: string
 	size: number[]
 }
 
-interface TLV1Asset {
+/** @internal */
+export interface TLV1BaseAsset {
 	id: string
 	type: string
 }
 
-type TDAsset = TDImageAsset | TDVideoAsset
-
-type TDAssets = Record<string, TDAsset>
+/** @internal */
+export type TLV1Asset = TLV1ImageAsset | TLV1VideoAsset
 
 /** @internal */
-export interface LegacyTldrawDocument {
+export interface TLV1Document {
 	id: string
 	name: string
 	version: number
-	pages: Record<string, TDPage>
+	pages: Record<string, TLV1Page>
 	pageStates: Record<string, TLV1PageState>
-	assets: TDAssets
+	assets: Record<string, TLV1Asset>
 }
 
 /* ------------------ Translations ------------------ */
 
-const v1ColorsToV2Colors: Record<ColorStyle, TLDefaultColorStyle> = {
-	[ColorStyle.White]: 'black',
-	[ColorStyle.Black]: 'black',
-	[ColorStyle.LightGray]: 'grey',
-	[ColorStyle.Gray]: 'grey',
-	[ColorStyle.Green]: 'light-green',
-	[ColorStyle.Cyan]: 'green',
-	[ColorStyle.Blue]: 'light-blue',
-	[ColorStyle.Indigo]: 'blue',
-	[ColorStyle.Orange]: 'orange',
-	[ColorStyle.Yellow]: 'yellow',
-	[ColorStyle.Red]: 'red',
-	[ColorStyle.Violet]: 'light-violet',
+const v1ColorsToV2Colors: Record<TLV1ColorStyle, TLDefaultColorStyle> = {
+	[TLV1ColorStyle.White]: 'black',
+	[TLV1ColorStyle.Black]: 'black',
+	[TLV1ColorStyle.LightGray]: 'grey',
+	[TLV1ColorStyle.Gray]: 'grey',
+	[TLV1ColorStyle.Green]: 'light-green',
+	[TLV1ColorStyle.Cyan]: 'green',
+	[TLV1ColorStyle.Blue]: 'light-blue',
+	[TLV1ColorStyle.Indigo]: 'blue',
+	[TLV1ColorStyle.Orange]: 'orange',
+	[TLV1ColorStyle.Yellow]: 'yellow',
+	[TLV1ColorStyle.Red]: 'red',
+	[TLV1ColorStyle.Violet]: 'light-violet',
 }
 
-const v1FontsToV2Fonts: Record<FontStyle, TLDefaultFontStyle> = {
-	[FontStyle.Mono]: 'mono',
-	[FontStyle.Sans]: 'sans',
-	[FontStyle.Script]: 'draw',
-	[FontStyle.Serif]: 'serif',
+const v1FontsToV2Fonts: Record<TLV1FontStyle, TLDefaultFontStyle> = {
+	[TLV1FontStyle.Mono]: 'mono',
+	[TLV1FontStyle.Sans]: 'sans',
+	[TLV1FontStyle.Script]: 'draw',
+	[TLV1FontStyle.Serif]: 'serif',
 }
 
-const v1AlignsToV2Aligns: Record<AlignStyle, TLDefaultHorizontalAlignStyle> = {
-	[AlignStyle.Start]: 'start',
-	[AlignStyle.Middle]: 'middle',
-	[AlignStyle.End]: 'end',
-	[AlignStyle.Justify]: 'start',
+const v1AlignsToV2Aligns: Record<TLV1AlignStyle, TLDefaultHorizontalAlignStyle> = {
+	[TLV1AlignStyle.Start]: 'start',
+	[TLV1AlignStyle.Middle]: 'middle',
+	[TLV1AlignStyle.End]: 'end',
+	[TLV1AlignStyle.Justify]: 'start',
 }
 
-const v1TextAlignsToV2TextAligns: Record<AlignStyle, TLDefaultTextAlignStyle> = {
-	[AlignStyle.Start]: 'start',
-	[AlignStyle.Middle]: 'middle',
-	[AlignStyle.End]: 'end',
-	[AlignStyle.Justify]: 'start',
+const v1TextAlignsToV2TextAligns: Record<TLV1AlignStyle, TLDefaultTextAlignStyle> = {
+	[TLV1AlignStyle.Start]: 'start',
+	[TLV1AlignStyle.Middle]: 'middle',
+	[TLV1AlignStyle.End]: 'end',
+	[TLV1AlignStyle.Justify]: 'start',
 }
 
-const v1TextSizesToV2TextSizes: Record<SizeStyle, TLDefaultSizeStyle> = {
-	[SizeStyle.Small]: 's',
-	[SizeStyle.Medium]: 'l',
-	[SizeStyle.Large]: 'xl',
+const v1TextSizesToV2TextSizes: Record<TLV1SizeStyle, TLDefaultSizeStyle> = {
+	[TLV1SizeStyle.Small]: 's',
+	[TLV1SizeStyle.Medium]: 'l',
+	[TLV1SizeStyle.Large]: 'xl',
 }
 
-const v1SizesToV2Sizes: Record<SizeStyle, TLDefaultSizeStyle> = {
-	[SizeStyle.Small]: 'm',
-	[SizeStyle.Medium]: 'l',
-	[SizeStyle.Large]: 'xl',
+const v1SizesToV2Sizes: Record<TLV1SizeStyle, TLDefaultSizeStyle> = {
+	[TLV1SizeStyle.Small]: 'm',
+	[TLV1SizeStyle.Medium]: 'l',
+	[TLV1SizeStyle.Large]: 'xl',
 }
 
-const v1DashesToV2Dashes: Record<DashStyle, TLDefaultDashStyle> = {
-	[DashStyle.Solid]: 'solid',
-	[DashStyle.Dashed]: 'dashed',
-	[DashStyle.Dotted]: 'dotted',
-	[DashStyle.Draw]: 'draw',
+const v1DashesToV2Dashes: Record<TLV1DashStyle, TLDefaultDashStyle> = {
+	[TLV1DashStyle.Solid]: 'solid',
+	[TLV1DashStyle.Dashed]: 'dashed',
+	[TLV1DashStyle.Dotted]: 'dotted',
+	[TLV1DashStyle.Draw]: 'draw',
 }
 
-function getV2Color(color: ColorStyle | undefined): TLDefaultColorStyle {
-	return color ? v1ColorsToV2Colors[color] ?? 'black' : 'black'
+function getV2Color(color: TLV1ColorStyle | undefined): TLDefaultColorStyle {
+	return color ? (v1ColorsToV2Colors[color] ?? 'black') : 'black'
 }
 
-function getV2Font(font: FontStyle | undefined): TLDefaultFontStyle {
-	return font ? v1FontsToV2Fonts[font] ?? 'draw' : 'draw'
+function getV2Font(font: TLV1FontStyle | undefined): TLDefaultFontStyle {
+	return font ? (v1FontsToV2Fonts[font] ?? 'draw') : 'draw'
 }
 
-function getV2Align(align: AlignStyle | undefined): TLDefaultHorizontalAlignStyle {
-	return align ? v1AlignsToV2Aligns[align] ?? 'middle' : 'middle'
+function getV2Align(align: TLV1AlignStyle | undefined): TLDefaultHorizontalAlignStyle {
+	return align ? (v1AlignsToV2Aligns[align] ?? 'middle') : 'middle'
 }
 
-function getV2TextAlign(align: AlignStyle | undefined): TLDefaultTextAlignStyle {
-	return align ? v1TextAlignsToV2TextAligns[align] ?? 'middle' : 'middle'
+function getV2TextAlign(align: TLV1AlignStyle | undefined): TLDefaultTextAlignStyle {
+	return align ? (v1TextAlignsToV2TextAligns[align] ?? 'middle') : 'middle'
 }
 
-function getV2TextSize(size: SizeStyle | undefined): TLDefaultSizeStyle {
-	return size ? v1TextSizesToV2TextSizes[size] ?? 'm' : 'm'
+function getV2TextSize(size: TLV1SizeStyle | undefined): TLDefaultSizeStyle {
+	return size ? (v1TextSizesToV2TextSizes[size] ?? 'm') : 'm'
 }
 
-function getV2Size(size: SizeStyle | undefined): TLDefaultSizeStyle {
-	return size ? v1SizesToV2Sizes[size] ?? 'l' : 'l'
+function getV2Size(size: TLV1SizeStyle | undefined): TLDefaultSizeStyle {
+	return size ? (v1SizesToV2Sizes[size] ?? 'l') : 'l'
 }
 
-function getV2Dash(dash: DashStyle | undefined): TLDefaultDashStyle {
-	return dash ? v1DashesToV2Dashes[dash] ?? 'draw' : 'draw'
+function getV2Dash(dash: TLV1DashStyle | undefined): TLDefaultDashStyle {
+	return dash ? (v1DashesToV2Dashes[dash] ?? 'draw') : 'draw'
 }
 
 function getV2Point(point: number[]): VecModel {
@@ -1169,13 +1215,13 @@ function getV2Point(point: number[]): VecModel {
 	}
 }
 
-function getV2Arrowhead(decoration: Decoration | undefined): TLArrowShapeArrowheadStyle {
-	return decoration === Decoration.Arrow ? 'arrow' : 'none'
+function getV2Arrowhead(decoration: TLV1Decoration | undefined): TLArrowShapeArrowheadStyle {
+	return decoration === TLV1Decoration.Arrow ? 'arrow' : 'none'
 }
 
-function getV2Fill(isFilled: boolean | undefined, color: ColorStyle) {
+function getV2Fill(isFilled: boolean | undefined, color: TLV1ColorStyle) {
 	return isFilled
-		? color === ColorStyle.Black || color === ColorStyle.White
+		? color === TLV1ColorStyle.Black || color === TLV1ColorStyle.White
 			? 'semi'
 			: 'solid'
 		: 'none'

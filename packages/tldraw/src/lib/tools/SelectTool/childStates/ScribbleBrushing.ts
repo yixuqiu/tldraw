@@ -1,9 +1,7 @@
 import {
+	Box,
 	Geometry2d,
 	StateNode,
-	TLEventHandlers,
-	TLFrameShape,
-	TLGroupShape,
 	TLShape,
 	TLShapeId,
 	Vec,
@@ -13,6 +11,7 @@ import {
 
 export class ScribbleBrushing extends StateNode {
 	static override id = 'scribble_brushing'
+	static override trackPerformance = true
 
 	hits = new Set<TLShapeId>()
 
@@ -23,10 +22,10 @@ export class ScribbleBrushing extends StateNode {
 	initialSelectedShapeIds = new Set<TLShapeId>()
 	newlySelectedShapeIds = new Set<TLShapeId>()
 
-	override onEnter = () => {
-		this.initialSelectedShapeIds = new Set<TLShapeId>(
-			this.editor.inputs.shiftKey ? this.editor.getSelectedShapeIds() : []
-		)
+	override onEnter() {
+		// Captured regardless of shift so cancel() can restore it like the rectangle
+		// brush does (#10429); shift only decides whether it merges into the live selection.
+		this.initialSelectedShapeIds = new Set<TLShapeId>(this.editor.getSelectedShapeIds())
 		this.newlySelectedShapeIds = new Set<TLShapeId>()
 		this.size = 0
 		this.hits.clear()
@@ -44,50 +43,49 @@ export class ScribbleBrushing extends StateNode {
 		this.editor.updateInstanceState({ brush: null })
 	}
 
-	override onExit = () => {
+	override onExit() {
 		this.editor.scribbles.stop(this.scribbleId)
 	}
 
-	override onPointerMove = () => {
+	override onPointerMove() {
 		this.updateScribbleSelection(true)
 	}
 
-	override onPointerUp = () => {
+	override onPointerUp() {
 		this.complete()
 	}
 
-	override onKeyDown = () => {
+	override onKeyDown() {
 		this.updateScribbleSelection(false)
 	}
 
-	override onKeyUp = () => {
-		if (!this.editor.inputs.altKey) {
+	override onKeyUp() {
+		if (!this.editor.inputs.getAltKey()) {
 			this.parent.transition('brushing')
 		} else {
 			this.updateScribbleSelection(false)
 		}
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onCancel() {
 		this.cancel()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onComplete() {
 		this.complete()
 	}
 
-	private pushPointToScribble = () => {
-		const { x, y } = this.editor.inputs.currentPagePoint
+	private pushPointToScribble() {
+		const { x, y } = this.editor.inputs.getCurrentPagePoint()
 		this.editor.scribbles.addPoint(this.scribbleId, x, y)
 	}
 
 	private updateScribbleSelection(addPoint: boolean) {
 		const { editor } = this
-		// const zoomLevel = this.editor.getZoomLevel()
-		const currentPageShapes = this.editor.getCurrentPageShapes()
-		const {
-			inputs: { shiftKey, originPagePoint, previousPagePoint, currentPagePoint },
-		} = this.editor
+		const shiftKey = this.editor.inputs.getShiftKey()
+		const originPagePoint = this.editor.inputs.getOriginPagePoint()
+		const previousPagePoint = this.editor.inputs.getPreviousPagePoint()
+		const currentPagePoint = this.editor.inputs.getCurrentPagePoint()
 
 		const { newlySelectedShapeIds, initialSelectedShapeIds } = this
 
@@ -95,28 +93,51 @@ export class ScribbleBrushing extends StateNode {
 			this.pushPointToScribble()
 		}
 
+		const minDist = 0 // this.editor.options.hitTestMargin / zoomLevel
+
+		// Create bounds around line segment with margin
+		const lineBounds = Box.FromPoints([previousPagePoint, currentPagePoint]).expandBy(minDist)
+		const candidateIds = editor.getShapeIdsInsideBounds(lineBounds)
+
+		// Early return if no candidates - avoid expensive getCurrentPageRenderingShapesSorted()
+		// But still update selection based on current state
+		if (candidateIds.size === 0) {
+			const current = editor.getSelectedShapeIds()
+			const next = new Set<TLShapeId>(
+				shiftKey
+					? [...newlySelectedShapeIds, ...initialSelectedShapeIds]
+					: [...newlySelectedShapeIds]
+			)
+			if (current.length !== next.size || current.some((id) => !next.has(id))) {
+				this.editor.setSelectedShapes(Array.from(next))
+			}
+			return
+		}
+
+		const allShapes = this.editor.getCurrentPageRenderingShapesSorted()
+		const currentPageShapes = allShapes.filter((shape) => candidateIds.has(shape.id))
+
 		const shapes = currentPageShapes
 		let shape: TLShape, geometry: Geometry2d, A: Vec, B: Vec
-
-		const minDist = 0 // HIT_TEST_MARGIN / zoomLevel
 
 		for (let i = 0, n = shapes.length; i < n; i++) {
 			shape = shapes[i]
 
-			// If the shape is a group or is already selected or locked, don't select it
+			// If the shape is a group or is already selected, don't select it.
+			// Also skip locked shapes unless the selectLockedShapes option is enabled.
 			if (
-				editor.isShapeOfType<TLGroupShape>(shape, 'group') ||
+				editor.isShapeOfType(shape, 'group') ||
 				newlySelectedShapeIds.has(shape.id) ||
-				editor.isShapeOrAncestorLocked(shape)
+				(!editor.options.selectLockedShapes && editor.isShapeOrAncestorLocked(shape))
 			) {
 				continue
 			}
 
 			geometry = editor.getShapeGeometry(shape)
 
-			// If the scribble started inside of the frame, don't select it
+			// If the scribble started inside of a frame-like shape, don't select it
 			if (
-				editor.isShapeOfType<TLFrameShape>(shape, 'frame') &&
+				editor.isShapeFrameLike(shape) &&
 				geometry.bounds.containsPoint(editor.getPointInShapeSpace(shape, originPagePoint))
 			) {
 				continue

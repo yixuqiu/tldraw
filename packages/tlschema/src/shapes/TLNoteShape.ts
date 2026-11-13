@@ -1,34 +1,139 @@
 import { T } from '@tldraw/validate'
+import { TLRichText, richTextValidator, toRichText } from '../misc/TLRichText'
+import { createShapePropsMigrationIds, createShapePropsMigrationSequence } from '../records/TLShape'
+import { RecordProps } from '../recordsWithProps'
 import {
-	RETIRED_DOWN_MIGRATION,
-	createShapePropsMigrationIds,
-	createShapePropsMigrationSequence,
-} from '../records/TLShape'
-import { DefaultColorStyle } from '../styles/TLColorStyle'
-import { DefaultFontStyle } from '../styles/TLFontStyle'
-import { DefaultHorizontalAlignStyle } from '../styles/TLHorizontalAlignStyle'
-import { DefaultSizeStyle } from '../styles/TLSizeStyle'
-import { DefaultVerticalAlignStyle } from '../styles/TLVerticalAlignStyle'
-import { ShapePropsType, TLBaseShape } from './TLBaseShape'
+	DefaultColorStyle,
+	DefaultLabelColorStyle,
+	TLDefaultColorStyle,
+} from '../styles/TLColorStyle'
+import { DefaultFontStyle, TLDefaultFontStyle } from '../styles/TLFontStyle'
+import {
+	DefaultHorizontalAlignStyle,
+	TLDefaultHorizontalAlignStyle,
+} from '../styles/TLHorizontalAlignStyle'
+import { DefaultSizeStyle, TLDefaultSizeStyle } from '../styles/TLSizeStyle'
+import {
+	DefaultVerticalAlignStyle,
+	TLDefaultVerticalAlignStyle,
+} from '../styles/TLVerticalAlignStyle'
+import { TLBaseShape } from './TLBaseShape'
 
-/** @public */
-export const noteShapeProps = {
+/**
+ * Properties for a note shape. Note shapes represent sticky notes or text annotations
+ * with rich formatting capabilities and various styling options.
+ *
+ * @public
+ * @example
+ * ```ts
+ * const noteProps: TLNoteShapeProps = {
+ *   color: 'yellow',
+ *   labelColor: 'black',
+ *   size: 'm',
+ *   font: 'draw',
+ *   fontSizeAdjustment: null,
+ *   align: 'middle',
+ *   verticalAlign: 'middle',
+ *   growY: 0,
+ *   url: '',
+ *   richText: toRichText('Hello **world**!'),
+ *   scale: 1
+ * }
+ * ```
+ */
+export interface TLNoteShapeProps {
+	/** Background color style of the note */
+	color: TLDefaultColorStyle
+	/** Text color style for the note content */
+	labelColor: TLDefaultColorStyle
+	/** Size style determining the font size and note dimensions */
+	size: TLDefaultSizeStyle
+	/** Font family style for the note text */
+	font: TLDefaultFontStyle
+	/** Ratio to scale the base font size when text needs to shrink to fit. Null means needs recomputation, 1 means no adjustment, and values less than 1 indicate shrinkage. */
+	fontSizeAdjustment: number | null
+	/** Horizontal alignment of text within the note */
+	align: TLDefaultHorizontalAlignStyle
+	/** Vertical alignment of text within the note */
+	verticalAlign: TLDefaultVerticalAlignStyle
+	/** Additional height growth for the note beyond its base size */
+	growY: number
+	/** Optional URL associated with the note for linking */
+	url: string
+	/** Rich text content with formatting like bold, italic, etc. */
+	richText: TLRichText
+	/** Scale factor applied to the note shape for display */
+	scale: number
+	/** User ID of the person who last edited the note text */
+	textLastEditedBy: string | null
+}
+
+/**
+ * A note shape representing a sticky note or text annotation on the canvas.
+ * Note shapes support rich text formatting, various styling options, and can
+ * be used for annotations, reminders, or general text content.
+ *
+ * @public
+ * @example
+ * ```ts
+ * const noteShape: TLNoteShape = {
+ *   id: 'shape:note1',
+ *   type: 'note',
+ *   x: 100,
+ *   y: 100,
+ *   rotation: 0,
+ *   index: 'a1',
+ *   parentId: 'page:main',
+ *   isLocked: false,
+ *   opacity: 1,
+ *   props: {
+ *     color: 'light-blue',
+ *     labelColor: 'black',
+ *     size: 's',
+ *     font: 'sans',
+ *     fontSizeAdjustment: 0.85,
+ *     align: 'start',
+ *     verticalAlign: 'start',
+ *     growY: 50,
+ *     url: 'https://example.com',
+ *     richText: toRichText('Important **note**!'),
+ *     scale: 1
+ *   },
+ *   meta: {},
+ *   typeName: 'shape'
+ * }
+ * ```
+ */
+export type TLNoteShape = TLBaseShape<'note', TLNoteShapeProps>
+
+/**
+ * Validation schema for note shape properties. Defines the runtime validation rules
+ * for all properties of note shapes, ensuring data integrity and type safety.
+ *
+ * @public
+ * @example
+ * ```ts
+ * import { noteShapeProps } from '@tldraw/tlschema'
+ *
+ * // Used internally by the validation system
+ * const validator = T.object(noteShapeProps)
+ * const validatedProps = validator.validate(someNoteProps)
+ * ```
+ */
+export const noteShapeProps: RecordProps<TLNoteShape> = {
 	color: DefaultColorStyle,
+	labelColor: DefaultLabelColorStyle,
 	size: DefaultSizeStyle,
 	font: DefaultFontStyle,
-	fontSizeAdjustment: T.positiveNumber,
+	fontSizeAdjustment: T.positiveNumber.nullable(),
 	align: DefaultHorizontalAlignStyle,
 	verticalAlign: DefaultVerticalAlignStyle,
 	growY: T.positiveNumber,
 	url: T.linkUrl,
-	text: T.string,
+	richText: richTextValidator,
+	scale: T.nonZeroNumber,
+	textLastEditedBy: T.string.nullable(),
 }
-
-/** @public */
-export type TLNoteShapeProps = ShapePropsType<typeof noteShapeProps>
-
-/** @public */
-export type TLNoteShape = TLBaseShape<'note', TLNoteShapeProps>
 
 const Versions = createShapePropsMigrationIds('note', {
 	AddUrlProp: 1,
@@ -37,11 +142,32 @@ const Versions = createShapePropsMigrationIds('note', {
 	AddVerticalAlign: 4,
 	MakeUrlsValid: 5,
 	AddFontSizeAdjustment: 6,
+	AddScale: 7,
+	AddLabelColor: 8,
+	AddRichText: 9,
+	AddRichTextAttrs: 10,
+	AddFirstEditedBy: 11,
+	MakeFontSizeAdjustmentRatio: 12,
+	RenameFirstEditedByToLast: 13,
 })
 
+/**
+ * Version identifiers for note shape migrations. These version numbers track
+ * significant schema changes over time, enabling proper data migration between versions.
+ *
+ * @public
+ */
 export { Versions as noteShapeVersions }
 
-/** @public */
+/**
+ * Migration sequence for note shapes. Handles schema evolution over time by defining
+ * how to upgrade and downgrade note shape data between different versions. Includes
+ * migrations for URL properties, text alignment changes, vertical alignment addition,
+ * font size adjustments, scaling support, label color, the transition from plain text to rich text,
+ * and support for attrs property on richText.
+ *
+ * @public
+ */
 export const noteShapeMigrations = createShapePropsMigrationSequence({
 	sequence: [
 		{
@@ -49,7 +175,7 @@ export const noteShapeMigrations = createShapePropsMigrationSequence({
 			up: (props) => {
 				props.url = ''
 			},
-			down: RETIRED_DOWN_MIGRATION,
+			down: 'retired',
 		},
 		{
 			id: Versions.RemoveJustify,
@@ -58,7 +184,7 @@ export const noteShapeMigrations = createShapePropsMigrationSequence({
 					props.align = 'start'
 				}
 			},
-			down: RETIRED_DOWN_MIGRATION,
+			down: 'retired',
 		},
 		{
 			id: Versions.MigrateLegacyAlign,
@@ -75,14 +201,14 @@ export const noteShapeMigrations = createShapePropsMigrationSequence({
 						return
 				}
 			},
-			down: RETIRED_DOWN_MIGRATION,
+			down: 'retired',
 		},
 		{
 			id: Versions.AddVerticalAlign,
 			up: (props) => {
 				props.verticalAlign = 'middle'
 			},
-			down: RETIRED_DOWN_MIGRATION,
+			down: 'retired',
 		},
 		{
 			id: Versions.MakeUrlsValid,
@@ -102,6 +228,80 @@ export const noteShapeMigrations = createShapePropsMigrationSequence({
 			},
 			down: (props) => {
 				delete props.fontSizeAdjustment
+			},
+		},
+		{
+			id: Versions.AddScale,
+			up: (props) => {
+				props.scale = 1
+			},
+			down: (props) => {
+				delete props.scale
+			},
+		},
+		{
+			id: Versions.AddLabelColor,
+			up: (props) => {
+				props.labelColor = 'black'
+			},
+			down: (props) => {
+				delete props.labelColor
+			},
+		},
+		{
+			id: Versions.AddRichText,
+			up: (props) => {
+				props.richText = toRichText(props.text)
+				delete props.text
+			},
+			// N.B. Explicitly no down state so that we force clients to update.
+			// down: (props) => {
+			// 	delete props.richText
+			// },
+		},
+		{
+			id: Versions.AddRichTextAttrs,
+			up: (_props) => {
+				// noop - attrs is optional so old records are valid
+			},
+			down: (props) => {
+				// Remove attrs from richText when migrating down
+				if (props.richText && 'attrs' in props.richText) {
+					delete props.richText.attrs
+				}
+			},
+		},
+		{
+			id: Versions.AddFirstEditedBy,
+			up: (props) => {
+				props.textFirstEditedBy = null
+			},
+			down: (props) => {
+				delete props.textFirstEditedBy
+			},
+		},
+		{
+			id: Versions.MakeFontSizeAdjustmentRatio,
+			up: (props) => {
+				// Old system stored 0 for "no adjustment" or an absolute pixel font size.
+				// New system stores a ratio (1 = no adjustment, <1 = shrunk).
+				// We can convert 0 → 1 (no adjustment), but non-zero values need
+				// recomputation (null) since we don't know the base font size here.
+				props.fontSizeAdjustment = props.fontSizeAdjustment === 0 ? 1 : null
+			},
+			down: (props) => {
+				props.fontSizeAdjustment = 0
+			},
+		},
+		{
+			id: Versions.RenameFirstEditedByToLast,
+			up: (props) => {
+				props.textLastEditedBy = props.textFirstEditedBy ?? null
+				delete props.textFirstEditedBy
+			},
+			down: (props) => {
+				props.textFirstEditedBy = props.textLastEditedBy ?? null
+				delete props.textLastEditedBy
 			},
 		},
 	],

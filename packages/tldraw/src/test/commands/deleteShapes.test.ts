@@ -1,4 +1,6 @@
-import { createShapeId } from '@tldraw/editor'
+import { createBindingId, createShapeId } from '@tldraw/editor'
+import { vi } from 'vitest'
+import { getArrowBindings } from '../../lib/shapes/arrow/shared'
 import { TestEditor } from '../TestEditor'
 
 let editor: TestEditor
@@ -11,7 +13,7 @@ const ids = {
 	arrow1: createShapeId('arrow1'),
 }
 
-jest.useFakeTimers()
+vi.useFakeTimers()
 
 beforeEach(() => {
 	editor = new TestEditor()
@@ -29,20 +31,34 @@ beforeEach(() => {
 				x: 150,
 				y: 150,
 				props: {
-					start: {
-						type: 'binding',
-						isExact: false,
-						boundShapeId: ids.box1,
-						normalizedAnchor: { x: 0.5, y: 0.5 },
-						isPrecise: false,
-					},
-					end: {
-						type: 'binding',
-						isExact: false,
-						boundShapeId: ids.box2,
-						normalizedAnchor: { x: 0.5, y: 0.5 },
-						isPrecise: false,
-					},
+					start: { x: 0, y: 0 },
+					end: { x: 0, y: 0 },
+				},
+			},
+		])
+		.createBindings([
+			{
+				id: createBindingId(),
+				fromId: ids.arrow1,
+				toId: ids.box1,
+				type: 'arrow',
+				props: {
+					terminal: 'start',
+					isExact: false,
+					normalizedAnchor: { x: 0.5, y: 0.5 },
+					isPrecise: false,
+				},
+			},
+			{
+				id: createBindingId(),
+				fromId: ids.arrow1,
+				toId: ids.box2,
+				type: 'arrow',
+				props: {
+					terminal: 'end',
+					isExact: false,
+					normalizedAnchor: { x: 0.5, y: 0.5 },
+					isPrecise: false,
 				},
 			},
 		])
@@ -51,7 +67,7 @@ beforeEach(() => {
 describe('Editor.deleteShapes', () => {
 	it('Deletes a shape', () => {
 		editor.select(ids.box3, ids.box4)
-		editor.mark('before deleting')
+		editor.markHistoryStoppingPoint('before deleting')
 		editor.deleteShapes(editor.getSelectedShapeIds()) // delete the selected shapes
 		expect(editor.getShape(ids.box3)).toBeUndefined()
 		expect(editor.getShape(ids.box4)).toBeUndefined()
@@ -76,7 +92,7 @@ describe('Editor.deleteShapes', () => {
 	it('Deletes descendants', () => {
 		editor.reparentShapes([ids.box4], ids.box3)
 		editor.select(ids.box3)
-		editor.mark('before deleting')
+		editor.markHistoryStoppingPoint('before deleting')
 		editor.deleteShapes(editor.getSelectedShapeIds()) // should be a noop, nothing to delete
 		expect(editor.getShape(ids.box3)).toBeUndefined()
 		expect(editor.getShape(ids.box4)).toBeUndefined()
@@ -87,27 +103,113 @@ describe('Editor.deleteShapes', () => {
 		expect(editor.getShape(ids.box3)).toBeUndefined()
 		expect(editor.getShape(ids.box4)).toBeUndefined()
 	})
+
+	it('cleans selected ids from page state once when deleting many selected shapes', () => {
+		const shapeIds = Array.from({ length: 32 }, (_, i) => createShapeId(`bulk-${i}`))
+		editor.createShapes(
+			shapeIds.map((id, i) => ({
+				id,
+				type: 'geo',
+				x: i * 10,
+				y: i * 10,
+				props: { w: 100, h: 100 },
+			}))
+		)
+
+		editor.setSelectedShapes(shapeIds)
+		editor.markHistoryStoppingPoint('before deleting')
+
+		const putSpy = vi.spyOn(editor.store, 'put')
+
+		editor.deleteShapes(editor.getSelectedShapeIds())
+
+		expect(editor.getSelectedShapeIds()).toEqual([])
+		expect(shapeIds.every((id) => !editor.getShape(id))).toBe(true)
+
+		const pageStatePutCalls = putSpy.mock.calls.filter(([records]) =>
+			records.some((record) => record.typeName === 'instance_page_state')
+		)
+		expect(pageStatePutCalls).toHaveLength(1)
+		expect(pageStatePutCalls[0][0]).toMatchObject([
+			{ typeName: 'instance_page_state', selectedShapeIds: [] },
+		])
+
+		putSpy.mockRestore()
+
+		editor.undo()
+
+		expect(shapeIds.every((id) => editor.getShape(id))).toBe(true)
+		expect(editor.getSelectedShapeIds()).toEqual(shapeIds)
+	})
+
+	it('does not crash when deleting a bent arrow and two adjacent bound shapes', () => {
+		const leftId = createShapeId('left')
+		const rightId = createShapeId('right')
+		const bentArrowId = createShapeId('bent-arrow')
+
+		editor.createShapes([
+			{ id: leftId, type: 'geo', x: 500, y: 500, props: { w: 100, h: 100 } },
+			{ id: rightId, type: 'geo', x: 600, y: 500, props: { w: 100, h: 100 } },
+			{
+				id: bentArrowId,
+				type: 'arrow',
+				x: 550,
+				y: 550,
+				props: {
+					start: { x: 0, y: 0 },
+					end: { x: 100, y: 0 },
+					bend: -120,
+				},
+			},
+		])
+
+		editor.createBindings([
+			{
+				id: createBindingId(),
+				fromId: bentArrowId,
+				toId: leftId,
+				type: 'arrow',
+				props: {
+					terminal: 'start',
+					isExact: false,
+					normalizedAnchor: { x: 1, y: 0.5 },
+					isPrecise: false,
+				},
+			},
+			{
+				id: createBindingId(),
+				fromId: bentArrowId,
+				toId: rightId,
+				type: 'arrow',
+				props: {
+					terminal: 'end',
+					isExact: false,
+					normalizedAnchor: { x: 0, y: 0.5 },
+					isPrecise: false,
+				},
+			},
+		])
+
+		expect(() => editor.deleteShapes([leftId, bentArrowId, rightId])).not.toThrow()
+	})
 })
 
 describe('When deleting arrows', () => {
+	function bindings() {
+		return getArrowBindings(editor, editor.getShape(ids.arrow1)!)
+	}
 	it('Restores any bindings on undo', () => {
 		editor.select(ids.arrow1)
-		editor.mark('before deleting')
-		// @ts-expect-error
-		expect(editor._getArrowBindingsIndex().get()[ids.box1]).not.toBeUndefined()
-		// @ts-expect-error
-		expect(editor._getArrowBindingsIndex().get()[ids.box2]).not.toBeUndefined()
+		editor.markHistoryStoppingPoint('before deleting')
+
+		expect(bindings().start).toBeDefined()
+		expect(bindings().end).toBeDefined()
 
 		editor.deleteShapes(editor.getSelectedShapeIds()) // delete the selected shapes
-		// @ts-expect-error
-		expect(editor._getArrowBindingsIndex().get()[ids.box1]).toBeUndefined()
-		// @ts-expect-error
-		expect(editor._getArrowBindingsIndex().get()[ids.box2]).toBeUndefined()
+		expect(editor.store.query.records('binding').get()).toHaveLength(0)
 
 		editor.undo()
-		// @ts-expect-error
-		expect(editor._getArrowBindingsIndex().get()[ids.box1]).not.toBeUndefined()
-		// @ts-expect-error
-		expect(editor._getArrowBindingsIndex().get()[ids.box2]).not.toBeUndefined()
+		expect(bindings().start).toBeDefined()
+		expect(bindings().end).toBeDefined()
 	})
 })

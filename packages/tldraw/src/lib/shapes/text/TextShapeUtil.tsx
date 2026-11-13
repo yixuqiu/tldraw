@@ -5,30 +5,71 @@ import {
 	Rectangle2d,
 	ShapeUtil,
 	SvgExportContext,
-	TLOnEditEndHandler,
-	TLOnResizeHandler,
+	TLGeometryOpts,
+	TLResizeInfo,
 	TLShapeId,
-	TLShapeUtilFlag,
 	TLTextShape,
 	Vec,
-	WeakMapCache,
-	getDefaultColorTheme,
-	preventDefault,
+	createComputedCache,
+	getColorValue,
+	getFontsFromRichText,
+	isEqual,
+	resizeScaled,
 	textShapeMigrations,
 	textShapeProps,
-	toDomPrecision,
+	toRichText,
+	useColorMode,
 	useEditor,
 } from '@tldraw/editor'
 import { useCallback } from 'react'
-import { useDefaultColorTheme } from '../shared/ShapeFill'
-import { SvgTextLabel } from '../shared/SvgTextLabel'
-import { TextHelpers } from '../shared/TextHelpers'
-import { TextLabel } from '../shared/TextLabel'
-import { FONT_FAMILIES, FONT_SIZES, TEXT_PROPS } from '../shared/default-shape-constants'
-import { getFontDefForExport } from '../shared/defaultStyleDefs'
-import { resizeScaled } from '../shared/resizeScaled'
+import {
+	renderHtmlFromRichTextForMeasurement,
+	renderPlaintextFromRichText,
+} from '../../utils/text/richText'
+import { FONT_SIZES, TEXT_PROPS, getFontFamily } from '../shared/default-shape-constants'
+import { getThemeFontFaces } from '../shared/defaultFonts'
+import { ShapeOptionsWithDisplayValues, getDisplayValues } from '../shared/getDisplayValues'
+import { RichTextLabel, RichTextSVG } from '../shared/RichTextLabel'
 
-const sizeCache = new WeakMapCache<TLTextShape['props'], { height: number; width: number }>()
+// Export-only slack (as a fraction of font size) added around a text shape's advance box in `toSvg`,
+// so italic/cursive glyph ink that spills past the box — side bearings, slanted ascenders — isn't
+// clipped at the <foreignObject> edge on export (#8802). The text still renders in the same place;
+// the export's auto-trim crops the extra room back to the real pixels, so the PNG stays tight. This
+// is deliberately export-only: the shape's geometry (selection, hit-testing, the text-edit cursor)
+// stays the advance box, which is the right box for those.
+const TEXT_EXPORT_INK_MARGIN = 0.3
+
+const sizeCache = createComputedCache(
+	'text size',
+	(editor: Editor, shape: TLTextShape) => {
+		editor.fonts.trackFontsForShape(shape)
+		const util = editor.getShapeUtil(shape) as TextShapeUtil
+		const dv = getDisplayValues(util, shape)
+		return getTextSize(editor, shape.props, dv)
+	},
+	{ areRecordsEqual: (a, b) => a.props === b.props }
+)
+/** @public */
+export interface TextShapeUtilDisplayValues {
+	color: string
+	fontFamily: string
+	fontSize: number
+	lineHeight: number
+	fontWeight: string
+	fontStyle: string
+	fontVariant: string
+}
+
+/** @public */
+export interface TextShapeOptions extends ShapeOptionsWithDisplayValues<
+	TLTextShape,
+	TextShapeUtilDisplayValues
+> {
+	/** How much addition padding should be added to the horizontal geometry of the shape when binding to an arrow? */
+	extraArrowHorizontalPadding: number
+	/** Whether to show the outline of the text shape (using the same color as the canvas). This helps with overlapping shapes. It does not show up on Safari, where text outline is a performance issues. */
+	showTextOutline: boolean
+}
 
 /** @public */
 export class TextShapeUtil extends ShapeUtil<TLTextShape> {
@@ -36,64 +77,114 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 	static override props = textShapeProps
 	static override migrations = textShapeMigrations
 
+	override options: TextShapeOptions = {
+		extraArrowHorizontalPadding: 10,
+		showTextOutline: true,
+		getDefaultDisplayValues(_editor, shape, theme, colorMode): TextShapeUtilDisplayValues {
+			const { color, font, size } = shape.props
+			return {
+				color: getColorValue(theme.colors[colorMode], color, 'solid'),
+				fontFamily: getFontFamily(theme, font),
+				fontSize: theme.fontSize * FONT_SIZES[size],
+				lineHeight: theme.lineHeight,
+				fontWeight: TEXT_PROPS.fontWeight,
+				fontStyle: TEXT_PROPS.fontStyle,
+				fontVariant: TEXT_PROPS.fontVariant,
+			}
+		},
+		getCustomDisplayValues(): Partial<TextShapeUtilDisplayValues> {
+			return {}
+		},
+	}
+
 	getDefaultProps(): TLTextShape['props'] {
 		return {
 			color: 'black',
 			size: 'm',
 			w: 8,
-			text: '',
 			font: 'draw',
 			textAlign: 'start',
 			autoSize: true,
 			scale: 1,
+			richText: toRichText(''),
 		}
 	}
 
 	getMinDimensions(shape: TLTextShape) {
-		return sizeCache.get(shape.props, (props) => getTextSize(this.editor, props))
+		return sizeCache.get(this.editor, shape.id)!
 	}
 
-	getGeometry(shape: TLTextShape) {
+	getGeometry(shape: TLTextShape, opts: TLGeometryOpts) {
 		const { scale } = shape.props
 		const { width, height } = this.getMinDimensions(shape)!
+		const context = opts?.context ?? 'none'
 		return new Rectangle2d({
-			width: width * scale,
+			x:
+				(context === '@tldraw/arrow-without-arrowhead'
+					? -this.options.extraArrowHorizontalPadding
+					: 0) * scale,
+			width:
+				(width +
+					(context === '@tldraw/arrow-without-arrowhead'
+						? this.options.extraArrowHorizontalPadding * 2
+						: 0)) *
+				scale,
 			height: height * scale,
 			isFilled: true,
 			isLabel: true,
 		})
 	}
 
-	override canEdit = () => true
+	override getFontFaces(shape: TLTextShape) {
+		const themeFaces = getThemeFontFaces(this.editor.getCurrentTheme(), shape.props.font)
+		if (themeFaces) return themeFaces
+		return getFontsFromRichText(this.editor, shape.props.richText, {
+			family: `tldraw_${shape.props.font}`,
+			weight: 'normal',
+			style: 'normal',
+		})
+	}
 
-	override isAspectRatioLocked: TLShapeUtilFlag<TLTextShape> = () => true // WAIT NO THIS IS HARD CODED IN THE RESIZE HANDLER
+	override getText(shape: TLTextShape) {
+		return renderPlaintextFromRichText(this.editor, shape.props.richText)
+	}
+
+	override canEdit(shape: TLTextShape) {
+		return true
+	}
+
+	override isAspectRatioLocked(shape: TLTextShape) {
+		return true
+	} // WAIT NO THIS IS HARD CODED IN THE RESIZE HANDLER
 
 	component(shape: TLTextShape) {
 		const {
 			id,
-			props: { font, size, text, color, scale, textAlign },
+			props: { richText, scale, textAlign },
 		} = shape
 
 		const { width, height } = this.getMinDimensions(shape)
 		const isSelected = shape.id === this.editor.getOnlySelectedShapeId()
-		const theme = useDefaultColorTheme()
+		const colorMode = useColorMode()
+		const dv = getDisplayValues(this, shape, colorMode)
 		const handleKeyDown = useTextShapeKeydownHandler(id)
 
 		return (
-			<TextLabel
-				id={id}
+			<RichTextLabel
+				shapeId={id}
 				classNamePrefix="tl-text-shape"
 				type="text"
-				font={font}
-				fontSize={FONT_SIZES[size]}
-				lineHeight={TEXT_PROPS.lineHeight}
-				align={textAlign}
+				fontFamily={dv.fontFamily}
+				fontSize={dv.fontSize}
+				lineHeight={dv.lineHeight}
+				textAlign={textAlign === 'middle' ? 'center' : textAlign}
 				verticalAlign="middle"
-				text={text}
-				labelColor={theme[color].solid}
+				richText={richText}
+				labelColor={dv.color}
 				isSelected={isSelected}
 				textWidth={width}
 				textHeight={height}
+				showTextOutline={this.options.showTextOutline}
 				style={{
 					transform: `scale(${scale})`,
 					transformOrigin: 'top left',
@@ -104,38 +195,48 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 		)
 	}
 
-	indicator(shape: TLTextShape) {
+	override getIndicatorPath(shape: TLTextShape): Path2D | undefined {
+		if (shape.props.autoSize && this.editor.getEditingShapeId() === shape.id) return undefined
 		const bounds = this.editor.getShapeGeometry(shape).bounds
-		const editor = useEditor()
-		if (shape.props.autoSize && editor.getEditingShapeId() === shape.id) return null
-		return <rect width={toDomPrecision(bounds.width)} height={toDomPrecision(bounds.height)} />
+		const path = new Path2D()
+		path.rect(0, 0, bounds.width, bounds.height)
+		return path
 	}
 
 	override toSvg(shape: TLTextShape, ctx: SvgExportContext) {
-		ctx.addExportDef(getFontDefForExport(shape.props.font))
-		if (shape.props.text) ctx.addExportDef(getFontDefForExport(shape.props.font))
-
 		const bounds = this.editor.getShapeGeometry(shape).bounds
 		const width = bounds.width / (shape.props.scale ?? 1)
 		const height = bounds.height / (shape.props.scale ?? 1)
 
-		const theme = getDefaultColorTheme(ctx)
+		const dv = getDisplayValues(this, shape, ctx.colorMode)
 
+		// Pad the exported foreignObject by a margin so glyph ink can spill past the advance box
+		// without being clipped at its edge; the text is inset by the same margin so it renders in the
+		// same place, and the export's trim crops the slack back to content. See TEXT_EXPORT_INK_MARGIN.
+		const inkMargin = Math.ceil(dv.fontSize * TEXT_EXPORT_INK_MARGIN)
+		const exportBounds = new Box(
+			-inkMargin,
+			-inkMargin,
+			width + inkMargin * 2,
+			height + inkMargin * 2
+		)
 		return (
-			<SvgTextLabel
-				fontSize={FONT_SIZES[shape.props.size]}
-				font={shape.props.font}
-				align={shape.props.textAlign}
+			<RichTextSVG
+				fontSize={dv.fontSize}
+				fontFamily={dv.fontFamily}
+				lineHeight={dv.lineHeight}
+				textAlign={shape.props.textAlign === 'middle' ? 'center' : shape.props.textAlign}
 				verticalAlign="middle"
-				text={shape.props.text}
-				labelColor={theme[shape.props.color].solid}
-				bounds={new Box(0, 0, width, height)}
-				padding={0}
+				richText={shape.props.richText}
+				labelColor={dv.color}
+				bounds={exportBounds}
+				padding={inkMargin}
+				showTextOutline={this.options.showTextOutline}
 			/>
 		)
 	}
 
-	override onResize: TLOnResizeHandler<TLTextShape> = (shape, info) => {
+	override onResize(shape: TLTextShape, info: TLResizeInfo<TLTextShape>) {
 		const { newPoint, initialBounds, initialShape, scaleX, handle } = info
 
 		if (info.mode === 'scale_shape' || (handle !== 'right' && handle !== 'left')) {
@@ -162,51 +263,16 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 		}
 	}
 
-	override onBeforeCreate = (shape: TLTextShape) => {
-		// When a shape is created, center the text at the created point.
-
-		// Only center if the shape is set to autosize.
-		if (!shape.props.autoSize) return
-
-		// Only center if the shape is empty when created.
-		if (shape.props.text.trim()) return
-
-		const bounds = this.getMinDimensions(shape)
-
-		return {
-			...shape,
-			x: shape.x - bounds.width / 2,
-			y: shape.y - bounds.height / 2,
-		}
-	}
-
-	override onEditEnd: TLOnEditEndHandler<TLTextShape> = (shape) => {
-		const {
-			id,
-			type,
-			props: { text },
-		} = shape
-
-		const trimmedText = shape.props.text.trimEnd()
+	override onEditEnd(shape: TLTextShape) {
+		// todo: find a way to check if the rich text has any nodes that aren't empty spaces
+		const trimmedText = renderPlaintextFromRichText(this.editor, shape.props.richText).trimEnd()
 
 		if (trimmedText.length === 0) {
 			this.editor.deleteShapes([shape.id])
-		} else {
-			if (trimmedText !== shape.props.text) {
-				this.editor.updateShapes([
-					{
-						id,
-						type,
-						props: {
-							text: text.trimEnd(),
-						},
-					},
-				])
-			}
 		}
 	}
 
-	override onBeforeUpdate = (prev: TLTextShape, next: TLTextShape) => {
+	override onBeforeUpdate(prev: TLTextShape, next: TLTextShape) {
 		if (!next.props.autoSize) return
 
 		const styleDidChange =
@@ -215,7 +281,7 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 			prev.props.font !== next.props.font ||
 			(prev.props.scale !== 1 && next.props.scale === 1)
 
-		const textDidChange = prev.props.text !== next.props.text
+		const textDidChange = !isEqual(prev.props.richText, next.props.richText)
 
 		// Only update position if either changed
 		if (!styleDidChange && !textDidChange) return
@@ -224,7 +290,8 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 		const boundsA = this.getMinDimensions(prev)
 
 		// Will always be a fresh call to getTextSize
-		const boundsB = getTextSize(this.editor, next.props)
+		const dv = getDisplayValues(this, next)
+		const boundsB = getTextSize(this.editor, next.props, dv)
 
 		const wA = boundsA.width * prev.props.scale
 		const hA = boundsA.height * prev.props.scale
@@ -267,59 +334,57 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 		}
 	}
 
-	override onDoubleClickEdge = (shape: TLTextShape) => {
-		// If the shape has a fixed width, set it to autoSize.
-		if (!shape.props.autoSize) {
-			return {
-				id: shape.id,
-				type: shape.type,
-				props: {
-					autoSize: true,
-				},
-			}
-		}
+	// 	todo: The edge doubleclicking feels like a mistake more often than
+	//  not, especially on multiline text. Removed June 16 2024
 
-		// If the shape is scaled, reset the scale to 1.
-		if (shape.props.scale !== 1) {
-			return {
-				id: shape.id,
-				type: shape.type,
-				props: {
-					scale: 1,
-				},
-			}
-		}
-	}
+	// override onDoubleClickEdge = (shape: TLTextShape) => {
+	// 	// If the shape has a fixed width, set it to autoSize.
+	// 	if (!shape.props.autoSize) {
+	// 		return {
+	// 			id: shape.id,
+	// 			type: shape.type,
+	// 			props: {
+	// 				autoSize: true,
+	// 			},
+	// 		}
+	// 	}
+	// 	// If the shape is scaled, reset the scale to 1.
+	// 	if (shape.props.scale !== 1) {
+	// 		return {
+	// 			id: shape.id,
+	// 			type: shape.type,
+	// 			props: {
+	// 				scale: 1,
+	// 			},
+	// 		}
+	// 	}
+	// }
 }
 
-function getTextSize(editor: Editor, props: TLTextShape['props']) {
-	const { font, text, autoSize, size, w } = props
+function getTextSize(editor: Editor, props: TLTextShape['props'], dv: TextShapeUtilDisplayValues) {
+	const { richText, w } = props
 
-	const minWidth = autoSize ? 16 : Math.max(16, w)
-	const fontSize = FONT_SIZES[size]
+	const minWidth = 16
 
-	const cw = autoSize
-		? null
-		: // `measureText` floors the number so we need to do the same here to avoid issues.
-			Math.floor(Math.max(minWidth, w))
+	const maybeFixedWidth = props.autoSize ? null : Math.max(minWidth, Math.floor(w))
 
-	const result = editor.textMeasure.measureText(text, {
-		...TEXT_PROPS,
-		fontFamily: FONT_FAMILIES[font],
-		fontSize: fontSize,
-		maxWidth: cw,
+	const html = renderHtmlFromRichTextForMeasurement(editor, richText)
+	const result = editor.textMeasure.measureHtml(html, {
+		lineHeight: dv.lineHeight,
+		fontWeight: dv.fontWeight,
+		fontStyle: dv.fontStyle,
+		padding: '0px',
+		fontFamily: dv.fontFamily,
+		fontSize: dv.fontSize,
+		maxWidth: maybeFixedWidth,
 	})
 
-	// // If we're autosizing the measureText will essentially `Math.floor`
-	// // the numbers so `19` rather than `19.3`, this means we must +1 to
-	// // whatever we get to avoid wrapping.
-	if (autoSize) {
-		result.w += 1
-	}
-
+	// If we're autosizing the measureText will essentially `Math.floor`
+	// the numbers so `19` rather than `19.3`, this means we must +1 to
+	// whatever we get to avoid wrapping.
 	return {
-		width: Math.max(minWidth, result.w),
-		height: Math.max(fontSize, result.h),
+		width: maybeFixedWidth ?? Math.max(minWidth, result.w + 1),
+		height: Math.max(dv.fontSize, result.h),
 	}
 }
 
@@ -327,22 +392,13 @@ function useTextShapeKeydownHandler(id: TLShapeId) {
 	const editor = useEditor()
 
 	return useCallback(
-		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		(e: KeyboardEvent) => {
 			if (editor.getEditingShapeId() !== id) return
 
 			switch (e.key) {
 				case 'Enter': {
 					if (e.ctrlKey || e.metaKey) {
 						editor.complete()
-					}
-					break
-				}
-				case 'Tab': {
-					preventDefault(e)
-					if (e.shiftKey) {
-						TextHelpers.unindent(e.currentTarget)
-					} else {
-						TextHelpers.indent(e.currentTarget)
 					}
 					break
 				}

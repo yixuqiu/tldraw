@@ -1,53 +1,56 @@
-import { StateNode, TLEventHandlers } from '@tldraw/editor'
+import { StateNode } from '@tldraw/editor'
+import { LaserTool } from '../LaserTool'
 
 export class Lasering extends StateNode {
 	static override id = 'lasering'
+	static override trackPerformance = true
 
-	scribbleId = 'id'
+	private scribbleId = ''
+	private sessionId = ''
 
-	override onEnter = () => {
-		const scribble = this.editor.scribbles.addScribble({
-			color: 'laser',
-			opacity: 0.7,
-			size: 4,
-			delay: 1200,
-			shrink: 0.05,
-			taper: true,
-		})
-		this.scribbleId = scribble.id
+	override onEnter(info: { sessionId: string; scribbleId: string }) {
+		this.sessionId = info.sessionId
+		this.scribbleId = info.scribbleId
 		this.pushPointToScribble()
 	}
 
-	override onExit = () => {
-		this.editor.scribbles.stop(this.scribbleId)
-	}
-
-	override onPointerMove = () => {
+	override onPointerMove() {
 		this.pushPointToScribble()
 	}
 
-	override onPointerUp = () => {
+	private pushPointToScribble() {
+		// The session's idle timeout fires when ticks stall (a backgrounded tab, a throttled mobile
+		// browser), so it can fade out and be removed while a stroke is still in progress. Adding a
+		// point to it would throw (#10125), so continue the stroke in a fresh session instead.
+		if (!this.editor.scribbles.isSessionActive(this.sessionId)) {
+			const { sessionId, scribbleId } = (this.parent as LaserTool).startScribble()
+			this.sessionId = sessionId
+			this.scribbleId = scribbleId
+		}
+		const { x, y } = this.editor.inputs.getCurrentPagePoint()
+		this.editor.scribbles.addPointToSession(this.sessionId, this.scribbleId, x, y)
+	}
+
+	override onTick() {
+		this.editor.scribbles.extendSession(this.sessionId)
+	}
+
+	override onPointerUp() {
 		this.complete()
 	}
 
-	private pushPointToScribble = () => {
-		const { x, y } = this.editor.inputs.currentPagePoint
-		this.editor.scribbles.addPoint(this.scribbleId, x, y)
+	override onCancel() {
+		this.onComplete()
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
-		this.cancel()
-	}
-
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onComplete() {
 		this.complete()
 	}
 
 	private complete() {
-		this.parent.transition('idle')
-	}
-
-	private cancel() {
+		if (this.editor.scribbles.isSessionActive(this.sessionId)) {
+			this.editor.scribbles.complete(this.scribbleId)
+		}
 		this.parent.transition('idle')
 	}
 }

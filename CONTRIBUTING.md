@@ -1,24 +1,13 @@
 # Contributing
 
-Thank you for your interest in contributing to [tldraw](https://github.com/tldraw/tldraw)! We welcome any contributions to the code base and the documentation.
+We are **not accepting contributions** to [tldraw](https://github.com/tldraw/tldraw) at this time. Pull requests are turned off for this repository.
 
-## Create an Issue!
+For more details on this policy, see [this issue](https://github.com/tldraw/tldraw/issues/7695).
 
-Before submitting a pull request, it is **strongly recommended** to [create an issue](https://github.com/tldraw/tldraw/issues/new/choose) first to discuss your proposed changes. This will help us to make sure that your changes are aligned with the project goals and that you are not duplicating work that is already in progress.
+## Create an issue instead
 
-If you are not sure whether your changes are needed, feel free to create an issue anyway and we can discuss it there. Once we have agreed on the changes, you can start working on them.
+If you have found a bug, have a feature request, or want to suggest a change, please [create an issue](https://github.com/tldraw/tldraw/issues/new/choose). Issues are the best place to discuss proposed changes with the team, and we read every one.
 
-## Making Changes
+If a code example would help the discussion, fork the repository and link to your branch in the issue.
 
-To create a pull request:
-
-1. [Fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) and [clone](https://docs.github.com/en/github/creating-cloning-and-archiving-repositories/cloning-a-repository) the [repository](https://github.com/tldraw/tldraw)
-2. [Create a separate branch](https://docs.github.com/en/desktop/contributing-and-collaborating-using-github-desktop/managing-branches) for your changes
-3. Make your changes, and ensure that it is formatted by [Prettier](https://prettier.io) and type-checks without errors in [TypeScript](https://www.typescriptlang.org/)
-4. Write tests that validate your change and/or fix.
-5. Run `yarn build` and then run tests with `yarn test-ci`.
-6. Push your branch and open a PR. 🚀
-
-Before your code is merged, you will need to sign our [contributor license agreement](https://github.com/tldraw/tldraw/blob/main/CLA.md), which is handled automatically via GitHub comments. Your PR will be reviewed and merged in within a day or two if everything looks good.
-
-Please also see our [Code of Conduct](https://github.com/tldraw/tldraw/blob/main/CODE_OF_CONDUCT.md) for our expectations around contributor culture.
+Please also see our [Code of Conduct](https://github.com/tldraw/tldraw/blob/main/CODE_OF_CONDUCT.md) for our expectations around community culture.

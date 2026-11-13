@@ -2,6 +2,7 @@ import { watch } from 'fs'
 import path from 'path'
 import * as vscode from 'vscode'
 import { TldrawEditorProvider } from './TldrawEditorProvider'
+import { TldrawOfflineFileProvider } from './TldrawOfflineFileProvider'
 import { nicelog } from './utils'
 
 export function activate(context: vscode.ExtensionContext) {
@@ -16,8 +17,8 @@ export function activate(context: vscode.ExtensionContext) {
 					vscode.commands.executeCommand('workbench.action.reloadWindow')
 				}
 			)
-			const result = path.dirname(__dirname).split(path.sep).slice(1, -1)
-			const editorpath = path.join(...result)
+			const dirname = path.dirname(__dirname)
+			const editorpath = dirname.slice(0, dirname.lastIndexOf(path.sep))
 			const editorWatcher = watch(
 				editorpath + '/editor/index.js',
 				{ persistent: false },
@@ -30,6 +31,7 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		context.subscriptions.push(TldrawEditorProvider.register(context))
+		context.subscriptions.push(TldrawOfflineFileProvider.register())
 	} catch (e) {
 		console.error(e)
 	}

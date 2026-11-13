@@ -1,31 +1,70 @@
-tldraw License
+# tldraw license
 
-This License governs use of the accompanying Software, and your use of the Software constitutes acceptance of this license.
+This License from tldraw, Inc. (“tldraw”) governs your use of the accompanying Software. By using the Software, you accept the terms of this License. The tldraw software is copyrighted by tldraw Inc.
 
-You may use this Software for any non-commercial purpose, subject to the restrictions in this license. Some purposes which can be non- commercial are teaching, academic research, and personal experimentation.
+Alternative licenses are available from tldraw for commercial and non-commercial use. To get an alternative license or to learn more, visit https://tldraw.dev or contact sales@tldraw.com.
 
-You may not use or distribute this Software or any derivative works in any form for commercial purposes. Examples of commercial purposes would be running business operations, licensing, leasing, or selling the Software, distributing the Software for use with commercial products or for internal products within commercial entities, or otherwise using the Software in any way that provides you with a commercial benefit.
+## Definitions
 
-To purchase an alternative license for commercial use, contact hello@tldraw.com.
+"Production Environment" means any production deployment of the Software that operates on servers, cloud platforms, web applications, or where the software is used to provide functionality to end users, customers, or the public. Production Environment excludes internal development.
 
-Subject to your compliance with the restrictions and obligations in this License, you may modify this Software and distribute the modified Software for non-commercial purposes, however, you may not grant rights to the Software or derivative works that are broader than those provided by this License. For example, you may not distribute modifications of the Software under terms that provide a commercial benefit to you, permit commercial use, or under terms that purport to require the Software or derivative works to be sublicensed to others.
+"Development Environment" means any internal hosting or deployment of the Software for development, testing, or staging purposes, operated by your organization and not accessible to end users, customers, or the public.
 
-In return for these conditions of use, you agree:
+"License Key" means the programmatically generated key that controls Software functionality and usage restrictions.
 
-Not to remove any copyright or other notices from the Software.
+## Permissions
 
-That if you distribute the Software in source or object form, you will include a verbatim copy of this license.
+Subject to the following conditions, you are permitted to:
 
-That if you distribute derivative works of the Software in source code form you do so only under a license that includes all of the provisions of this License, and if you distribute derivative works of the Software solely in object form you must make the source code form available upon request and do so only under a license that complies with this License.
+- Use the Software in Development Environments.
+- Modify the Software to suit your needs.
+- Bundle the Software with your own projects.
+- Submit modifications of the Software to tldraw.
 
-That that the word "tldraw" shall not be used to refer to any derivative works of the Software except in the phrase "Based on the tldraw library (https://tldraw.com)", provided such phrase is not used to promote the derivative works or to imply that tldraw endorses you or the derivative works.
+## Conditions
 
-THAT THE SOFTWARE COMES "AS IS", WITH NO WARRANTIES. THIS MEANS NO EXPRESS, IMPLIED OR STATUTORY WARRANTY, INCLUDING WITHOUT LIMITATION, WARRANTIES OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE OR ANY WARRANTY OF TITLE OR NON-INFRINGEMENT. ALSO, YOU MUST PASS THIS DISCLAIMER ON WHENEVER YOU DISTRIBUTE THE SOFTWARE OR DERIVATIVE WORKS.
+In exchange for these permissions, you agree:
 
-THAT TLDRAW WILL NOT BE LIABLE FOR ANY DAMAGES RELATED TO THE SOFTWARE OR THIS LICENSE, INCLUDING DIRECT, INDIRECT, SPECIAL, CONSEQUENTIAL OR INCIDENTAL DAMAGES, TO THE MAXIMUM EXTENT THE LAW PERMITS, NO MATTER WHAT LEGAL THEORY IT IS BASED ON. ALSO, YOU MUST PASS THIS LIMITATION OF LIABILITY ON WHENEVER YOU DISTRIBUTE THE SOFTWARE OR DERIVATIVE WORKS.
+- Not to use the Software in Production Environments.
+- Not to disable, change, or interfere with the Software's License Key enforcement.
+- Not to remove any copyright or other notices from the Software.
+- Not to make the Software available under a license that supersedes or negates the effect of this License.
+- Not to distribute the Software or modifications of the Software as a standalone product, but only as part of another application.
+- To include a verbatim copy of this License in any distribution of the Software.
+- To comply with tldraw's trademark policy.
 
-That if you sue anyone over patents that you think may apply to the Software or anyones use of the Software, your license to the Software ends automatically.
+## Trial license
 
-That your rights under the License end automatically if you breach it in any way.
+In the case that tldraw makes the Software available to you on a trial basis, you are permitted to use the Software in Production Environments for the specified period beginning from the date of the trial’s License Key issuance. Business units are limited to one trial period unless otherwise approved by tldraw in writing.
 
-tldraw reserves all rights not expressly granted to you in this license.
+## Commercial license
+
+In the case that tldraw makes the Software available to you under the terms of a separate commercial agreement, you are permitted to use the Software in Production Environments for the specified period beginning from the date of the agreement’s License Key issuance.
+
+## Termination
+
+Your license to use the Software will terminate automatically if you breach any terms of this License or initiate a copyright, trade secret, or patent claim against tldraw, any of its affiliates, or any user of the Software (including as modified by you).
+
+## Technical enforcement
+
+The Software includes technical measures to verify License Key validity, detect deployment environments, enforce usage restrictions based on license type, and ensure proper watermark display. The Software may collect and transmit usage data to tldraw for license compliance purposes.
+
+## Ownership of intellectual property
+
+tldraw retains all right, title, and interest in the Software, including all intellectual property rights therein. This Agreement grants you only the specific, limited rights expressly set forth herein, and tldraw reserves all rights not expressly granted.
+
+## Disclaimer of warranties
+
+The Software is provided "AS IS," without any warranties. This includes any implied warranties of merchantability, fitness for a particular purpose, or non-infringement. You must pass this disclaimer on whenever you distribute the Software or derivative works.
+
+## Limitation of liability
+
+tldraw is not liable for any damages related to the Software or this License, including direct, indirect, special, or incidental damages, to the fullest extent permitted by law. You must pass this limitation of liability on whenever you distribute the Software or derivative works.
+
+## Governing law
+
+This License is governed by the laws of Delaware, and the parties consent to exclusive jurisdiction in Delaware courts. The parties waive all defenses of lack of personal jurisdiction and forum non-conveniens.
+
+## Entire agreement / assignment
+
+This License is the entire agreement between the parties, and supersedes any and all prior agreements, understandings or communications, written or oral, between the parties relating to the subject matter hereof. This License may be assigned by tldraw without your prior consent.

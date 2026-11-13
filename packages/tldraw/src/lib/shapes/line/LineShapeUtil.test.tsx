@@ -3,28 +3,27 @@ import {
 	TLGeoShape,
 	TLLineShape,
 	createShapeId,
+	mockUniqueId,
 	sortByIndex,
 	structuredClone,
 } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { TestEditor } from '../../../test/TestEditor'
-import { TL } from '../../../test/test-jsx'
 
-jest.mock('nanoid', () => {
-	let i = 0
-	return { nanoid: () => 'id' + i++ }
-})
+let nextId = 0
+mockUniqueId(() => 'id' + nextId++)
 
 let editor: TestEditor
 const id = createShapeId('line1')
 
-jest.useFakeTimers()
+vi.useFakeTimers()
 
 beforeEach(() => {
 	editor = new TestEditor()
 	editor
 		.selectAll()
 		.deleteShapes(editor.getSelectedShapeIds())
-		.createShapes<TLLineShape>([
+		.createShapes([
 			{
 				id: id,
 				type: 'line',
@@ -97,7 +96,9 @@ describe('Mid-point handles', () => {
 	})
 
 	it('allows snapping with mid-point handles', () => {
-		editor.createShapesFromJsx([<TL.geo x={200} y={200} w={100} h={100} />])
+		editor.createShapes([
+			{ id: createShapeId(), type: 'geo', x: 200, y: 200, props: { w: 100, h: 100 } },
+		])
 
 		editor.select(id)
 
@@ -120,7 +121,9 @@ describe('Mid-point handles', () => {
 	})
 
 	it('allows snapping with created mid-point handles', () => {
-		editor.createShapesFromJsx([<TL.geo x={200} y={200} w={100} h={100} />])
+		editor.createShapes([
+			{ id: createShapeId(), type: 'geo', x: 200, y: 200, props: { w: 100, h: 100 } },
+		])
 
 		// 2 actual points, plus 1 mid-points:
 		expect(getHandles()).toHaveLength(3)
@@ -168,10 +171,10 @@ describe('Snapping', () => {
 			type: 'line',
 			props: {
 				points: {
-					a1: { id: 'a1', index: 'a1', x: 0, y: 0 },
-					a2: { id: 'a2', index: 'a2', x: 100, y: 0 },
-					a3: { id: 'a3', index: 'a3', x: 100, y: 100 },
-					a4: { id: 'a4', index: 'a4', x: 0, y: 100 },
+					a1: { id: 'a1', index: 'a1' as IndexKey, x: 0, y: 0 },
+					a2: { id: 'a2', index: 'a2' as IndexKey, x: 100, y: 0 },
+					a3: { id: 'a3', index: 'a3' as IndexKey, x: 100, y: 100 },
+					a4: { id: 'a4', index: 'a4' as IndexKey, x: 0, y: 100 },
 				},
 			},
 		})
@@ -241,15 +244,19 @@ describe('Snapping', () => {
 	})
 
 	it('snaps to vertices on other line shapes', () => {
-		editor.createShapesFromJsx([
-			<TL.line
-				x={150}
-				y={150}
-				points={{
-					a1: { id: 'a1', index: 'a1' as IndexKey, x: 200, y: 0 },
-					a2: { id: 'a2', index: 'a2' as IndexKey, x: 300, y: 0 },
-				}}
-			/>,
+		editor.createShapes([
+			{
+				id: createShapeId(),
+				type: 'line',
+				x: 150,
+				y: 150,
+				props: {
+					points: {
+						a1: { id: 'a1', index: 'a1' as IndexKey, x: 200, y: 0 },
+						a2: { id: 'a2', index: 'a2' as IndexKey, x: 300, y: 0 },
+					},
+				},
+			},
 		])
 
 		editor.select(id)
@@ -339,12 +346,12 @@ describe('Misc', () => {
 
 		expect(editor.getShapePageBounds(box)!.maxX).not.toEqual(editor.getShapePageBounds(line)!.maxX)
 		editor.alignShapes(editor.getSelectedShapeIds(), 'right')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		expect(editor.getShapePageBounds(box)!.maxX).toEqual(editor.getShapePageBounds(line)!.maxX)
 
 		expect(editor.getShapePageBounds(box)!.maxY).not.toEqual(editor.getShapePageBounds(line)!.maxY)
 		editor.alignShapes(editor.getSelectedShapeIds(), 'bottom')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		expect(editor.getShapePageBounds(box)!.maxY).toEqual(editor.getShapePageBounds(line)!.maxY)
 	})
 
@@ -356,6 +363,29 @@ describe('Misc', () => {
 		editor.pointerUp().keyUp('Alt')
 
 		expect(Array.from(editor.getCurrentPageShapeIds().values()).length).toEqual(2)
+	})
+
+	it('duplicates a zero-length line without mutating the source', () => {
+		// onBeforeCreate nudges on create, so collapse the points afterwards
+		editor.updateShapes([
+			{
+				id,
+				type: 'line',
+				props: {
+					points: {
+						a1: { id: 'a1', index: 'a1' as IndexKey, x: 5, y: 5 },
+						a2: { id: 'a2', index: 'a2' as IndexKey, x: 5, y: 5 },
+					},
+				},
+			},
+		])
+		const before = structuredClone(getShape().props.points)
+
+		expect(() => editor.duplicateShapes([id])).not.toThrow()
+
+		expect(getShape().props.points).toEqual(before)
+		const duplicate = editor.getCurrentPageShapes().find((s) => s.id !== id) as TLLineShape
+		expect(duplicate.props.points.a2).toMatchObject({ x: 5.1, y: 5.1 })
 	})
 
 	it('deletes', () => {
@@ -378,3 +408,124 @@ describe('Misc', () => {
 		expect(ids[0]).toEqual(id)
 	})
 })
+
+describe('Line points: id-mapped object with a decoupled index', () => {
+	// `points` is an "id-mapped object": each entry's key === its `id`. The `index`
+	// is a separate fractional index used only for ordering. A vertex handle's id is
+	// the point's id (not its index), so a handle round-trips to the right point even
+	// when key !== index. Malformed data (two points sharing an index) is tolerated on
+	// the read path rather than crashing. See #9267.
+
+	it('drags a point in place on a line whose keys differ from their indices', () => {
+		// valid: key === id ('a'/'b'), but the index is decoupled ('a1'/'a2')
+		const id = createShapeId('line-divergent')
+		editor.createShapes([
+			{
+				id,
+				type: 'line',
+				x: 100,
+				y: 100,
+				props: {
+					points: {
+						a: { id: 'a', index: 'a1' as IndexKey, x: 0, y: 0 },
+						b: { id: 'b', index: 'a2' as IndexKey, x: 100, y: 0 },
+					},
+				},
+			},
+		])
+		editor.select(id)
+
+		// the endpoint handle's id is the point's id ('b'), not its index ('a2')
+		const endHandle = getHandlesFor(id).find((h) => h.id === 'b')!
+		const inParent = editor.getShapePageTransform(id)!.applyToPoint(endHandle)
+
+		editor
+			.pointerMove(inParent.x, inParent.y)
+			.pointerDown(inParent.x, inParent.y, {
+				target: 'handle',
+				shape: editor.getShape(id),
+				handle: endHandle,
+			})
+			.pointerMove(inParent.x + 100, inParent.y)
+			.pointerUp()
+
+		// the dragged point updated in place — still two points, keyed as before
+		expect(editor.getShape<TLLineShape>(id)!.props.points).toStrictEqual({
+			a: { id: 'a', index: 'a1', x: 0, y: 0 },
+			b: { id: 'b', index: 'a2', x: 200, y: 0 },
+		})
+		expect(() => editor.getShapeHandles(id)).not.toThrow()
+	})
+
+	it('tolerates a line with duplicate indices on read without crashing', () => {
+		// malformed: points 'b' and 'a2' share index 'a2'. The store keeps it as-is;
+		// linePointsToArray dedupes on read so getHandles never throws "a2 >= a2".
+		const id = createShapeId('line-dup-index')
+		editor.createShapes([
+			{
+				id,
+				type: 'line',
+				x: 100,
+				y: 100,
+				props: {
+					points: {
+						a: { id: 'a', index: 'a1' as IndexKey, x: 0, y: 0 },
+						b: { id: 'b', index: 'a2' as IndexKey, x: 100, y: 0 },
+						a2: { id: 'a2', index: 'a2' as IndexKey, x: 200, y: 0 },
+					},
+				},
+			},
+		])
+
+		// stored as-is (no repair) — all three points are still there
+		expect(Object.keys(editor.getShape<TLLineShape>(id)!.props.points)).toHaveLength(3)
+		// but reading handles does not throw; the duplicate index is collapsed on read
+		expect(() => editor.getShapeHandles(id)).not.toThrow()
+		const vertexHandles = getHandlesFor(id).filter((h) => h.type === 'vertex')
+		expect(vertexHandles).toHaveLength(2)
+	})
+
+	it('keeps every point while animating to a line with more points (#9397)', () => {
+		// getInterpolatedProps used to clone extra start points with duplicate indices, which
+		// linePointsToArray collapsed, so the line lost points until the animation ended.
+		const id = createShapeId('line-animate')
+		editor.createShapes([
+			{
+				id,
+				type: 'line',
+				x: 0,
+				y: 0,
+				props: {
+					points: {
+						a1: { id: 'a1', index: 'a1' as IndexKey, x: 0, y: 0 },
+						a2: { id: 'a2', index: 'a2' as IndexKey, x: 100, y: 0 },
+					},
+				},
+			},
+		])
+
+		editor.animateShape(
+			{
+				id,
+				type: 'line',
+				props: {
+					points: {
+						a1: { id: 'a1', index: 'a1' as IndexKey, x: 0, y: 0 },
+						a2: { id: 'a2', index: 'a2' as IndexKey, x: 50, y: 0 },
+						a3: { id: 'a3', index: 'a3' as IndexKey, x: 100, y: 0 },
+					},
+				},
+			},
+			{ animation: { duration: 200 } }
+		)
+
+		for (let i = 0; i < 12; i++) {
+			editor.emit('tick', 16)
+			expect(getHandlesFor(id).filter((h) => h.type === 'vertex')).toHaveLength(3)
+		}
+	})
+})
+
+function getHandlesFor(shapeId: TLLineShape['id']) {
+	return editor.getShapeHandles<TLLineShape>(shapeId)!
+}

@@ -46,7 +46,7 @@ describe('createSessionStateSnapshotSignal', () => {
 
 		react('', () => {
 			isGridMode = $snapshot.get()?.isGridMode ?? false
-			numPages = $snapshot.get()?.pageStates.length ?? 0
+			numPages = $snapshot.get()?.pageStates?.length ?? 0
 		})
 
 		expect(isGridMode).toBe(false)
@@ -76,15 +76,74 @@ describe(loadSessionStateSnapshotIntoStore, () => {
 
 		snapshot = JSON.parse(JSON.stringify(snapshot)) as TLSessionStateSnapshot
 
-		snapshot.isGridMode = true
-		snapshot.pageStates[0].camera.x = 1
-		snapshot.pageStates[0].camera.y = 2
+		snapshot.pageStates![0].camera!.x = 1
+		snapshot.pageStates![0].camera!.y = 2
 
 		loadSessionStateSnapshotIntoStore(editor.store, snapshot)
 
-		expect(editor.getInstanceState().isGridMode).toBe(true)
 		expect(editor.getCamera().x).toBe(1)
 		expect(editor.getCamera().y).toBe(2)
+	})
+
+	it('preserves existing UI flags by default', () => {
+		expect(editor.getInstanceState()).toMatchObject({
+			isGridMode: false,
+			isFocusMode: false,
+			isDebugMode: false,
+			isToolLocked: false,
+		})
+		const snapshot = createSessionStateSnapshotSignal(editor.store).get()
+		editor.updateInstanceState({
+			isGridMode: true,
+			isFocusMode: true,
+			isDebugMode: true,
+			isToolLocked: true,
+		})
+		loadSessionStateSnapshotIntoStore(editor.store, snapshot!)
+		expect(editor.getInstanceState()).toMatchObject({
+			isGridMode: true,
+			isFocusMode: true,
+			isDebugMode: true,
+			isToolLocked: true,
+		})
+	})
+
+	it('does not crash when currentPageId is undefined', () => {
+		const snapshot = createSessionStateSnapshotSignal(editor.store).get()
+		if (!snapshot) throw new Error('snapshot is null')
+
+		const currentPageId = editor.getCurrentPageId()
+
+		// Strip currentPageId to simulate what TlaEditor does for deep links
+		const { currentPageId: _, ...snapshotWithoutPageId } = snapshot
+
+		loadSessionStateSnapshotIntoStore(editor.store, snapshotWithoutPageId as TLSessionStateSnapshot)
+
+		// Should preserve the existing currentPageId
+		expect(editor.getCurrentPageId()).toBe(currentPageId)
+	})
+
+	it('overrides existing UI flags if you say so', () => {
+		expect(editor.getInstanceState()).toMatchObject({
+			isGridMode: false,
+			isFocusMode: false,
+			isDebugMode: false,
+			isToolLocked: false,
+		})
+		const snapshot = createSessionStateSnapshotSignal(editor.store).get()
+		editor.updateInstanceState({
+			isGridMode: true,
+			isFocusMode: true,
+			isDebugMode: true,
+			isToolLocked: true,
+		})
+		loadSessionStateSnapshotIntoStore(editor.store, snapshot!, { forceOverwrite: true })
+		expect(editor.getInstanceState()).toMatchObject({
+			isGridMode: false,
+			isFocusMode: false,
+			isDebugMode: false,
+			isToolLocked: false,
+		})
 	})
 })
 

@@ -1,16 +1,25 @@
-import { Editor, TLFrameShape, TLShapeId, TLSvgOptions } from '@tldraw/editor'
-import { exportToBlob } from './export'
+import {
+	Editor,
+	getGlobalDocument,
+	sanitizeId,
+	TLExportType,
+	TLImageExportOptions,
+	TLShapeId,
+} from '@tldraw/editor'
 
 /** @public */
-export type TLExportType = 'svg' | 'png' | 'jpeg' | 'webp' | 'json'
+export interface ExportAsOptions extends TLImageExportOptions {
+	/** {@inheritdoc @tldraw/editor#TLImageExportOptions.format} */
+	format: TLExportType
+	/** Name of the exported file. If undefined a predefined name, based on the selection, will be used. */
+	name?: string
+}
 
 /**
  * Export the given shapes as files.
  *
  * @param editor - The editor instance.
  * @param ids - The ids of the shapes to export.
- * @param format - The format to export as.
- * @param name - Name of the exported file. If undefined a predefined name, based on the selection, will be used.
  * @param opts - Options for the export.
  *
  * @public
@@ -18,27 +27,27 @@ export type TLExportType = 'svg' | 'png' | 'jpeg' | 'webp' | 'json'
 export async function exportAs(
 	editor: Editor,
 	ids: TLShapeId[],
-	format: TLExportType = 'png',
-	name: string | undefined,
-	opts = {} as Partial<TLSvgOptions>
-) {
+	opts: ExportAsOptions
+): Promise<void> {
 	// If we don't get name then use a predefined one
+	let name = opts.name
 	if (!name) {
 		name = `shapes at ${getTimestamp()}`
 		if (ids.length === 1) {
 			const first = editor.getShape(ids[0])!
-			if (editor.isShapeOfType<TLFrameShape>(first, 'frame')) {
-				name = first.props.name ?? 'frame'
+			// Uses isShapeOfType (not isFrameLike) because it accesses frame-specific props (name)
+			if (editor.isShapeOfType(first, 'frame')) {
+				name = first.props.name || 'frame'
 			} else {
-				name = `${first.id.replace(/:/, '_')} at ${getTimestamp()}`
+				name = `${sanitizeId(first.id)} at ${getTimestamp()}`
 			}
 		}
 	}
-	name += `.${format}`
+	name += `.${opts.format}`
 
-	const blob = await exportToBlob({ editor, ids, format, opts })
+	const { blob } = await editor.toImage(ids, opts)
 	const file = new File([blob], name, { type: blob.type })
-	downloadFile(file)
+	downloadFile(file, editor.getContainerDocument())
 }
 
 function getTimestamp() {
@@ -54,8 +63,9 @@ function getTimestamp() {
 	return `${year}-${month}-${day} ${hours}.${minutes}.${seconds}`
 }
 
-function downloadFile(file: File) {
-	const link = document.createElement('a')
+/** @internal */
+export function downloadFile(file: File, doc?: Document) {
+	const link = (doc ?? getGlobalDocument()).createElement('a')
 	const url = URL.createObjectURL(file)
 	link.href = url
 	link.download = file.name

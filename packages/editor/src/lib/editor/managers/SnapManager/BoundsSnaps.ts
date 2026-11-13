@@ -1,6 +1,6 @@
 import { computed } from '@tldraw/state'
 import { TLShape, TLShapeId, VecModel } from '@tldraw/tlschema'
-import { assertExists, dedupe } from '@tldraw/utils'
+import { assertExists, dedupe, uniqueId } from '@tldraw/utils'
 import {
 	Box,
 	SelectionCorner,
@@ -10,11 +10,10 @@ import {
 	isSelectionCorner,
 } from '../../../primitives/Box'
 import { Mat } from '../../../primitives/Mat'
-import { Vec } from '../../../primitives/Vec'
 import { rangeIntersection, rangesOverlap } from '../../../primitives/utils'
-import { uniqueId } from '../../../utils/uniqueId'
-import { Editor } from '../../Editor'
-import {
+import { Vec } from '../../../primitives/Vec'
+import type { Editor } from '../../Editor'
+import type {
 	GapsSnapIndicator,
 	PointsSnapIndicator,
 	SnapData,
@@ -44,9 +43,12 @@ export interface BoundsSnapPoint {
 	handle?: SelectionCorner
 }
 
-type SnapPair = { thisPoint: BoundsSnapPoint; otherPoint: BoundsSnapPoint }
+interface SnapPair {
+	thisPoint: BoundsSnapPoint
+	otherPoint: BoundsSnapPoint
+}
 
-type NearestPointsSnap = {
+interface NearestPointsSnap {
 	// selection snaps to a nearby snap point
 	type: 'points'
 	points: SnapPair
@@ -70,12 +72,12 @@ type NearestSnap =
 			nudge: number
 	  }
 
-type GapNode = {
+interface GapNode {
 	id: TLShapeId
 	pageBounds: Box
 }
 
-type Gap = {
+interface Gap {
 	// e.g.
 	//      start
 	//      edge     │         breadth
@@ -157,6 +159,22 @@ function findAdjacentGaps(
 	return matches
 }
 
+// Adjacent evenly spaced items produce many center snaps whose gaps cover the
+// same breadth; only the smallest such gap needs showing, so find the one a new
+// gap would be redundant with. Touching breadths don't count as overlapping.
+function findOverlappingCenterSnap(snaps: NearestSnap[], gap: Gap) {
+	return snaps.find(
+		(snap): snap is Extract<NearestSnap, { type: 'gap_center' }> =>
+			snap.type === 'gap_center' &&
+			rangesOverlap(
+				gap.breadthIntersection[0],
+				gap.breadthIntersection[1],
+				snap.gap.breadthIntersection[0],
+				snap.gap.breadthIntersection[1]
+			)
+	)
+}
+
 function dedupeGapSnaps(snaps: Array<Extract<SnapIndicator, { type: 'gaps' }>>) {
 	// sort by descending order of number of gaps
 	snaps.sort((a, b) => b.gaps.length - a.gaps.length)
@@ -193,6 +211,7 @@ function dedupeGapSnaps(snaps: Array<Extract<SnapIndicator, { type: 'gaps' }>>) 
 	}
 }
 
+/** @public */
 export class BoundsSnaps {
 	readonly editor: Editor
 	constructor(readonly manager: SnapManager) {
@@ -203,12 +222,10 @@ export class BoundsSnaps {
 		const { editor } = this
 		return editor.store.createComputedCache<BoundsSnapPoint[], TLShape>('snapPoints', (shape) => {
 			const pageTransform = editor.getShapePageTransform(shape.id)
-			if (!pageTransform) return undefined
 			const boundsSnapGeometry = editor.getShapeUtil(shape).getBoundsSnapGeometry(shape)
 			const snapPoints =
 				boundsSnapGeometry.points ?? editor.getShapeGeometry(shape).bounds.cornersAndCenter
 
-			if (!pageTransform || !snapPoints) return undefined
 			return snapPoints.map((point, i) => {
 				const { x, y } = Mat.applyToPoint(pageTransform, point)
 				return { x, y, id: `${shape.id}:${i}` }
@@ -387,8 +404,8 @@ export class BoundsSnaps {
 
 		// at the same time, calculate how far we need to nudge the shape to 'snap' to the target point(s)
 		const nudge = new Vec(
-			lockedAxis === 'x' ? 0 : nearestSnapsX[0]?.nudge ?? 0,
-			lockedAxis === 'y' ? 0 : nearestSnapsY[0]?.nudge ?? 0
+			lockedAxis === 'x' ? 0 : (nearestSnapsX[0]?.nudge ?? 0),
+			lockedAxis === 'y' ? 0 : (nearestSnapsY[0]?.nudge ?? 0)
 		)
 
 		// ok we've figured out how much the box should be nudged, now let's find all the snap points
@@ -501,8 +518,8 @@ export class BoundsSnaps {
 
 		// at the same time, calculate how far we need to nudge the shape to 'snap' to the target point(s)
 		const nudge = new Vec(
-			isXLocked ? 0 : nearestSnapsX[0]?.nudge ?? 0,
-			isYLocked ? 0 : nearestSnapsY[0]?.nudge ?? 0
+			isXLocked ? 0 : (nearestSnapsX[0]?.nudge ?? 0),
+			isYLocked ? 0 : (nearestSnapsY[0]?.nudge ?? 0)
 		)
 
 		if (isAspectRatioLocked && isSelectionCorner(handle) && nudge.len() !== 0) {
@@ -596,9 +613,8 @@ export class BoundsSnaps {
 		// which are closest to it in each axis
 		for (const thisSnapPoint of selectionSnapPoints) {
 			for (const otherSnapPoint of otherNodeSnapPoints) {
-				const offset = Vec.Sub(thisSnapPoint, otherSnapPoint)
-				const offsetX = Math.abs(offset.x)
-				const offsetY = Math.abs(offset.y)
+				const offsetX = Math.abs(thisSnapPoint.x - otherSnapPoint.x)
+				const offsetY = Math.abs(thisSnapPoint.y - otherSnapPoint.y)
 
 				if (round(offsetX) <= round(minOffset.x)) {
 					if (round(offsetX) < round(minOffset.x)) {
@@ -717,23 +733,14 @@ export class BoundsSnaps {
 				//              │         │
 				//              └─────────┘
 
-				const otherCenterSnap = nearestSnapsX.find(({ type }) => type === 'gap_center') as
-					| Extract<NearestSnap, { type: 'gap_center' }>
-					| undefined
+				const overlappingCenterSnap = findOverlappingCenterSnap(nearestSnapsX, gap)
 
-				const gapBreadthsOverlap =
-					otherCenterSnap &&
-					rangeIntersection(
-						gap.breadthIntersection[0],
-						gap.breadthIntersection[1],
-						otherCenterSnap.gap.breadthIntersection[0],
-						otherCenterSnap.gap.breadthIntersection[1]
-					)
-
-				// if there is another center snap and it's bigger than this one, and it overlaps with this one, replace it
-				if (otherCenterSnap && otherCenterSnap.gap.length > gap.length && gapBreadthsOverlap) {
-					nearestSnapsX[nearestSnapsX.indexOf(otherCenterSnap)] = snap
-				} else if (!otherCenterSnap || !gapBreadthsOverlap) {
+				// if there is another center snap that overlaps with this one, keep only the smaller gap
+				if (overlappingCenterSnap) {
+					if (overlappingCenterSnap.gap.length > gap.length) {
+						nearestSnapsX[nearestSnapsX.indexOf(overlappingCenterSnap)] = snap
+					}
+				} else {
 					nearestSnapsX.push(snap)
 				}
 			}
@@ -852,26 +859,16 @@ export class BoundsSnaps {
 				//              │         │
 				//              └─────────┘
 
-				const otherCenterSnap = nearestSnapsY.find(({ type }) => type === 'gap_center') as
-					| Extract<NearestSnap, { type: 'gap_center' }>
-					| undefined
+				const overlappingCenterSnap = findOverlappingCenterSnap(nearestSnapsY, gap)
 
-				const gapBreadthsOverlap =
-					otherCenterSnap &&
-					rangesOverlap(
-						otherCenterSnap.gap.breadthIntersection[0],
-						otherCenterSnap.gap.breadthIntersection[1],
-						gap.breadthIntersection[0],
-						gap.breadthIntersection[1]
-					)
-
-				// if there is another center snap and it's bigger than this one, and it overlaps with this one, replace it
-				if (otherCenterSnap && otherCenterSnap.gap.length > gap.length && gapBreadthsOverlap) {
-					nearestSnapsY[nearestSnapsY.indexOf(otherCenterSnap)] = snap
-				} else if (!otherCenterSnap || !gapBreadthsOverlap) {
+				// if there is another center snap that overlaps with this one, keep only the smaller gap
+				if (overlappingCenterSnap) {
+					if (overlappingCenterSnap.gap.length > gap.length) {
+						nearestSnapsY[nearestSnapsY.indexOf(overlappingCenterSnap)] = snap
+					}
+				} else {
 					nearestSnapsY.push(snap)
 				}
-				continue
 			}
 
 			// check for duplication top match

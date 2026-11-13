@@ -1,19 +1,24 @@
-import { useComputed, useValue } from '@tldraw/state'
+import { useComputed, useValue } from '@tldraw/state-react'
+import { areArraysShallowEqual } from '@tldraw/utils'
 import { uniq } from '../utils/uniq'
 import { useEditor } from './useEditor'
 
-// TODO: maybe move this to a computed property on the App class?
 /**
+ * Reactive list of peer user IDs for collaborators currently shown in the UI.
+ * This list includes user ids who are not on the user's current page.
+ * Mirrors {@link Editor.getVisibleCollaborators} — peers fade out as they
+ * transition to idle/inactive, without requiring a manual re-render.
+ *
  * @returns The list of peer UserIDs
- * @internal
+ * @public
  */
 export function usePeerIds() {
 	const editor = useEditor()
 
 	const $userIds = useComputed(
 		'userIds',
-		() => uniq(editor.getCollaborators().map((p) => p.userId)).sort(),
-		{ isEqual: (a, b) => a.join(',') === b.join?.(',') },
+		() => uniq(editor.getVisibleCollaborators().map((p) => p.userId)).sort(),
+		{ isEqual: areArraysShallowEqual },
 		[editor]
 	)
 

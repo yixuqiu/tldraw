@@ -1,19 +1,19 @@
 import { EMPTY_ARRAY, atom, computed } from '@tldraw/state'
-import { TLFrameShape, TLGroupShape, TLParentId, TLShapeId, isShapeId } from '@tldraw/tlschema'
+import { TLParentId, TLShapeId, isShapeId } from '@tldraw/tlschema'
 import { Vec, VecLike } from '../../../primitives/Vec'
 import type { Editor } from '../../Editor'
 import { BoundsSnaps } from './BoundsSnaps'
 import { HandleSnaps } from './HandleSnaps'
 
 /** @public */
-export type PointsSnapIndicator = {
+export interface PointsSnapIndicator {
 	id: string
 	type: 'points'
 	points: VecLike[]
 }
 
 /** @public */
-export type GapsSnapIndicator = {
+export interface GapsSnapIndicator {
 	id: string
 	type: 'gaps'
 	direction: 'horizontal' | 'vertical'
@@ -58,28 +58,28 @@ export class SnapManager {
 	}
 
 	@computed getSnapThreshold() {
-		return 8 / this.editor.getZoomLevel()
+		return this.editor.options.snapThreshold / this.editor.getZoomLevel()
 	}
 
 	// TODO: make this an incremental derivation
 	@computed getSnappableShapes(): Set<TLShapeId> {
 		const { editor } = this
 		const renderingBounds = editor.getViewportPageBounds()
-		const selectedShapeIds = editor.getSelectedShapeIds()
+		const selectedShapeIds = new Set(editor.getSelectedShapeIds())
 
 		const snappableShapes: Set<TLShapeId> = new Set()
 
 		const collectSnappableShapesFromParent = (parentId: TLParentId) => {
 			if (isShapeId(parentId)) {
 				const parent = editor.getShape(parentId)
-				if (parent && editor.isShapeOfType<TLFrameShape>(parent, 'frame')) {
+				if (parent && editor.isShapeFrameLike(parent) && !editor.isShapeHidden(parent)) {
 					snappableShapes.add(parentId)
 				}
 			}
 			const sortedChildIds = editor.getSortedChildIdsForParent(parentId)
 			for (const childId of sortedChildIds) {
 				// Skip any selected ids
-				if (selectedShapeIds.includes(childId)) continue
+				if (selectedShapeIds.has(childId)) continue
 				const childShape = editor.getShape(childId)
 				if (!childShape) continue
 				const util = editor.getShapeUtil(childShape)
@@ -88,11 +88,13 @@ export class SnapManager {
 				// Only consider shapes if they're inside of the viewport page bounds
 				const pageBounds = editor.getShapePageBounds(childId)
 				if (!(pageBounds && renderingBounds.includes(pageBounds))) continue
-				// Snap to children of groups but not group itself
-				if (editor.isShapeOfType<TLGroupShape>(childShape, 'group')) {
+				// Snap to children of groups but not group itself. A hidden group's
+				// children may still override to visible, so recurse before the check.
+				if (editor.isShapeOfType(childShape, 'group')) {
 					collectSnappableShapesFromParent(childId)
 					continue
 				}
+				if (editor.isShapeHidden(childShape)) continue
 				snappableShapes.add(childId)
 			}
 		}

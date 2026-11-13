@@ -1,11 +1,16 @@
-import { useQuickReactor, useStateTracking } from '@tldraw/state'
+import { react } from '@tldraw/state'
+import { useQuickReactor, useStateTracking } from '@tldraw/state-react'
 import { TLShape, TLShapeId } from '@tldraw/tlschema'
-import { memo, useCallback, useRef } from 'react'
+import { warnOnce } from '@tldraw/utils'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { Editor } from '../editor/Editor'
 import { ShapeUtil } from '../editor/shapes/ShapeUtil'
+import { useEditorComponents } from '../hooks/EditorComponentsContext'
 import { useEditor } from '../hooks/useEditor'
-import { useEditorComponents } from '../hooks/useEditorComponents'
+import { useShapeCulling } from '../hooks/useShapeCulling'
 import { Mat } from '../primitives/Mat'
-import { setStyleProperty } from '../utils/dom'
+import { areShapesContentEqual } from '../utils/areShapesContentEqual'
+import { moveElementInto, setStyleProperty } from '../utils/dom'
 import { OptionalErrorBoundary } from './ErrorBoundary'
 
 /*
@@ -26,7 +31,6 @@ export const Shape = memo(function Shape({
 	index,
 	backgroundIndex,
 	opacity,
-	dprMultiple,
 }: {
 	id: TLShapeId
 	shape: TLShape
@@ -34,14 +38,20 @@ export const Shape = memo(function Shape({
 	index: number
 	backgroundIndex: number
 	opacity: number
-	dprMultiple: number
 }) {
 	const editor = useEditor()
 
-	const { ShapeErrorFallback } = useEditorComponents()
+	const { ShapeErrorFallback, ShapeWrapper } = useEditorComponents()
 
 	const containerRef = useRef<HTMLDivElement>(null)
 	const bgContainerRef = useRef<HTMLDivElement>(null)
+
+	useEffect(() => {
+		return react('load fonts', () => {
+			const fonts = editor.fonts.getShapeFontFaces(id)
+			editor.fonts.requestFonts(fonts)
+		})
+	}, [editor, id])
 
 	const memoizedStuffRef = useRef({
 		transform: '',
@@ -50,7 +60,6 @@ export const Shape = memo(function Shape({
 		height: 0,
 		x: 0,
 		y: 0,
-		isCulled: false,
 	})
 
 	useQuickReactor(
@@ -82,18 +91,14 @@ export const Shape = memo(function Shape({
 			}
 
 			// Width / Height
-			// We round the shape width and height up to the nearest multiple of dprMultiple
-			// to avoid the browser making miscalculations when applying the transform.
-			const widthRemainder = bounds.w % dprMultiple
-			const heightRemainder = bounds.h % dprMultiple
-			const width = widthRemainder === 0 ? bounds.w : bounds.w + (dprMultiple - widthRemainder)
-			const height = heightRemainder === 0 ? bounds.h : bounds.h + (dprMultiple - heightRemainder)
+			const width = Math.max(bounds.width, 1)
+			const height = Math.max(bounds.height, 1)
 
 			if (width !== prev.width || height !== prev.height) {
-				setStyleProperty(containerRef.current, 'width', Math.max(width, dprMultiple) + 'px')
-				setStyleProperty(containerRef.current, 'height', Math.max(height, dprMultiple) + 'px')
-				setStyleProperty(bgContainerRef.current, 'width', Math.max(width, dprMultiple) + 'px')
-				setStyleProperty(bgContainerRef.current, 'height', Math.max(height, dprMultiple) + 'px')
+				setStyleProperty(containerRef.current, 'width', width + 'px')
+				setStyleProperty(containerRef.current, 'height', height + 'px')
+				setStyleProperty(bgContainerRef.current, 'width', width + 'px')
+				setStyleProperty(bgContainerRef.current, 'height', height + 'px')
 				prev.width = width
 				prev.height = height
 			}
@@ -102,85 +107,159 @@ export const Shape = memo(function Shape({
 	)
 
 	// This stuff changes pretty infrequently, so we can change them together
-	useQuickReactor(
-		'set opacity and z-index',
-		() => {
-			const container = containerRef.current
-			const bgContainer = bgContainerRef.current
+	useLayoutEffect(() => {
+		const container = containerRef.current
+		const bgContainer = bgContainerRef.current
 
-			// Opacity
-			setStyleProperty(container, 'opacity', opacity)
-			setStyleProperty(bgContainer, 'opacity', opacity)
+		// Opacity
+		setStyleProperty(container, 'opacity', opacity)
+		setStyleProperty(bgContainer, 'opacity', opacity)
 
-			// Z-Index
-			setStyleProperty(container, 'z-index', index)
-			setStyleProperty(bgContainer, 'z-index', backgroundIndex)
-		},
-		[opacity, index, backgroundIndex]
-	)
+		// Z-Index
+		setStyleProperty(container, 'z-index', index)
+		setStyleProperty(bgContainer, 'z-index', backgroundIndex)
+	}, [opacity, index, backgroundIndex])
 
-	useQuickReactor(
-		'set display',
-		() => {
-			const shape = editor.getShape(id)
-			if (!shape) return // probably the shape was just deleted
+	// Register container refs with the centralized culling context.
+	// This runs on mount and handles initial display state.
+	const { register, unregister } = useShapeCulling()
+	useLayoutEffect(() => {
+		const container = containerRef.current
+		if (!container) return
 
-			const culledShapes = editor.getCulledShapes()
-			const isCulled = culledShapes.has(id)
-			if (isCulled !== memoizedStuffRef.current.isCulled) {
-				setStyleProperty(containerRef.current, 'display', isCulled ? 'none' : 'block')
-				setStyleProperty(bgContainerRef.current, 'display', isCulled ? 'none' : 'block')
-				memoizedStuffRef.current.isCulled = isCulled
-			}
-		},
-		[editor]
-	)
+		// Check initial culling state and register with the context
+		const isCulled = editor.getCulledShapes().has(id)
+		register(id, container, bgContainerRef.current, isCulled)
+
+		return () => {
+			unregister(id)
+		}
+	}, [editor, id, register, unregister])
 	const annotateError = useCallback(
 		(error: any) => editor.annotateError(error, { origin: 'shape', willCrashApp: false }),
 		[editor]
 	)
 
-	if (!shape) return null
-
-	const isFilledShape = 'fill' in shape.props && shape.props.fill !== 'none'
+	if (!shape || !ShapeWrapper) return null
 
 	return (
 		<>
 			{util.backgroundComponent && (
-				<div
-					ref={bgContainerRef}
-					className="tl-shape tl-shape-background"
-					data-shape-type={shape.type}
-					draggable={false}
-				>
+				<ShapeWrapper ref={bgContainerRef} shape={shape} isBackground={true}>
 					<OptionalErrorBoundary fallback={ShapeErrorFallback} onError={annotateError}>
 						<InnerShapeBackground shape={shape} util={util} />
 					</OptionalErrorBoundary>
-				</div>
+				</ShapeWrapper>
 			)}
-			<div
-				ref={containerRef}
-				className="tl-shape"
-				data-shape-type={shape.type}
-				data-shape-is-filled={isFilledShape}
-				draggable={false}
-			>
+			<ShapeWrapper ref={containerRef} shape={shape} isBackground={false}>
 				<OptionalErrorBoundary fallback={ShapeErrorFallback as any} onError={annotateError}>
 					<InnerShape shape={shape} util={util} />
 				</OptionalErrorBoundary>
-			</div>
+				{util.getAppOwnedElement && <ContentElementSlot id={id} util={util} />}
+			</ShapeWrapper>
 		</>
 	)
 })
 
-const InnerShape = memo(
+/*
+The content element slot hosts an app-owned element provided by the shape util's
+getAppOwnedElement method. The contract: while the shape is mounted, tldraw never
+unmounts, recreates, or relocates the element (the canvas renders shapes in stable
+id-sorted DOM order, so reorders and reparenting never move DOM nodes), and before
+the slot is destroyed — shape deletion, page change, error teardown, or the whole
+editor unmounting — onReleaseAppOwnedElement is called while the slot is still
+connected to the document, so the app can move the element to a new parent with
+Node.moveBefore without resetting its state. That last guarantee relies on this
+being a layout effect: React runs layout effect cleanups before it detaches the
+host nodes of a deleted subtree, which is not true of passive effects.
+*/
+const ContentElementSlot = memo(function ContentElementSlot({
+	id,
+	util,
+}: {
+	id: TLShapeId
+	util: ShapeUtil
+}) {
+	const editor = useEditor()
+	const slotRef = useRef<HTMLDivElement>(null)
+
+	useLayoutEffect(() => {
+		const slot = slotRef.current
+		if (!slot) return
+
+		const shape = editor.getShape(id)
+		if (!shape) return
+
+		// getAppOwnedElement is called once per shape mount (the effect deps below are
+		// [editor, id, util], none of which change on a prop edit), so the adopted element is
+		// not refreshed when the shape's props change. A util whose element identity depends on
+		// props must mutate the existing element in place rather than return a new one. Likewise,
+		// if this returns null now and an element only later, the element is never adopted for
+		// this mount — return a stable element up front and populate it asynchronously instead.
+		const element = util.getAppOwnedElement?.(shape)
+		if (!element) return
+
+		// An element that was connected before adoption (e.g. parked off-canvas by the
+		// app between editor sessions) should survive the move without reloading.
+		const wasConnectedBeforeAdoption = element.isConnected
+
+		if (element.parentNode !== slot) {
+			moveElementInto(slot, element)
+		}
+
+		if (process.env.NODE_ENV !== 'production' && wasConnectedBeforeAdoption) {
+			warnIfContentElementReloads(editor, slot, element)
+		}
+
+		return () => {
+			// Note: under React StrictMode (dev only) this effect runs mount → cleanup → mount,
+			// so onReleaseAppOwnedElement fires once even though the shape was not removed, and on
+			// the appendChild fallback path the element is detached and re-adopted (reloading it).
+			// onReleaseAppOwnedElement must therefore be safe to call when the shape still exists;
+			// don't treat it as a definitive "shape removed" signal (check the store if you need
+			// to know). With Node.moveBefore the re-adoption preserves state, so this is benign.
+			const latestShape = editor.getShape(id) ?? shape
+			util.onReleaseAppOwnedElement?.(latestShape, element)
+			if (process.env.NODE_ENV !== 'production' && element.parentNode === slot) {
+				warnOnce(
+					`The content element for shape "${id}" was not reclaimed by onReleaseAppOwnedElement and will be destroyed along with its slot, losing any state it holds.`
+				)
+			}
+		}
+	}, [editor, id, util])
+
+	return <div ref={slotRef} className="tl-content-slot" draggable={false} />
+})
+
+// Dev-mode assertion that adoption kept the platform's state-preservation promise: a
+// load event firing on a previously-connected adopted element means the embed reloaded.
+// load doesn't bubble, but capture-phase listeners on ancestors still observe it.
+function warnIfContentElementReloads(editor: Editor, slot: HTMLElement, element: HTMLElement) {
+	const onLoad = (event: Event) => {
+		if (event.target !== element && !element.contains(event.target as Node)) return
+		warnOnce(
+			'A load event fired on an adopted content element. The element reloaded when it was moved into the shape, losing its state. State-preserving moves need Node.moveBefore (Chromium 133+, Firefox 144+) and a continuously connected element.'
+		)
+	}
+	slot.addEventListener('load', onLoad, { capture: true })
+	editor.timers.setTimeout(() => slot.removeEventListener('load', onLoad, { capture: true }), 1000)
+}
+
+export const InnerShape = memo(
 	function InnerShape<T extends TLShape>({ shape, util }: { shape: T; util: ShapeUtil<T> }) {
-		return useStateTracking('InnerShape:' + shape.type, () => util.component(shape))
+		return useStateTracking(
+			'InnerShape:' + shape.type,
+			() =>
+				// always fetch the latest shape from the store even if the props/meta have not changed, to avoid
+				// calling the render method with stale data.
+				util.component(util.editor.store.unsafeGetWithoutCapture(shape.id) as T),
+			[util, shape.id]
+		)
 	},
-	(prev, next) => prev.shape.props === next.shape.props && prev.shape.meta === next.shape.meta
+	(prev, next) => areShapesContentEqual(prev.shape, next.shape) && prev.util === next.util
 )
 
-const InnerShapeBackground = memo(
+export const InnerShapeBackground = memo(
 	function InnerShapeBackground<T extends TLShape>({
 		shape,
 		util,
@@ -188,7 +267,17 @@ const InnerShapeBackground = memo(
 		shape: T
 		util: ShapeUtil<T>
 	}) {
-		return useStateTracking('InnerShape:' + shape.type, () => util.backgroundComponent?.(shape))
+		return useStateTracking(
+			'InnerShape:' + shape.type,
+			() =>
+				// always fetch the latest shape from the store even if the props/meta have not changed, to avoid
+				// calling the render method with stale data.
+				util.backgroundComponent?.(util.editor.store.unsafeGetWithoutCapture(shape.id) as T),
+			[util, shape.id]
+		)
 	},
-	(prev, next) => prev.shape.props === next.shape.props && prev.shape.meta === next.shape.meta
+	(prev, next) =>
+		prev.shape.props === next.shape.props &&
+		prev.shape.meta === next.shape.meta &&
+		prev.util === next.util
 )

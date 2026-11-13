@@ -1,18 +1,12 @@
 import { useEditor, useValue } from '@tldraw/editor'
-import { useActions } from '../../context/actions'
-import { useCanRedo, useCanUndo, useUnlockedSelectedShapesCount } from '../../hooks/menu-hooks'
+import { useCommentingEnabled } from '../../hooks/useCommentingEnabled'
 import { useReadonly } from '../../hooks/useReadonly'
-import { TldrawUiMenuItem } from '../primitives/menus/TldrawUiMenuItem'
+import { TldrawUiMenuActionItem } from '../primitives/menus/TldrawUiMenuActionItem'
+import { TldrawUiMenuToolItem } from '../primitives/menus/TldrawUiMenuToolItem'
 
-/** @public */
+/** @public @react */
 export function DefaultQuickActionsContent() {
-	const actions = useActions()
-
 	const editor = useEditor()
-
-	const canUndo = useCanUndo()
-	const canRedo = useCanRedo()
-	const oneSelected = useUnlockedSelectedShapesCount(1)
 
 	const isReadonlyMode = useReadonly()
 
@@ -26,10 +20,41 @@ export function DefaultQuickActionsContent() {
 
 	return (
 		<>
-			<TldrawUiMenuItem {...actions['undo']} disabled={!canUndo} />
-			<TldrawUiMenuItem {...actions['redo']} disabled={!canRedo} />
-			<TldrawUiMenuItem {...actions['delete']} disabled={!oneSelected} />
-			<TldrawUiMenuItem {...actions['duplicate']} disabled={!oneSelected} />
+			<UndoRedoGroup />
+			<DeleteDuplicateGroup />
+			<CommentQuickAction />
+		</>
+	)
+}
+
+function DeleteDuplicateGroup() {
+	return (
+		<>
+			<TldrawUiMenuActionItem actionId="delete" />
+			<TldrawUiMenuActionItem actionId="duplicate" />
+		</>
+	)
+}
+
+function CommentQuickAction() {
+	const editor = useEditor()
+	const commentingEnabled = useCommentingEnabled()
+	const isCommentToolSelected = useValue(
+		'is comment tool selected',
+		() => editor.getCurrentToolId() === 'comment',
+		[editor]
+	)
+
+	if (!commentingEnabled) return null
+
+	return <TldrawUiMenuToolItem toolId="comment" isSelected={isCommentToolSelected} />
+}
+
+function UndoRedoGroup() {
+	return (
+		<>
+			<TldrawUiMenuActionItem actionId="undo" />
+			<TldrawUiMenuActionItem actionId="redo" />
 		</>
 	)
 }

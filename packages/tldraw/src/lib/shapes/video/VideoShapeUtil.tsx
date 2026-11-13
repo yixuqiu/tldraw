@@ -1,216 +1,255 @@
-/* eslint-disable react-hooks/rules-of-hooks */
 import {
 	BaseBoxShapeUtil,
+	createShapeId,
+	defineMessages,
 	HTMLContainer,
+	MediaHelpers,
+	SvgExportContext,
+	TLAsset,
+	TLShapePartial,
+	TLVideoAsset,
 	TLVideoShape,
-	toDomPrecision,
+	translateMessage,
+	useEditor,
+	useEditorComponents,
 	useIsEditing,
+	VecModel,
 	videoShapeMigrations,
 	videoShapeProps,
+	WeakCache,
 } from '@tldraw/editor'
-import { ReactEventHandler, useCallback, useEffect, useRef, useState } from 'react'
+import classNames from 'classnames'
+import { ReactEventHandler, memo, useCallback, useEffect, useRef, useState } from 'react'
 import { BrokenAssetIcon } from '../shared/BrokenAssetIcon'
+import type { ShapeOptionsWithDisplayValues } from '../shared/getDisplayValues'
 import { HyperlinkButton } from '../shared/HyperlinkButton'
+import { useImageOrVideoAsset } from '../shared/useImageOrVideoAsset'
 import { usePrefersReducedMotion } from '../shared/usePrefersReducedMotion'
+
+const videoSvgExportCache = new WeakCache<TLAsset, Promise<string | null>>()
+
+/** @public */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface VideoShapeUtilDisplayValues {}
+
+/** @public */
+export interface VideoShapeOptions extends ShapeOptionsWithDisplayValues<
+	TLVideoShape,
+	VideoShapeUtilDisplayValues
+> {
+	/**
+	 * Should videos play automatically?
+	 */
+	autoplay: boolean
+}
+
+const messages = defineMessages({
+	name: { id: 'a11y.shape-video', defaultMessage: 'Video' },
+})
 
 /** @public */
 export class VideoShapeUtil extends BaseBoxShapeUtil<TLVideoShape> {
 	static override type = 'video' as const
 	static override props = videoShapeProps
 	static override migrations = videoShapeMigrations
+	static override handledAssetTypes = ['video'] as const
 
-	override canEdit = () => true
-	override isAspectRatioLocked = () => true
+	override options: VideoShapeOptions = {
+		autoplay: true,
+		getDefaultDisplayValues(): VideoShapeUtilDisplayValues {
+			return {}
+		},
+		getCustomDisplayValues(): Partial<VideoShapeUtilDisplayValues> {
+			return {}
+		},
+	}
+
+	override getShapeName() {
+		return translateMessage(this.editor.i18n(), messages.name)
+	}
+
+	override canEdit(shape: TLVideoShape) {
+		return true
+	}
+	override isAspectRatioLocked(shape: TLVideoShape) {
+		return true
+	}
 
 	override getDefaultProps(): TLVideoShape['props'] {
 		return {
 			w: 100,
 			h: 100,
 			assetId: null,
+			autoplay: this.options.autoplay,
+			url: '',
+			altText: '',
+			// Not used, but once upon a time were used to sync video state between users
 			time: 0,
 			playing: true,
-			url: '',
 		}
 	}
 
+	override createShapeForAsset(asset: TLAsset, position: VecModel): TLShapePartial | null {
+		const videoAsset = asset as TLVideoAsset
+		return {
+			id: createShapeId(),
+			type: 'video',
+			x: position.x,
+			y: position.y,
+			opacity: 1,
+			props: {
+				assetId: videoAsset.id,
+				w: videoAsset.props.w,
+				h: videoAsset.props.h,
+			},
+		}
+	}
+
+	override getAriaDescriptor(shape: TLVideoShape) {
+		return shape.props.altText
+	}
+
 	component(shape: TLVideoShape) {
-		const { editor } = this
-		const showControls = editor.getShapeGeometry(shape).bounds.w * editor.getZoomLevel() >= 110
-		const asset = shape.props.assetId ? editor.getAsset(shape.props.assetId) : null
-		const { time, playing } = shape.props
-		const isEditing = useIsEditing(shape.id)
-		const prefersReducedMotion = usePrefersReducedMotion()
+		return <VideoShape shape={shape} />
+	}
 
-		const rVideo = useRef<HTMLVideoElement>(null!)
+	override getIndicatorPath(shape: TLVideoShape): Path2D {
+		const path = new Path2D()
+		path.rect(0, 0, shape.props.w, shape.props.h)
+		return path
+	}
 
-		const handlePlay = useCallback<ReactEventHandler<HTMLVideoElement>>(
-			(e) => {
-				const video = e.currentTarget
-				if (!video) return
+	override async toSvg(shape: TLVideoShape, ctx: SvgExportContext) {
+		const props = shape.props
+		if (!props.assetId) return null
 
-				editor.updateShapes([
-					{
-						type: 'video',
-						id: shape.id,
-						props: {
-							playing: true,
-							time: video.currentTime,
-						},
-					},
-				])
-			},
-			[shape.id, editor]
-		)
+		const asset = this.editor.getAsset<TLAsset>(props.assetId)
+		if (!asset) return null
 
-		const handlePause = useCallback<ReactEventHandler<HTMLVideoElement>>(
-			(e) => {
-				const video = e.currentTarget
-				if (!video) return
+		const promise = videoSvgExportCache.get(asset, async () => {
+			const assetUrl = await ctx.resolveAssetUrl(asset.id, props.w)
+			if (!assetUrl) return null
+			const video = await MediaHelpers.loadVideo(assetUrl, this.editor.getContainerDocument())
+			return await MediaHelpers.getVideoFrameAsDataUrl(video, 0)
+		})
+		const src = await promise.catch((error) => {
+			// A failure must not stay memoized, or every later export of this asset fails too. Only
+			// evict our own entry: a concurrent export may have started a fresh one. Skip the video
+			// rather than rejecting: toSvg rejections are not caught by the exporter, which then
+			// waits out the export delay and emits an SVG with no shapes at all.
+			if (videoSvgExportCache.items.get(asset) === promise) videoSvgExportCache.items.delete(asset)
+			console.error(`Could not export video ${asset.id}`, error)
+			return null
+		})
 
-				editor.updateShapes([
-					{
-						type: 'video',
-						id: shape.id,
-						props: {
-							playing: false,
-							time: video.currentTime,
-						},
-					},
-				])
-			},
-			[shape.id, editor]
-		)
+		if (!src) return null
 
-		const handleSetCurrentTime = useCallback<ReactEventHandler<HTMLVideoElement>>(
-			(e) => {
-				const video = e.currentTarget
-				if (!video) return
+		return <image href={src} width={props.w} height={props.h} aria-label={shape.props.altText} />
+	}
+}
 
-				if (isEditing) {
-					editor.updateShapes([
-						{
-							type: 'video',
-							id: shape.id,
-							props: {
-								time: video.currentTime,
-							},
-						},
-					])
-				}
-			},
-			[isEditing, shape.id, editor]
-		)
+const VideoShape = memo(function VideoShape({ shape }: { shape: TLVideoShape }) {
+	const editor = useEditor()
+	const showControls =
+		editor.getShapeGeometry(shape).bounds.w * editor.getEfficientZoomLevel() >= 110
+	const isEditing = useIsEditing(shape.id)
+	const prefersReducedMotion = usePrefersReducedMotion()
+	const { Spinner } = useEditorComponents()
 
-		const [isLoaded, setIsLoaded] = useState(false)
+	const { asset, url } = useImageOrVideoAsset({
+		shapeId: shape.id,
+		assetId: shape.props.assetId,
+		width: shape.props.w,
+	})
 
-		const handleLoadedData = useCallback<ReactEventHandler<HTMLVideoElement>>(
-			(e) => {
-				const video = e.currentTarget
-				if (!video) return
-				if (time !== video.currentTime) {
-					video.currentTime = time
-				}
+	const rVideo = useRef<HTMLVideoElement>(null!)
 
-				if (!playing) {
-					video.pause()
-				}
+	const [isLoaded, setIsLoaded] = useState(false)
 
-				setIsLoaded(true)
-			},
-			[playing, time]
-		)
+	const handleLoadedData = useCallback<ReactEventHandler<HTMLVideoElement>>((e) => {
+		const video = e.currentTarget
+		if (!video) return
+		setIsLoaded(true)
+	}, [])
 
-		// If the current time changes and we're not editing the video, update the video time
-		useEffect(() => {
-			const video = rVideo.current
-			if (!video) return
+	const [isFullscreen, setIsFullscreen] = useState(false)
 
-			if (isLoaded && !isEditing && time !== video.currentTime) {
-				video.currentTime = time
+	useEffect(() => {
+		const doc = rVideo.current?.ownerDocument ?? editor.getContainerDocument()
+		const fullscreenChange = () => setIsFullscreen(doc.fullscreenElement === rVideo.current)
+		doc.addEventListener('fullscreenchange', fullscreenChange)
+
+		return () => doc.removeEventListener('fullscreenchange', fullscreenChange)
+	})
+
+	// Focus the video when editing
+	useEffect(() => {
+		const video = rVideo.current
+		if (!video) return
+
+		if (isEditing) {
+			if (video.ownerDocument.activeElement !== video) {
+				video.focus()
 			}
+		}
+	}, [isEditing, isLoaded])
 
-			if (isEditing) {
-				if (document.activeElement !== video) {
-					video.focus()
-				}
-			}
-		}, [isEditing, isLoaded, time])
+	const hasVideo = !!asset?.props.src && !!url && isLoaded
 
-		useEffect(() => {
-			if (prefersReducedMotion) {
-				const video = rVideo.current
-				if (!video) return
-				video.pause()
-				video.currentTime = 0
-			}
-		}, [rVideo, prefersReducedMotion])
-
-		return (
-			<>
-				<HTMLContainer
-					id={shape.id}
-					style={{
-						color: 'var(--color-text-3)',
-						backgroundColor: asset ? 'transparent' : 'var(--color-low)',
-						border: asset ? 'none' : '1px solid var(--color-low-border)',
-					}}
-				>
-					<div className="tl-counter-scaled">
-						<div className="tl-video-container">
-							{asset?.props.src ? (
+	return (
+		<>
+			<HTMLContainer
+				id={shape.id}
+				style={{
+					color: 'var(--tl-color-text-3)',
+					backgroundColor: hasVideo ? 'transparent' : 'var(--tl-color-low)',
+					border: hasVideo ? 'none' : '1px solid var(--tl-color-low-border)',
+				}}
+			>
+				<div className="tl-counter-scaled">
+					<div className="tl-video-container">
+						{!asset ? (
+							<BrokenAssetIcon />
+						) : Spinner && !asset.props.src ? (
+							<Spinner />
+						) : url ? (
+							<>
 								<video
+									key={url}
 									ref={rVideo}
-									style={isEditing ? { pointerEvents: 'all' } : undefined}
-									className={`tl-video tl-video-shape-${shape.id.split(':')[1]}`}
+									style={
+										isEditing
+											? { pointerEvents: 'all' }
+											: !isLoaded
+												? { display: 'none' }
+												: undefined
+									}
+									className={classNames('tl-video', `tl-video-shape-${shape.id.split(':')[1]}`, {
+										'tl-video-is-fullscreen': isFullscreen,
+									})}
 									width="100%"
 									height="100%"
 									draggable={false}
 									playsInline
-									autoPlay
+									autoPlay={shape.props.autoplay && !prefersReducedMotion}
 									muted
 									loop
 									disableRemotePlayback
 									disablePictureInPicture
 									controls={isEditing && showControls}
-									onPlay={handlePlay}
-									onPause={handlePause}
-									onTimeUpdate={handleSetCurrentTime}
 									onLoadedData={handleLoadedData}
 									hidden={!isLoaded}
+									aria-label={shape.props.altText}
 								>
-									<source src={asset.props.src} />
+									<source src={url} />
 								</video>
-							) : (
-								<BrokenAssetIcon />
-							)}
-						</div>
+								{!isLoaded && Spinner && <Spinner />}
+							</>
+						) : null}
 					</div>
-				</HTMLContainer>
-				{'url' in shape.props && shape.props.url && (
-					<HyperlinkButton url={shape.props.url} zoomLevel={editor.getZoomLevel()} />
-				)}
-			</>
-		)
-	}
-
-	indicator(shape: TLVideoShape) {
-		return <rect width={toDomPrecision(shape.props.w)} height={toDomPrecision(shape.props.h)} />
-	}
-
-	override toSvg(shape: TLVideoShape) {
-		return <image href={serializeVideo(shape.id)} width={shape.props.w} height={shape.props.h} />
-	}
-}
-
-// Function from v1, could be improved but explicitly using this.model.time (?)
-function serializeVideo(id: string): string {
-	const splitId = id.split(':')[1]
-	const video = document.querySelector(`.tl-video-shape-${splitId}`) as HTMLVideoElement
-	if (video) {
-		const canvas = document.createElement('canvas')
-		canvas.width = video.videoWidth
-		canvas.height = video.videoHeight
-		canvas.getContext('2d')!.drawImage(video, 0, 0)
-		return canvas.toDataURL('image/png')
-	} else throw new Error('Video with not found when attempting serialization.')
-}
+				</div>
+			</HTMLContainer>
+			{'url' in shape.props && shape.props.url && <HyperlinkButton url={shape.props.url} />}
+		</>
+	)
+})

@@ -1,37 +1,57 @@
-import { StateNode, TLEventHandlers } from '@tldraw/editor'
+import { StateNode, TLClickEventInfo, TLPointerEventInfo } from '@tldraw/editor'
 import { selectOnCanvasPointerUp } from '../../selection-logic/selectOnCanvasPointerUp'
+import { isPlainDoubleClickDown } from '../selectHelpers'
 
 export class PointingCanvas extends StateNode {
 	static override id = 'pointing_canvas'
 
-	override onEnter = () => {
-		const { inputs } = this.editor
+	private didMark = false
 
-		if (!inputs.shiftKey) {
+	override onEnter(info: TLPointerEventInfo & { target: 'canvas' }) {
+		const additiveSelectionKey = info.shiftKey || info.accelKey
+
+		this.didMark = false
+
+		if (!additiveSelectionKey) {
 			if (this.editor.getSelectedShapeIds().length > 0) {
-				this.editor.mark('selecting none')
+				this.editor.markHistoryStoppingPoint('selecting none')
+				this.didMark = true
 				this.editor.selectNone()
 			}
 		}
 	}
 
-	override onPointerMove: TLEventHandlers['onPointerMove'] = (info) => {
-		if (this.editor.inputs.isDragging) {
-			this.parent.transition('brushing', info)
+	override onPointerMove(info: TLPointerEventInfo) {
+		if (this.editor.inputs.getIsDragging()) {
+			// Brushing marks its own stopping point before its first selection change, unless the
+			// deselect above already placed one; a second mark would split a click-drag that
+			// starts from an existing selection into two undo steps
+			this.parent.transition('brushing', { ...info, didMarkHistory: this.didMark })
 		}
 	}
 
-	override onPointerUp: TLEventHandlers['onPointerUp'] = () => {
+	override onPointerUp(info: TLPointerEventInfo) {
 		// todo: also make this deselect
-		selectOnCanvasPointerUp(this.editor)
+		selectOnCanvasPointerUp(this.editor, info)
 		this.complete()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onDoubleClick(info: TLClickEventInfo) {
+		if (!isPlainDoubleClickDown(this.editor, info)) return
+
+		this.parent.transition('idle')
+		this.parent.getCurrent()?.handleEvent(info)
+	}
+
+	override onComplete() {
 		this.complete()
 	}
 
-	override onInterrupt = () => {
+	override onCancel() {
+		this.parent.transition('idle')
+	}
+
+	override onInterrupt() {
 		this.parent.transition('idle')
 	}
 

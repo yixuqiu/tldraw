@@ -78,6 +78,17 @@ export function approximately(a: number, b: number, precision = 0.000001) {
 }
 
 /**
+ * Whether a number is approximately less than or equal to another number.
+ *
+ * @param a - The first number.
+ * @param b - The second number.
+ * @public
+ */
+export function approximatelyLte(a: number, b: number, precision = 0.000001) {
+	return a < b || approximately(a, b, precision)
+}
+
+/**
  * Find the approximate perimeter of an ellipse.
  *
  * @param rx - The ellipse's x radius.
@@ -86,8 +97,7 @@ export function approximately(a: number, b: number, precision = 0.000001) {
  */
 export function perimeterOfEllipse(rx: number, ry: number): number {
 	const h = Math.pow(rx - ry, 2) / Math.pow(rx + ry, 2)
-	const p = PI * (rx + ry) * (1 + (3 * h) / (10 + Math.sqrt(4 - 3 * h)))
-	return p
+	return PI * (rx + ry) * (1 + (3 * h) / (10 + Math.sqrt(4 - 3 * h)))
 }
 
 /**
@@ -179,7 +189,10 @@ export function snapAngle(r: number, segments: number): number {
  * @public
  */
 export function areAnglesCompatible(a: number, b: number) {
-	return a === b || approximately((a % (Math.PI / 2)) - (b % (Math.PI / 2)), 0)
+	// Reduce the difference, not each angle: a sign-preserving % on each made
+	// -PI/4 and PI/4 incompatible. A remainder just under PI/2 is a multiple too.
+	const d = Math.abs(a - b) % (Math.PI / 2)
+	return approximately(d, 0) || approximately(d, Math.PI / 2)
 }
 
 /**
@@ -307,19 +320,19 @@ function cross(x: VecLike, y: VecLike, z: VecLike): number {
  * @public
  */
 export function pointInPolygon(A: VecLike, points: VecLike[]): boolean {
+	// Uses winding number algorithm. Previously also had a per-edge check:
+	//   if (Vec.Dist(A, a) + Vec.Dist(A, b) === Vec.Dist(a, b)) return true
+	// which tested if A lies exactly on edge (a, b). Removed because it cost 3 sqrts per vertex
+	// and exact float equality with sqrt results essentially never fires in practice.
 	let windingNumber = 0
 	let a: VecLike
 	let b: VecLike
 
 	for (let i = 0; i < points.length; i++) {
 		a = points[i]
-		// Point is the same as one of the corners of the polygon
 		if (a.x === A.x && a.y === A.y) return true
 
 		b = points[(i + 1) % points.length]
-
-		// Point is on the polygon edge
-		if (Vec.Dist(A, a) + Vec.Dist(A, b) === Vec.Dist(a, b)) return true
 
 		if (a.y <= A.y) {
 			if (b.y > A.y && cross(a, b, A) > 0) {
@@ -353,7 +366,7 @@ export function toFixed(v: number) {
  * Check if a float is safe to use. ie: Not too big or small.
  * @public
  */
-export const isSafeFloat = (n: number) => {
+export function isSafeFloat(n: number) {
 	return Math.abs(n) < Number.MAX_SAFE_INTEGER
 }
 
@@ -426,4 +439,57 @@ export function getArcMeasure(A: number, B: number, sweepFlag: number, largeArcF
 	const m = ((2 * ((B - A) % PI2)) % PI2) - ((B - A) % PI2)
 	if (!largeArcFlag) return m
 	return (PI2 - Math.abs(m)) * (sweepFlag ? 1 : -1)
+}
+
+/**
+ * Get the center of a circle from three points.
+ *
+ * @param a - The first point
+ * @param b - The second point
+ * @param c - The third point
+ *
+ * @returns The center of the circle or null if the points are collinear
+ *
+ * @public
+ */
+export function centerOfCircleFromThreePoints(a: VecLike, b: VecLike, c: VecLike) {
+	const u = -2 * (a.x * (b.y - c.y) - a.y * (b.x - c.x) + b.x * c.y - c.x * b.y)
+	const x =
+		((a.x * a.x + a.y * a.y) * (c.y - b.y) +
+			(b.x * b.x + b.y * b.y) * (a.y - c.y) +
+			(c.x * c.x + c.y * c.y) * (b.y - a.y)) /
+		u
+	const y =
+		((a.x * a.x + a.y * a.y) * (b.x - c.x) +
+			(b.x * b.x + b.y * b.y) * (c.x - a.x) +
+			(c.x * c.x + c.y * c.y) * (a.x - b.x)) /
+		u
+	if (!Number.isFinite(x) || !Number.isFinite(y)) {
+		return null
+	}
+	return new Vec(x, y)
+}
+
+/** @public */
+export function getPointsOnArc(
+	startPoint: VecLike,
+	endPoint: VecLike,
+	center: VecLike | null,
+	radius: number,
+	numPoints: number
+): Vec[] {
+	if (center === null) {
+		return [Vec.From(startPoint), Vec.From(endPoint)]
+	}
+	const results: Vec[] = []
+	const startAngle = Vec.Angle(center, startPoint)
+	const endAngle = Vec.Angle(center, endPoint)
+	const l = clockwiseAngleDist(startAngle, endAngle)
+	for (let i = 0; i < numPoints; i++) {
+		const t = i / (numPoints - 1)
+		const angle = startAngle + l * t
+		const point = getPointOnCircle(center, radius, angle)
+		results.push(point)
+	}
+	return results
 }

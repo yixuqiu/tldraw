@@ -1,64 +1,26 @@
 import {
-	DefaultColorThemePalette,
-	DefaultFontFamilies,
 	DefaultFontStyle,
-	FileHelpers,
 	SvgExportDef,
 	TLDefaultFillStyle,
-	TLDefaultFontStyle,
 	TLShapeUtilCanvasSvgDef,
 	debugFlags,
+	getGlobalDocument,
+	last,
+	suffixSafeId,
+	tlenv,
+	useColorMode,
 	useEditor,
+	useSharedSafeId,
+	useUniqueSafeId,
+	useValue,
 } from '@tldraw/editor'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useDefaultColorTheme } from './ShapeFill'
-
-/** @internal */
-export const HASH_PATTERN_ZOOM_NAMES: Record<string, string> = {}
-
-const HASH_PATTERN_COUNT = 6
-
-for (let zoom = 1; zoom <= HASH_PATTERN_COUNT; zoom++) {
-	HASH_PATTERN_ZOOM_NAMES[zoom + '_dark'] = `hash_pattern_zoom_${zoom}_dark`
-	HASH_PATTERN_ZOOM_NAMES[zoom + '_light'] = `hash_pattern_zoom_${zoom}_light`
-}
-
-/** @public */
-export function getFontDefForExport(fontStyle: TLDefaultFontStyle): SvgExportDef {
-	return {
-		key: `${DefaultFontStyle.id}:${fontStyle}`,
-		getElement: async () => {
-			const font = findFont(fontStyle)
-			if (!font) return null
-
-			const url: string = (font as any).$$_url
-			const fontFaceRule: string = (font as any).$$_fontface
-			if (!url || !fontFaceRule) return null
-
-			const fontFile = await (await fetch(url)).blob()
-			const base64FontFile = await FileHelpers.blobToDataUrl(fontFile)
-
-			const newFontFaceRule = fontFaceRule.replace(url, base64FontFile)
-			return <style>{newFontFaceRule}</style>
-		},
-	}
-}
-
-function findFont(name: TLDefaultFontStyle): FontFace | null {
-	const fontFamily = DefaultFontFamilies[name]
-	for (const font of document.fonts) {
-		if (fontFamily.includes(font.family)) {
-			return font
-		}
-	}
-	return null
-}
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 /** @public */
 export function getFillDefForExport(fill: TLDefaultFillStyle): SvgExportDef {
 	return {
 		key: `${DefaultFontStyle.id}:${fill}`,
-		getElement: async () => {
+		async getElement() {
 			if (fill !== 'pattern') return null
 
 			return <HashPatternForExport />
@@ -67,11 +29,15 @@ export function getFillDefForExport(fill: TLDefaultFillStyle): SvgExportDef {
 }
 
 function HashPatternForExport() {
-	const theme = useDefaultColorTheme()
+	const getHashPatternZoomName = useGetHashPatternZoomName()
+	const maskId = useUniqueSafeId()
+	const editor = useEditor()
+	const colorMode = useColorMode()
+	const colors = editor.getCurrentTheme().colors[colorMode]
 	const t = 8 / 12
 	return (
 		<>
-			<mask id="hash_pattern_mask">
+			<mask id={maskId}>
 				<rect x="0" y="0" width="8" height="8" fill="white" />
 				<g strokeLinecap="round" stroke="black">
 					<line x1={t * 1} y1={t * 3} x2={t * 3} y2={t * 1} />
@@ -80,12 +46,12 @@ function HashPatternForExport() {
 				</g>
 			</mask>
 			<pattern
-				id={HASH_PATTERN_ZOOM_NAMES[`1_${theme.id}`]}
+				id={getHashPatternZoomName(1, colorMode)}
 				width="8"
 				height="8"
 				patternUnits="userSpaceOnUse"
 			>
-				<rect x="0" y="0" width="8" height="8" fill={theme.solid} mask="url(#hash_pattern_mask)" />
+				<rect x="0" y="0" width="8" height="8" fill={colors.solid} mask={`url(#${maskId})`} />
 			</pattern>
 		</>
 	)
@@ -99,20 +65,21 @@ export function getFillDefForCanvas(): TLShapeUtilCanvasSvgDef {
 }
 const TILE_PATTERN_SIZE = 8
 
-const generateImage = (dpr: number, currentZoom: number, darkMode: boolean) => {
+const generateImage = (dpr: number, currentZoom: number, solid: string) => {
 	return new Promise<Blob>((resolve, reject) => {
 		const size = TILE_PATTERN_SIZE * currentZoom * dpr
 
-		const canvasEl = document.createElement('canvas')
+		const canvasEl = getGlobalDocument().createElement('canvas')
 		canvasEl.width = size
 		canvasEl.height = size
 
 		const ctx = canvasEl.getContext('2d')
-		if (!ctx) return
+		if (!ctx) {
+			reject()
+			return
+		}
 
-		ctx.fillStyle = darkMode
-			? DefaultColorThemePalette.darkMode.solid
-			: DefaultColorThemePalette.lightMode.solid
+		ctx.fillStyle = solid
 		ctx.fillRect(0, 0, size, size)
 
 		// This essentially generates an inverse of the pattern we're drawing.
@@ -145,8 +112,27 @@ const generateImage = (dpr: number, currentZoom: number, darkMode: boolean) => {
 	})
 }
 
+// Generating the pattern images is expensive (canvas draw + encode), but the result only depends
+// on the device pixel ratio, zoom level, and solid color. Cache the blobs at the module level so
+// the work is done once and reused across editor mounts and instances. Object URLs are still
+// created and revoked per-instance; only the underlying blobs are shared.
+const patternImageBlobCache = new Map<string, Promise<Blob>>()
+
+function getPatternImageBlob(dpr: number, zoom: number, solid: string): Promise<Blob> {
+	const key = `${dpr}_${zoom}_${solid}`
+	let blob = patternImageBlobCache.get(key)
+	if (!blob) {
+		blob = generateImage(dpr, zoom, solid)
+		// Don't keep a rejected promise around (e.g. the throwToBlob debug flag), so a later call
+		// can retry once the failure condition is gone.
+		blob.catch(() => patternImageBlobCache.delete(key))
+		patternImageBlobCache.set(key, blob)
+	}
+	return blob
+}
+
 const canvasBlob = (size: [number, number], fn: (ctx: CanvasRenderingContext2D) => void) => {
-	const canvas = document.createElement('canvas')
+	const canvas = getGlobalDocument().createElement('canvas')
 	canvas.width = size[0]
 	canvas.height = size[1]
 	const ctx = canvas.getContext('2d')
@@ -154,39 +140,83 @@ const canvasBlob = (size: [number, number], fn: (ctx: CanvasRenderingContext2D) 
 	fn(ctx)
 	return canvas.toDataURL()
 }
-type PatternDef = { zoom: number; url: string; darkMode: boolean }
+interface PatternDef {
+	zoom: number
+	url: string
+	theme: string
+}
 
-const getDefaultPatterns = () => {
-	const defaultPatterns: PatternDef[] = []
-	for (let i = 1; i <= HASH_PATTERN_COUNT; i++) {
-		const whitePixelBlob = canvasBlob([1, 1], (ctx) => {
-			ctx.fillStyle = DefaultColorThemePalette.lightMode.black.semi
-			ctx.fillRect(0, 0, 1, 1)
-		})
-		const blackPixelBlob = canvasBlob([1, 1], (ctx) => {
-			ctx.fillStyle = DefaultColorThemePalette.darkMode.black.semi
-			ctx.fillRect(0, 0, 1, 1)
-		})
-		defaultPatterns.push({
-			zoom: i,
-			url: whitePixelBlob,
-			darkMode: false,
-		})
-		defaultPatterns.push({
-			zoom: i,
-			url: blackPixelBlob,
-			darkMode: true,
-		})
+let defaultPixels: { white: string; black: string } | null = null
+function getDefaultPixels() {
+	if (!defaultPixels) {
+		defaultPixels = {
+			white: canvasBlob([1, 1], (ctx) => {
+				ctx.fillStyle = '#f8f9fa'
+				ctx.fillRect(0, 0, 1, 1)
+			}),
+			black: canvasBlob([1, 1], (ctx) => {
+				ctx.fillStyle = '#212529'
+				ctx.fillRect(0, 0, 1, 1)
+			}),
+		}
 	}
-	return defaultPatterns
+	return defaultPixels
+}
+
+function getPatternLodForZoomLevel(zoom: number) {
+	return Math.ceil(Math.log2(Math.max(1, zoom)))
+}
+
+export function useGetHashPatternZoomName() {
+	const id = useSharedSafeId('hash_pattern')
+	return useCallback(
+		(zoom: number, theme: string) => {
+			const lod = getPatternLodForZoomLevel(zoom)
+			return suffixSafeId(id, `${theme}_${lod}`)
+		},
+		[id]
+	)
+}
+
+function getPatternLodsToGenerate(maxZoom: number) {
+	const levels = []
+	const minLod = 0
+	const maxLod = getPatternLodForZoomLevel(maxZoom)
+	for (let i = minLod; i <= maxLod; i++) {
+		levels.push(Math.pow(2, i))
+	}
+	return levels
+}
+
+function getDefaultPatterns(maxZoom: number): PatternDef[] {
+	const defaultPixels = getDefaultPixels()
+	return getPatternLodsToGenerate(maxZoom).flatMap((zoom) => [
+		{ zoom, url: defaultPixels.white, theme: 'light' },
+		{ zoom, url: defaultPixels.black, theme: 'dark' },
+	])
 }
 
 function usePattern() {
 	const editor = useEditor()
-	const dpr = editor.getInstanceState().devicePixelRatio
+	const dpr = useValue('devicePixelRatio', () => editor.getInstanceState().devicePixelRatio, [
+		editor,
+	])
+	// In dynamic size mode, new shapes are created with scale = 1 / zoomLevel.
+	// For pattern LOD generation, we use the worst-case effective zoom:
+	// a shape created at min zoom and later viewed at max zoom (maxZoom / minZoom)
+	const maxEffectiveZoom = useValue(
+		'maxEffectiveZoom',
+		() => {
+			const steps = editor.getCameraOptions().zoomSteps
+			return last(steps)! / steps[0]
+		},
+		[editor]
+	)
 	const [isReady, setIsReady] = useState(false)
-	const defaultPatterns = useMemo(() => getDefaultPatterns(), [])
-	const [backgroundUrls, setBackgroundUrls] = useState<PatternDef[]>(defaultPatterns)
+	const [backgroundUrls, setBackgroundUrls] = useState<PatternDef[]>(() =>
+		getDefaultPatterns(maxEffectiveZoom)
+	)
+	const getHashPatternZoomName = useGetHashPatternZoomName()
 
 	useEffect(() => {
 		if (process.env.NODE_ENV === 'test') {
@@ -194,46 +224,50 @@ function usePattern() {
 			return
 		}
 
-		const promises: Promise<{ zoom: number; url: string; darkMode: boolean }>[] = []
+		const definition = editor.getCurrentTheme()
+		const lightSolid = definition.colors.light.solid
+		const darkSolid = definition.colors.dark.solid
 
-		for (let i = 1; i <= HASH_PATTERN_COUNT; i++) {
-			promises.push(
-				generateImage(dpr, i, false).then((blob) => ({
-					zoom: i,
+		const promise = Promise.all(
+			getPatternLodsToGenerate(maxEffectiveZoom).flatMap<Promise<PatternDef>>((zoom) => [
+				getPatternImageBlob(dpr, zoom, lightSolid).then((blob) => ({
+					zoom,
+					theme: 'light',
 					url: URL.createObjectURL(blob),
-					darkMode: false,
-				}))
-			)
-			promises.push(
-				generateImage(dpr, i, true).then((blob) => ({
-					zoom: i,
+				})),
+				getPatternImageBlob(dpr, zoom, darkSolid).then((blob) => ({
+					zoom,
+					theme: 'dark',
 					url: URL.createObjectURL(blob),
-					darkMode: true,
-				}))
-			)
-		}
+				})),
+			])
+		)
 
 		let isCancelled = false
-		Promise.all(promises).then((urls) => {
+		promise.then((urls) => {
 			if (isCancelled) return
 			setBackgroundUrls(urls)
 			setIsReady(true)
 		})
-
 		return () => {
 			isCancelled = true
 			setIsReady(false)
+			promise.then((patterns) => {
+				for (const { url } of patterns) {
+					URL.revokeObjectURL(url)
+				}
+			})
 		}
-	}, [dpr])
+	}, [dpr, maxEffectiveZoom, editor])
 
 	const defs = (
 		<>
 			{backgroundUrls.map((item) => {
-				const key = item.zoom + (item.darkMode ? '_dark' : '_light')
+				const id = getHashPatternZoomName(item.zoom, item.theme)
 				return (
 					<pattern
-						key={key}
-						id={HASH_PATTERN_ZOOM_NAMES[key]}
+						key={id}
+						id={id}
 						width={TILE_PATTERN_SIZE}
 						height={TILE_PATTERN_SIZE}
 						patternUnits="userSpaceOnUse"
@@ -254,15 +288,15 @@ function PatternFillDefForCanvas() {
 	const { defs, isReady } = usePattern()
 
 	useEffect(() => {
-		if (isReady && editor.environment.isSafari) {
+		if (isReady && tlenv.isSafari) {
 			const htmlLayer = findHtmlLayerParent(containerRef.current!)
 			if (htmlLayer) {
 				// Wait for `patternContext` to be picked up
-				requestAnimationFrame(() => {
+				editor.timers.requestAnimationFrame(() => {
 					htmlLayer.style.display = 'none'
 
 					// Wait for 'display = "none"' to take effect
-					requestAnimationFrame(() => {
+					editor.timers.requestAnimationFrame(() => {
 						htmlLayer.style.display = ''
 					})
 				})

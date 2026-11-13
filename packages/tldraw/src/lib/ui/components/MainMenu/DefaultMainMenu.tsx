@@ -1,23 +1,28 @@
-import * as _Dropdown from '@radix-ui/react-dropdown-menu'
-import { useContainer } from '@tldraw/editor'
+import { defineMessages, useContainer } from '@tldraw/editor'
+import { DropdownMenu as _DropdownMenu } from 'radix-ui'
 import { ReactNode, memo } from 'react'
 import { useMenuIsOpen } from '../../hooks/useMenuIsOpen'
-import { useTranslation } from '../../hooks/useTranslation/useTranslation'
+import { useDirection, useTranslation } from '../../hooks/useTranslation/useTranslation'
 import { TldrawUiButton } from '../primitives/Button/TldrawUiButton'
 import { TldrawUiButtonIcon } from '../primitives/Button/TldrawUiButtonIcon'
 import { TldrawUiMenuContextProvider } from '../primitives/menus/TldrawUiMenuContext'
 import { DefaultMainMenuContent } from './DefaultMainMenuContent'
 
+const messages = defineMessages({
+	menuTitle: { id: 'menu.title', defaultMessage: 'Menu' },
+})
+
 /** @public */
-export type TLUiMainMenuProps = {
+export interface TLUiMainMenuProps {
 	children?: ReactNode
 }
 
-/** @public */
+/** @public @react */
 export const DefaultMainMenu = memo(function DefaultMainMenu({ children }: TLUiMainMenuProps) {
 	const container = useContainer()
 	const [isOpen, onOpenChange] = useMenuIsOpen('main menu')
 	const msg = useTranslation()
+	const dir = useDirection()
 
 	// Get the main menu content, either the default component or the user's
 	// override. If there's no menu content, then the user has set it to null,
@@ -25,14 +30,14 @@ export const DefaultMainMenu = memo(function DefaultMainMenu({ children }: TLUiM
 	const content = children ?? <DefaultMainMenuContent />
 
 	return (
-		<_Dropdown.Root dir="ltr" open={isOpen} onOpenChange={onOpenChange} modal={false}>
-			<_Dropdown.Trigger asChild dir="ltr">
-				<TldrawUiButton type="icon" data-testid="main-menu.button" title={msg('menu.title')}>
+		<_DropdownMenu.Root dir={dir} open={isOpen} onOpenChange={onOpenChange} modal={false}>
+			<_DropdownMenu.Trigger asChild dir={dir}>
+				<TldrawUiButton type="icon" data-testid="main-menu.button" title={msg(messages.menuTitle)}>
 					<TldrawUiButtonIcon icon="menu" small />
 				</TldrawUiButton>
-			</_Dropdown.Trigger>
-			<_Dropdown.Portal container={container}>
-				<_Dropdown.Content
+			</_DropdownMenu.Trigger>
+			<_DropdownMenu.Portal container={container}>
+				<_DropdownMenu.Content
 					className="tlui-menu"
 					side="bottom"
 					align="start"
@@ -43,8 +48,8 @@ export const DefaultMainMenu = memo(function DefaultMainMenu({ children }: TLUiM
 					<TldrawUiMenuContextProvider type="menu" sourceId="main-menu">
 						{content}
 					</TldrawUiMenuContextProvider>
-				</_Dropdown.Content>
-			</_Dropdown.Portal>
-		</_Dropdown.Root>
+				</_DropdownMenu.Content>
+			</_DropdownMenu.Portal>
+		</_DropdownMenu.Root>
 	)
 })

@@ -1,6 +1,93 @@
-import { getEmbedInfo, matchEmbedUrl, matchUrl } from './embeds'
+import {
+	DEFAULT_EMBED_DEFINITIONS,
+	embedShapePermissionDefaults,
+	unknownEmbedShapePermissionOverrides,
+} from '../../defaultEmbedDefinitions'
+import { getCorrectedEmbedSize, getEmbedInfo, matchEmbedUrl, matchUrl } from './embeds'
 
-type MatchUrlTestMatchDef = {
+const GOOGLE_MAPS_API_KEY = 'test-google-maps-api-key'
+const TEST_EMBED_CONFIG = { google_maps: { apiKey: GOOGLE_MAPS_API_KEY } }
+
+describe('embed sandbox permissions', () => {
+	function getSandboxString(permissions: Record<string, boolean | undefined>): string {
+		return Object.entries(permissions)
+			.filter(([, isEnabled]) => isEnabled)
+			.map(([perm]) => perm)
+			.join(' ')
+	}
+
+	test('known embeds get default permissions including allow-same-origin', () => {
+		const sandbox = getSandboxString(embedShapePermissionDefaults)
+		expect(sandbox).toContain('allow-same-origin')
+		expect(sandbox).toContain('allow-scripts')
+		expect(sandbox).toContain('allow-forms')
+		expect(sandbox).toContain('allow-popups')
+	})
+
+	test('unknown embeds get restricted permissions without allow-same-origin', () => {
+		const sandbox = getSandboxString({
+			...embedShapePermissionDefaults,
+			...unknownEmbedShapePermissionOverrides,
+		})
+		expect(sandbox).not.toContain('allow-same-origin')
+		expect(sandbox).not.toContain('allow-forms')
+		expect(sandbox).not.toContain('allow-popups')
+		expect(sandbox).toContain('allow-scripts')
+	})
+
+	test('known embed overrides still apply on top of defaults', () => {
+		const youtubeEmbed = DEFAULT_EMBED_DEFINITIONS.find((d) => d.type === 'youtube')!
+		const sandbox = getSandboxString({
+			...embedShapePermissionDefaults,
+			...youtubeEmbed.overridePermissions,
+		})
+		expect(sandbox).toContain('allow-same-origin')
+		expect(sandbox).toContain('allow-presentation')
+		expect(sandbox).toContain('allow-popups-to-escape-sandbox')
+	})
+
+	test('unknownEmbedShapePermissionOverrides disables the dangerous permission combination', () => {
+		expect(unknownEmbedShapePermissionOverrides['allow-same-origin']).toBe(false)
+		expect(unknownEmbedShapePermissionOverrides['allow-forms']).toBe(false)
+		expect(unknownEmbedShapePermissionOverrides['allow-popups']).toBe(false)
+	})
+})
+
+describe('getCorrectedEmbedSize', () => {
+	test('corrects to the resolved ratio while preserving the box area', () => {
+		const corrected = getCorrectedEmbedSize({ w: 640, h: 360, resolvedRatio: 1.5 })!
+		expect(corrected.w / corrected.h).toBeCloseTo(1.5)
+		// area is unchanged, so the box takes the same footprint as the default 16:9 box
+		expect(corrected.w * corrected.h).toBeCloseTo(640 * 360)
+	})
+
+	test('does not balloon a portrait ratio: area is preserved, not the width', () => {
+		// a 9:16 video: width-preserving would give 640×1138; area-preserving keeps the footprint
+		const corrected = getCorrectedEmbedSize({ w: 640, h: 360, resolvedRatio: 9 / 16 })!
+		expect(corrected.w / corrected.h).toBeCloseTo(9 / 16)
+		expect(corrected.w * corrected.h).toBeCloseTo(640 * 360)
+		// far shorter than the 1138px a width-preserving correction would have produced
+		expect(corrected.h).toBeLessThan(640 / (9 / 16))
+	})
+
+	test('returns null when the resolved ratio already matches (within epsilon)', () => {
+		expect(getCorrectedEmbedSize({ w: 640, h: 360, resolvedRatio: 640 / 360 })).toBeNull()
+	})
+
+	test('applies a new ratio regardless of the current ratio (e.g. after a url change)', () => {
+		// shape was already auto-corrected to 3:2; a new video resolves to 1:1
+		const corrected = getCorrectedEmbedSize({ w: 640, h: 640 / 1.5, resolvedRatio: 1 })!
+		expect(corrected.w / corrected.h).toBeCloseTo(1)
+		expect(corrected.w * corrected.h).toBeCloseTo(640 * (640 / 1.5))
+	})
+
+	test('returns null when there is no resolved ratio', () => {
+		expect(getCorrectedEmbedSize({ w: 640, h: 360, resolvedRatio: undefined })).toBeNull()
+		expect(getCorrectedEmbedSize({ w: 640, h: 360, resolvedRatio: 0 })).toBeNull()
+	})
+})
+
+interface MatchUrlTestMatchDef {
 	url: string
 	match: true
 	output: {
@@ -8,7 +95,7 @@ type MatchUrlTestMatchDef = {
 		embedUrl: string
 	}
 }
-type MatchUrlTestNoMatchDef = {
+interface MatchUrlTestNoMatchDef {
 	url: string
 	match: false
 }
@@ -48,6 +135,15 @@ const MATCH_URL_TEST_URLS: (MatchUrlTestNoMatchDef | MatchUrlTestMatchDef)[] = [
 	},
 	{
 		url: 'https://lite.tldraw.com/something',
+		match: false,
+	},
+	// hostname patterns are anchored: a lookalike host must not inherit the tldraw sandbox
+	{
+		url: 'https://tldraw.com.evil.io/r/choochoo',
+		match: false,
+	},
+	{
+		url: 'https://nottldraw.com/r/choochoo',
 		match: false,
 	},
 	// codesandbox
@@ -99,6 +195,14 @@ const MATCH_URL_TEST_URLS: (MatchUrlTestNoMatchDef | MatchUrlTestMatchDef)[] = [
 		},
 	},
 	{
+		url: 'https://www.youtube.com/watch?v=ZMklf0vUl18&t=62',
+		match: true,
+		output: {
+			type: 'youtube',
+			embedUrl: 'https://www.youtube.com/embed/ZMklf0vUl18?start=62',
+		},
+	},
+	{
 		url: 'https://m.youtube.com/watch?v=ZMklf0vUl18',
 		match: true,
 		output: {
@@ -112,6 +216,14 @@ const MATCH_URL_TEST_URLS: (MatchUrlTestNoMatchDef | MatchUrlTestMatchDef)[] = [
 		output: {
 			type: 'youtube',
 			embedUrl: 'https://www.youtube.com/embed/ZMklf0vUl18',
+		},
+	},
+	{
+		url: 'https://youtu.be/u1016UnJIgA?feature=shared&t=16',
+		match: true,
+		output: {
+			type: 'youtube',
+			embedUrl: 'https://www.youtube.com/embed/u1016UnJIgA?feature=shared&start=16',
 		},
 	},
 	{
@@ -130,7 +242,52 @@ const MATCH_URL_TEST_URLS: (MatchUrlTestNoMatchDef | MatchUrlTestMatchDef)[] = [
 		},
 	},
 	{
+		url: 'https://www.figma.com/design/c1U7U2I1XfUITXwpr8X0GI/tldraw-dotcom-2025?node-id=556-72935&t=5pTQLNmuvTf3OMXd-4',
+		match: true,
+		output: {
+			type: 'figma',
+			embedUrl:
+				'https://www.figma.com/embed?embed_host=share&url=https://www.figma.com/design/c1U7U2I1XfUITXwpr8X0GI/tldraw-dotcom-2025?node-id=556-72935&t=5pTQLNmuvTf3OMXd-4',
+		},
+	},
+
+	{
+		url: 'https://www.figma.com/proto/c1U7U2I1XfUITXwpr8X0GI/tldraw-dotcom-2025?page-id=0%3A1&node-id=556-72935&t=5pTQLNmuvTf3OMXd-0&scaling=min-zoom&content-scaling=fixed',
+		match: true,
+		output: {
+			type: 'figma',
+			embedUrl:
+				'https://www.figma.com/embed?embed_host=share&url=https://www.figma.com/proto/c1U7U2I1XfUITXwpr8X0GI/tldraw-dotcom-2025?page-id=0%3A1&node-id=556-72935&t=5pTQLNmuvTf3OMXd-0&scaling=min-zoom&content-scaling=fixed',
+		},
+	},
+
+	{
 		url: 'https://www.figma.com/foobar',
+		match: false,
+	},
+	// canva
+	{
+		url: 'https://www.canva.com/design/DAFrLlkQu3Q/view',
+		match: true,
+		output: {
+			type: 'canva',
+			embedUrl: 'https://www.canva.com/design/DAFrLlkQu3Q/view?embed=',
+		},
+	},
+	{
+		url: 'https://www.canva.com/design/DAFrLlkQu3Q/some-slug',
+		match: true,
+		output: {
+			type: 'canva',
+			embedUrl: 'https://www.canva.com/design/DAFrLlkQu3Q/some-slug?embed=',
+		},
+	},
+	{
+		url: 'https://www.canva.com/design/DAFrLlkQu3Q',
+		match: false,
+	},
+	{
+		url: 'https://www.canva.com/templates',
 		match: false,
 	},
 	// google_maps
@@ -139,7 +296,7 @@ const MATCH_URL_TEST_URLS: (MatchUrlTestNoMatchDef | MatchUrlTestMatchDef)[] = [
 		match: true,
 		output: {
 			type: 'google_maps',
-			embedUrl: `https://google.com/maps/embed/v1/view?key=${process.env.NEXT_PUBLIC_GC_API_KEY}&center=52.2449313,0.0813192&zoom=14`,
+			embedUrl: `https://google.com/maps/embed/v1/view?key=${GOOGLE_MAPS_API_KEY}&center=52.2449313,0.0813192&zoom=14&maptype=roadmap`,
 		},
 	},
 	{
@@ -147,7 +304,39 @@ const MATCH_URL_TEST_URLS: (MatchUrlTestNoMatchDef | MatchUrlTestMatchDef)[] = [
 		match: true,
 		output: {
 			type: 'google_maps',
-			embedUrl: `https://google.co.uk/maps/embed/v1/view?key=${process.env.NEXT_PUBLIC_GC_API_KEY}&center=52.2449313,0.0813192&zoom=14`,
+			embedUrl: `https://google.co.uk/maps/embed/v1/view?key=${GOOGLE_MAPS_API_KEY}&center=52.2449313,0.0813192&zoom=14&maptype=roadmap`,
+		},
+	},
+	{
+		url: `https://www.google.com/maps/place/Shepherd's+Bush,+London/@51.5041626,-0.2468738,14z/data=!4m15!1m8!3m7!1s0x48760e1ce753774f:0x4420ec29705422c7!2sActon,+London!3b1!8m2!3d51.508372!4d-0.27444!16zL20vMG44cm0!3m5!1s0x48760fd28997cb07:0x6c79a6e5e0483766!8m2!3d51.5051913!4d-0.22469!16zL20vMDFqMTJo?entry=ttu&g_ep=EgoyMDI0MTIxMS4wIKXMDSoASAFQAw%3D%3D`,
+		match: true,
+		output: {
+			type: 'google_maps',
+			embedUrl: `https://google.com/maps/embed/v1/view?key=${GOOGLE_MAPS_API_KEY}&center=51.5041626,-0.2468738&zoom=14&maptype=roadmap`,
+		},
+	},
+	{
+		url: `https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2480.1159099846072!2d-0.11034668719177695!3d51.566108606294414!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x48761b96b188bb1b%3A0x9d8d2ab7a55d095e!2stldraw!5e0!3m2!1sen!2suk!4v1734706216129!5m2!1sen!2suk`,
+		match: true,
+		output: {
+			type: 'google_maps',
+			embedUrl: `https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2480.1159099846072!2d-0.11034668719177695!3d51.566108606294414!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x48761b96b188bb1b%3A0x9d8d2ab7a55d095e!2stldraw!5e0!3m2!1sen!2suk!4v1734706216129!5m2!1sen!2suk`,
+		},
+	},
+	{
+		url: 'https://www.google.com/maps/@52.2449313,0.0813192,1000m',
+		match: true,
+		output: {
+			type: 'google_maps',
+			embedUrl: `https://google.com/maps/embed/v1/view?key=${GOOGLE_MAPS_API_KEY}&center=52.2449313,0.0813192&zoom=17.313261121327326&maptype=satellite`,
+		},
+	},
+	{
+		url: 'https://www.google.co.uk/maps/@51.5074,0.1278,1200m',
+		match: true,
+		output: {
+			type: 'google_maps',
+			embedUrl: `https://google.co.uk/maps/embed/v1/view?key=${GOOGLE_MAPS_API_KEY}&center=51.5074,0.1278&zoom=16.984468114035085&maptype=satellite`,
 		},
 	},
 	{
@@ -193,6 +382,10 @@ const MATCH_URL_TEST_URLS: (MatchUrlTestNoMatchDef | MatchUrlTestMatchDef)[] = [
 		url: 'https://gist.github.com/discover',
 		match: false,
 	},
+	{
+		url: 'https://gist.github.com/x/ixSly&sol;98210ba6e8683bd772e857128cd3cdca.json&quest;callback=prompt&amp;x=ixSly',
+		match: false,
+	},
 	// replit
 	{
 		url: 'https://replit.com/@omar/Blob-Generator',
@@ -200,6 +393,14 @@ const MATCH_URL_TEST_URLS: (MatchUrlTestNoMatchDef | MatchUrlTestMatchDef)[] = [
 		output: {
 			type: 'replit',
 			embedUrl: `https://replit.com/@omar/Blob-Generator?embed=true`,
+		},
+	},
+	{
+		url: 'https://replit.com/@omar/Blob-Generator#index.html',
+		match: true,
+		output: {
+			type: 'replit',
+			embedUrl: `https://replit.com/@omar/Blob-Generator?embed=true#index.html`,
 		},
 	},
 	{
@@ -274,23 +475,6 @@ const MATCH_URL_TEST_URLS: (MatchUrlTestNoMatchDef | MatchUrlTestMatchDef)[] = [
 		url: 'https://vimeo.com/foobar',
 		match: false,
 	},
-	// excalidraw
-	{
-		url: 'https://excalidraw.com/#room=asdkjashdkjhaskdjh,sadkjhakjshdkjahd',
-		match: true,
-		output: {
-			type: 'excalidraw',
-			embedUrl: `https://excalidraw.com/#room=asdkjashdkjhaskdjh,sadkjhakjshdkjahd`,
-		},
-	},
-	{
-		url: 'https://excalidraw.com',
-		match: false,
-	},
-	{
-		url: 'https://excalidraw.com/help',
-		match: false,
-	},
 	//desmos
 	{
 		url: 'https://www.desmos.com/calculator/js9hryvejc',
@@ -310,7 +494,7 @@ const MATCH_URL_TEST_URLS: (MatchUrlTestNoMatchDef | MatchUrlTestMatchDef)[] = [
 	},
 ]
 
-type MatchEmbedTestMatchDef = {
+interface MatchEmbedTestMatchDef {
 	embedUrl: string
 	match: true
 	output: {
@@ -318,7 +502,7 @@ type MatchEmbedTestMatchDef = {
 		url: string
 	}
 }
-type MatchEmbedTestNoMatchDef = {
+interface MatchEmbedTestNoMatchDef {
 	embedUrl: string
 	match: false
 }
@@ -409,6 +593,22 @@ const MATCH_EMBED_TEST_URLS: (MatchEmbedTestMatchDef | MatchEmbedTestNoMatchDef)
 		},
 	},
 	{
+		embedUrl: 'https://www.youtube.com/embed/q8KyQovatd0?loop=1&playlist=q8KyQovatd0',
+		match: true,
+		output: {
+			type: 'youtube',
+			url: 'https://www.youtube.com/watch?loop=1&playlist=q8KyQovatd0&v=q8KyQovatd0',
+		},
+	},
+	{
+		embedUrl: 'https://www.youtube.com/embed/u1016UnJIgA?start=16',
+		match: true,
+		output: {
+			type: 'youtube',
+			url: 'https://www.youtube.com/watch?v=u1016UnJIgA&t=16',
+		},
+	},
+	{
 		embedUrl: 'https://www.youtube.com/embed/',
 		match: false,
 	},
@@ -427,9 +627,30 @@ const MATCH_EMBED_TEST_URLS: (MatchEmbedTestMatchDef | MatchEmbedTestNoMatchDef)
 		embedUrl: 'https://www.figma.com/embed?foobar=baz',
 		match: false,
 	},
+	// canva
+	{
+		embedUrl: 'https://www.canva.com/design/DAFrLlkQu3Q/view?embed=',
+		match: true,
+		output: {
+			type: 'canva',
+			url: 'https://www.canva.com/design/DAFrLlkQu3Q/view',
+		},
+	},
+	{
+		embedUrl: 'https://www.canva.com/design/DAFrLlkQu3Q/some-slug?embed=',
+		match: true,
+		output: {
+			type: 'canva',
+			url: 'https://www.canva.com/design/DAFrLlkQu3Q/some-slug',
+		},
+	},
+	{
+		embedUrl: 'https://www.canva.com/templates',
+		match: false,
+	},
 	// google_maps
 	{
-		embedUrl: `https://google.com/maps/embed/v1/view?key=${process.env.NEXT_PUBLIC_GC_API_KEY}&center=52.2449313,0.0813192&zoom=14`,
+		embedUrl: `https://google.com/maps/embed/v1/view?key=${GOOGLE_MAPS_API_KEY}&center=52.2449313,0.0813192&zoom=14`,
 		match: true,
 		output: {
 			type: 'google_maps',
@@ -437,8 +658,23 @@ const MATCH_EMBED_TEST_URLS: (MatchEmbedTestMatchDef | MatchEmbedTestNoMatchDef)
 		},
 	},
 	{
-		embedUrl:
-			'https://google.com/maps/embed?key=${process.env.NEXT_PUBLIC_GC_API_KEY}&center=52.2449313,0.0813192&zoom=14',
+		embedUrl: `https://google.com/maps/embed/v1/view?key=${GOOGLE_MAPS_API_KEY}&center=52.2449313,0.0813192&zoom=14&maptype=satellite`,
+		match: true,
+		output: {
+			type: 'google_maps',
+			url: 'https://www.google.com/maps/@52.2449313,0.0813192,6279.322445186111m',
+		},
+	},
+	{
+		embedUrl: `https://google.co.uk/maps/embed/v1/view?key=${GOOGLE_MAPS_API_KEY}&center=51.5074,0.1278&zoom=12&maptype=roadmap`,
+		match: true,
+		output: {
+			type: 'google_maps',
+			url: 'https://www.google.com/maps/@51.5074,0.1278,12z',
+		},
+	},
+	{
+		embedUrl: 'https://google.com/maps/embed?key=KEY&center=52.2449313,0.0813192&zoom=14',
 		match: false,
 	},
 	// google_calendar
@@ -480,6 +716,11 @@ const MATCH_EMBED_TEST_URLS: (MatchEmbedTestMatchDef | MatchEmbedTestNoMatchDef)
 		embedUrl: 'https://gist.github.com/discover',
 		match: false,
 	},
+	{
+		embedUrl:
+			'https://gist.github.com/x/ixSly&sol;98210ba6e8683bd772e857128cd3cdca.json&quest;callback=prompt&amp;x=ixSly',
+		match: false,
+	},
 	// replit
 	{
 		embedUrl: 'https://replit.com/@omar/Blob-Generator?embed=true',
@@ -487,6 +728,14 @@ const MATCH_EMBED_TEST_URLS: (MatchEmbedTestMatchDef | MatchEmbedTestNoMatchDef)
 		output: {
 			type: 'replit',
 			url: `https://replit.com/@omar/Blob-Generator`,
+		},
+	},
+	{
+		embedUrl: 'https://replit.com/@omar/Blob-Generator?embed=true#index.html',
+		match: true,
+		output: {
+			type: 'replit',
+			url: `https://replit.com/@omar/Blob-Generator#index.html`,
 		},
 	},
 	{
@@ -561,23 +810,6 @@ const MATCH_EMBED_TEST_URLS: (MatchEmbedTestMatchDef | MatchEmbedTestNoMatchDef)
 		embedUrl: 'https://vimeo.com/foobar',
 		match: false,
 	},
-	// excalidraw
-	{
-		embedUrl: 'https://excalidraw.com/#room=asdkjashdkjhaskdjh,sadkjhakjshdkjahd',
-		match: true,
-		output: {
-			type: 'excalidraw',
-			url: `https://excalidraw.com/#room=asdkjashdkjhaskdjh,sadkjhakjshdkjahd`,
-		},
-	},
-	{
-		embedUrl: 'https://excalidraw.com',
-		match: false,
-	},
-	{
-		embedUrl: 'https://excalidraw.com/help',
-		match: false,
-	},
 	// desmos
 	{
 		embedUrl: 'https://www.desmos.com/calculator/js9hryvejc?embed',
@@ -599,7 +831,7 @@ const MATCH_EMBED_TEST_URLS: (MatchEmbedTestMatchDef | MatchEmbedTestNoMatchDef)
 
 for (const testDef of MATCH_URL_TEST_URLS) {
 	test(`matchUrl("${testDef.url}")`, () => {
-		const result = matchUrl(testDef.url)
+		const result = matchUrl(DEFAULT_EMBED_DEFINITIONS, testDef.url, TEST_EMBED_CONFIG)
 		if (testDef.match) {
 			expect(result).toBeDefined()
 			expect(result?.definition.type).toBe(testDef.output.type)
@@ -610,7 +842,7 @@ for (const testDef of MATCH_URL_TEST_URLS) {
 	})
 
 	test(`getEmbedInfo("${testDef.url}")`, () => {
-		const result = getEmbedInfo(testDef.url)
+		const result = getEmbedInfo(DEFAULT_EMBED_DEFINITIONS, testDef.url, TEST_EMBED_CONFIG)
 		if (testDef.match) {
 			expect(result).toBeDefined()
 			expect(result?.definition.type).toBe(testDef.output.type)
@@ -623,7 +855,7 @@ for (const testDef of MATCH_URL_TEST_URLS) {
 
 for (const testDef of MATCH_EMBED_TEST_URLS) {
 	test(`matchEmbedUrl("${testDef.embedUrl}")`, () => {
-		const result = matchEmbedUrl(testDef.embedUrl)
+		const result = matchEmbedUrl(DEFAULT_EMBED_DEFINITIONS, testDef.embedUrl)
 		if (testDef.match) {
 			expect(result).toBeDefined()
 			expect(result?.definition.type).toBe(testDef.output.type)
@@ -634,7 +866,7 @@ for (const testDef of MATCH_EMBED_TEST_URLS) {
 	})
 
 	test(`getEmbedInfo("${testDef.embedUrl}")`, () => {
-		const result = matchEmbedUrl(testDef.embedUrl)
+		const result = matchEmbedUrl(DEFAULT_EMBED_DEFINITIONS, testDef.embedUrl)
 		if (testDef.match) {
 			expect(result).toBeDefined()
 			expect(result?.definition.type).toBe(testDef.output.type)

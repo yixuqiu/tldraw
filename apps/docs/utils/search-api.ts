@@ -1,9 +1,6 @@
-export const SEARCH_RESULTS = {
-	articles: [],
-	apiDocs: [],
-	examples: [],
-}
-export const searchBucket = (sectionId: string) =>
-	sectionId === 'examples' ? 'examples' : sectionId === 'reference' ? 'apiDocs' : 'articles'
-export const sectionTypeBucket = (sectionId: string) =>
-	['examples', 'reference'].includes(sectionId) ? sectionId : 'docs'
+import algoliasearch from 'algoliasearch'
+
+export const searchClient = algoliasearch(
+	process.env.NEXT_PUBLIC_ALGOLIA_APP_ID!,
+	process.env.NEXT_PUBLIC_ALGOLIA_SEARCH_KEY!
+)

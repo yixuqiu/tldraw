@@ -11,24 +11,15 @@
 		"strict": true,
 		"forceConsistentCasingInFileNames": true,
 		"module": "ESNext",
-		"moduleResolution": "Node",
+		"moduleResolution": "bundler",
 		"resolveJsonModule": true,
+		"noUncheckedSideEffectImports": false,
 		"noEmit": true,
 		"jsx": "react-jsx",
 		"incremental": true,
-		"baseUrl": ".",
 		"composite": true,
-		"importHelpers": false,
-		"skipDefaultLibCheck": true,
-		"experimentalDecorators": true
+		"skipDefaultLibCheck": true
 	},
 	"include": ["src", "../messages", "scripts"],
-	"references": [
-		{
-			"path": "../../../packages/assets"
-		},
-		{
-			"path": "../../../packages/tldraw"
-		}
-	]
+	"references": [{ "path": "../../../packages/assets" }, { "path": "../../../packages/tldraw" }]
 }

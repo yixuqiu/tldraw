@@ -1,26 +1,40 @@
-import { TLShapeId, useEditor } from '@tldraw/editor'
+import { assert, defineMessages, TLExportType, TLShapeId, useMaybeEditor } from '@tldraw/editor'
 import { useCallback } from 'react'
-import { TLExportType, exportAs } from '../../utils/export/exportAs'
+import { exportAs } from '../../utils/export/exportAs'
 import { useToasts } from '../context/toasts'
 import { useTranslation } from './useTranslation/useTranslation'
 
+const messages = defineMessages({
+	toastErrorExportFailDesc: {
+		id: 'toast.error.export-fail.desc',
+		defaultMessage: 'Failed to export image',
+	},
+	toastErrorExportFailTitle: {
+		id: 'toast.error.export-fail.title',
+		defaultMessage: 'Failed export',
+	},
+})
+
 /** @public */
 export function useExportAs() {
-	const editor = useEditor()
+	const editor = useMaybeEditor()
 	const { addToast } = useToasts()
 	const msg = useTranslation()
 
 	return useCallback(
-		(ids: TLShapeId[], format: TLExportType = 'png', name: string | undefined) => {
-			exportAs(editor, ids, format, name, {
-				scale: 1,
-				background: editor.getInstanceState().exportBackground,
+		(ids: TLShapeId[], opts: { format?: TLExportType; name?: string; scale?: number } = {}) => {
+			assert(editor, 'useExportAs: editor is required')
+			const { format = 'png', name, scale = 1 } = opts
+			exportAs(editor, ids, {
+				format,
+				name,
+				scale,
 			}).catch((e) => {
 				console.error(e.message)
 				addToast({
 					id: 'export-fail',
-					title: msg('toast.error.export-fail.title'),
-					description: msg('toast.error.export-fail.desc'),
+					title: msg(messages.toastErrorExportFailTitle),
+					description: msg(messages.toastErrorExportFailDesc),
 					severity: 'error',
 				})
 			})

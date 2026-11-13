@@ -1,34 +1,51 @@
 import { expect } from '@playwright/test'
 import { Editor } from 'tldraw'
-import { setup } from '../shared-e2e'
-import test from './fixtures/fixtures'
+import test from '../fixtures/fixtures'
+import { setupOrReset } from '../shared-e2e'
 
 declare const editor: Editor
 
 test.describe('Style selection behaviour', () => {
-	test.beforeEach(setup)
+	test.beforeEach(setupOrReset)
 	test('selecting a style hints the button', async ({ isMobile, stylePanel, toolbar }) => {
 		const { blue, black } = stylePanel.colors
-		const { pattern, none } = stylePanel.fill
+		const { solid, none } = stylePanel.fill
 		if (isMobile) {
 			await toolbar.mobileStylesButton.click()
 		}
 		// these are hinted by default
-		await stylePanel.isHinted(black)
-		await stylePanel.isHinted(none)
+		await stylePanel.isActive(black)
+		await stylePanel.isActive(none)
 		// these are not hinted by default
-		await stylePanel.isNotHinted(pattern)
-		await stylePanel.isNotHinted(blue)
+		await stylePanel.isInactive(solid)
+		await stylePanel.isInactive(blue)
 
 		await blue.click()
-		await stylePanel.isHinted(blue)
-		await stylePanel.isNotHinted(black)
+		await stylePanel.isActive(blue)
+		await stylePanel.isInactive(black)
 
-		await pattern.click()
-		await stylePanel.isHinted(pattern)
-		await stylePanel.isNotHinted(none)
+		await solid.click()
+		await stylePanel.isActive(solid)
+		await stylePanel.isInactive(none)
 		// this should not change the hint state of color buttons
-		await stylePanel.isHinted(blue)
+		await stylePanel.isActive(blue)
+	})
+
+	test('the fill dropdown trigger tooltip describes the dropdown, not the current fill', async ({
+		isMobile,
+		stylePanel,
+		toolbar,
+	}) => {
+		const { solid } = stylePanel.fill
+		if (isMobile) {
+			await toolbar.mobileStylesButton.click()
+		}
+
+		// when the current fill lives outside the dropdown (the default "none", or "solid"),
+		// the trigger tooltip should just name the style, not a value the dropdown can't show
+		await expect(stylePanel.fillExtra).toHaveAttribute('aria-label', 'Fill')
+		await solid.click()
+		await expect(stylePanel.fillExtra).toHaveAttribute('aria-label', 'Fill')
 	})
 
 	test('selecting a style changes the style of the shapes', async ({
@@ -40,7 +57,7 @@ test.describe('Style selection behaviour', () => {
 		const { blue } = stylePanel.colors
 		const { rectangle } = toolbar.tools
 		const { popoverRectangle } = toolbar.popOverTools
-		const { pattern } = stylePanel.fill
+		const { solid } = stylePanel.fill
 		if (isMobile) {
 			await toolbar.mobileStylesButton.click()
 		}
@@ -59,7 +76,7 @@ test.describe('Style selection behaviour', () => {
 		if (isMobile) {
 			await toolbar.mobileStylesButton.click()
 		}
-		await pattern.click()
+		await solid.click()
 		await rectangle.click()
 		await page.mouse.click(250, 150)
 		await page.mouse.move(100, 100)
@@ -67,7 +84,7 @@ test.describe('Style selection behaviour', () => {
 		await page.mouse.move(400, 400)
 		await page.mouse.up()
 		const shapes2 = await page.evaluate(() => editor.getSelectedShapes())
-		expect(shapes2.every((s: any) => s.props.color === 'blue' && s.props.fill === 'pattern')).toBe(
+		expect(shapes2.every((s: any) => s.props.color === 'blue' && s.props.fill === 'solid')).toBe(
 			true
 		)
 	})
@@ -96,7 +113,7 @@ test.describe('Style selection behaviour', () => {
 				// mobile styles button is disabled for the eraser tool
 				if (tool.name === 'tools.eraser' && isMobile) return
 
-				if (tool.name === 'tools.more.frame') await toolbar.moreToolsButton.click()
+				if (tool.name.startsWith('tools.more')) await toolbar.moreToolsButton.click()
 
 				await page.getByTestId(tool.name).click()
 
@@ -114,7 +131,7 @@ test.describe('Style selection behaviour', () => {
 })
 
 test.describe('mobile style panel', () => {
-	test.beforeEach(setup)
+	test.beforeEach(setupOrReset)
 	test('opens and closes as expected', async ({ isMobile, page, toolbar, stylePanel }) => {
 		test.skip(!isMobile, 'only run on mobile')
 

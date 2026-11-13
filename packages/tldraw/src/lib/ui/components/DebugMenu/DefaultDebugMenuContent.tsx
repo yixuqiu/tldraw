@@ -6,17 +6,22 @@ import {
 	debugFlags,
 	featureFlags,
 	hardResetEditor,
+	noop,
 	track,
 	uniqueId,
 	useEditor,
 } from '@tldraw/editor'
 import React from 'react'
 import { useDialogs } from '../../context/dialogs'
-import { useToasts } from '../../context/toasts'
+import { TLUiToastAction, useToasts } from '../../context/toasts'
 import { untranslated } from '../../hooks/useTranslation/useTranslation'
 import { TldrawUiButton } from '../primitives/Button/TldrawUiButton'
 import { TldrawUiButtonCheck } from '../primitives/Button/TldrawUiButtonCheck'
 import { TldrawUiButtonLabel } from '../primitives/Button/TldrawUiButtonLabel'
+import { TldrawUiMenuCheckboxItem } from '../primitives/menus/TldrawUiMenuCheckboxItem'
+import { TldrawUiMenuGroup } from '../primitives/menus/TldrawUiMenuGroup'
+import { TldrawUiMenuItem } from '../primitives/menus/TldrawUiMenuItem'
+import { TldrawUiMenuSubmenu } from '../primitives/menus/TldrawUiMenuSubmenu'
 import {
 	TldrawUiDialogBody,
 	TldrawUiDialogCloseButton,
@@ -24,13 +29,24 @@ import {
 	TldrawUiDialogHeader,
 	TldrawUiDialogTitle,
 } from '../primitives/TldrawUiDialog'
-import { TldrawUiMenuCheckboxItem } from '../primitives/menus/TldrawUiMenuCheckboxItem'
-import { TldrawUiMenuGroup } from '../primitives/menus/TldrawUiMenuGroup'
-import { TldrawUiMenuItem } from '../primitives/menus/TldrawUiMenuItem'
-import { TldrawUiMenuSubmenu } from '../primitives/menus/TldrawUiMenuSubmenu'
 
 /** @public */
-export function DefaultDebugMenuContent() {
+export interface CustomDebugFlags {
+	customDebugFlags?: Record<string, DebugFlag<boolean>>
+	customFeatureFlags?: Record<string, DebugFlag<boolean>>
+}
+
+const DEMO_TOAST_ACTIONS: TLUiToastAction[] = [
+	{ label: 'Primary', type: 'primary', onClick: noop },
+	{ label: 'Normal', type: 'normal', onClick: noop },
+	{ label: 'Danger', type: 'danger', onClick: noop },
+]
+
+/** @public @react */
+export function DefaultDebugMenuContent({
+	customDebugFlags,
+	customFeatureFlags,
+}: CustomDebugFlags) {
 	const editor = useEditor()
 	const { addToast } = useToasts()
 	const { addDialog } = useDialogs()
@@ -40,6 +56,19 @@ export function DefaultDebugMenuContent() {
 		<>
 			<TldrawUiMenuGroup id="items">
 				<TldrawUiMenuItem
+					id="hard-reset"
+					onSelect={() => {
+						if (
+							window.confirm(
+								'Hard reset will delete all tldraw data stored in this browser, including every document and your preferences. This cannot be undone.'
+							)
+						) {
+							hardResetEditor()
+						}
+					}}
+					label="Hard reset"
+				/>
+				<TldrawUiMenuItem
 					id="add-toast"
 					onSelect={() => {
 						addToast({
@@ -48,10 +77,6 @@ export function DefaultDebugMenuContent() {
 							description: 'Hey, attend to this thing over here. It might be important!',
 							keepOpen: true,
 							severity: 'success',
-							// icon?: string
-							// title?: string
-							// description?: string
-							// actions?: TLUiToastAction[]
 						})
 						addToast({
 							id: uniqueId(),
@@ -59,33 +84,7 @@ export function DefaultDebugMenuContent() {
 							description: 'Hey, attend to this thing over here. It might be important!',
 							keepOpen: true,
 							severity: 'info',
-							actions: [
-								{
-									label: 'Primary',
-									type: 'primary',
-									onClick: () => {
-										void null
-									},
-								},
-								{
-									label: 'Normal',
-									type: 'normal',
-									onClick: () => {
-										void null
-									},
-								},
-								{
-									label: 'Danger',
-									type: 'danger',
-									onClick: () => {
-										void null
-									},
-								},
-							],
-							// icon?: string
-							// title?: string
-							// description?: string
-							// actions?: TLUiToastAction[]
+							actions: DEMO_TOAST_ACTIONS,
 						})
 						addToast({
 							id: uniqueId(),
@@ -93,29 +92,7 @@ export function DefaultDebugMenuContent() {
 							description: 'Hey, attend to this thing over here. It might be important!',
 							keepOpen: true,
 							severity: 'warning',
-							actions: [
-								{
-									label: 'Primary',
-									type: 'primary',
-									onClick: () => {
-										void null
-									},
-								},
-								{
-									label: 'Normal',
-									type: 'normal',
-									onClick: () => {
-										void null
-									},
-								},
-								{
-									label: 'Danger',
-									type: 'danger',
-									onClick: () => {
-										void null
-									},
-								},
-							],
+							actions: DEMO_TOAST_ACTIONS,
 						})
 						addToast({
 							id: uniqueId(),
@@ -128,7 +105,7 @@ export function DefaultDebugMenuContent() {
 				/>
 				<TldrawUiMenuItem
 					id="show-dialog"
-					label={'Show dialog'}
+					label="Show dialog"
 					onSelect={() => {
 						addDialog({
 							component: ({ onClose }) => (
@@ -138,26 +115,24 @@ export function DefaultDebugMenuContent() {
 									onContinue={() => onClose()}
 								/>
 							),
-							onClose: () => {
-								void null
-							},
+							onClose: noop,
 						})
 					}}
 				/>
 				<TldrawUiMenuItem
 					id="create-shapes"
-					label={'Create 100 shapes'}
+					label="Create 100 shapes"
 					onSelect={() => createNShapes(editor, 100)}
 				/>
 				<TldrawUiMenuItem
 					id="count-nodes"
-					label={'Count shapes / nodes'}
+					label="Count shapes / nodes"
 					onSelect={() => {
 						const selectedShapes = editor.getSelectedShapes()
 						const shapes =
 							selectedShapes.length === 0 ? editor.getRenderingShapes() : selectedShapes
 						window.alert(
-							`Shapes ${shapes.length}, DOM nodes:${document.querySelector('.tl-shapes')!.querySelectorAll('*')?.length}`
+							`Shapes ${shapes.length}, DOM nodes:${editor.getContainerDocument().querySelector('.tl-shapes')!.querySelectorAll('*')?.length}`
 						)
 					}}
 				/>
@@ -165,24 +140,27 @@ export function DefaultDebugMenuContent() {
 					if (error) throw Error('oh no!')
 					return null
 				})()}
-				<TldrawUiMenuItem id="throw-error" onSelect={() => setError(true)} label={'Throw error'} />
-				<TldrawUiMenuItem id="hard-reset" onSelect={hardResetEditor} label={'Hard reset'} />
+				<TldrawUiMenuItem id="throw-error" onSelect={() => setError(true)} label="Throw error" />
 			</TldrawUiMenuGroup>
 			<TldrawUiMenuGroup id="flags">
-				<DebugFlags />
-				<FeatureFlags />
+				<DebugFlags customDebugFlags={customDebugFlags} />
+				<FeatureFlags customFeatureFlags={customFeatureFlags} />
 			</TldrawUiMenuGroup>
-
-			{/* {...children} */}
 		</>
 	)
 }
+
 /** @public */
-export function DebugFlags() {
-	const items = Object.values(debugFlags)
+export interface DebugFlagsProps {
+	customDebugFlags?: Record<string, DebugFlag<boolean>> | undefined
+}
+
+/** @public @react */
+export function DebugFlags(props: DebugFlagsProps) {
+	const items = Object.values(props.customDebugFlags ?? debugFlags)
 	if (!items.length) return null
 	return (
-		<TldrawUiMenuSubmenu id="debug flags" label="Debug Flags">
+		<TldrawUiMenuSubmenu id="debug flags" label="Debug flags">
 			<TldrawUiMenuGroup id="debug flags">
 				{items.map((flag) => (
 					<DebugFlagToggle key={flag.name} flag={flag} />
@@ -191,12 +169,18 @@ export function DebugFlags() {
 		</TldrawUiMenuSubmenu>
 	)
 }
+
 /** @public */
-export function FeatureFlags() {
-	const items = Object.values(featureFlags)
+export interface FeatureFlagsProps {
+	customFeatureFlags?: Record<string, DebugFlag<boolean>> | undefined
+}
+
+/** @public @react */
+export function FeatureFlags(props: FeatureFlagsProps) {
+	const items = Object.values(props.customFeatureFlags ?? featureFlags)
 	if (!items.length) return null
 	return (
-		<TldrawUiMenuSubmenu id="feature flags" label="Feature Flags">
+		<TldrawUiMenuSubmenu id="feature flags" label="Feature flags">
 			<TldrawUiMenuGroup id="feature flags">
 				{items.map((flag) => (
 					<DebugFlagToggle key={flag.name} flag={flag} />
@@ -205,24 +189,30 @@ export function FeatureFlags() {
 		</TldrawUiMenuSubmenu>
 	)
 }
+
 /** @public */
+export interface ExampleDialogProps {
+	title?: string
+	body?: React.ReactNode
+	cancel?: string
+	confirm?: string
+	displayDontShowAgain?: boolean
+	maxWidth?: string
+	onCancel(): void
+	onContinue(): void
+}
+
+/** @public @react */
 export function ExampleDialog({
 	title = 'title',
 	body = 'hello hello hello',
 	cancel = 'Cancel',
 	confirm = 'Continue',
 	displayDontShowAgain = false,
+	maxWidth = '350',
 	onCancel,
 	onContinue,
-}: {
-	title?: string
-	body?: string
-	cancel?: string
-	confirm?: string
-	displayDontShowAgain?: boolean
-	onCancel: () => void
-	onContinue: () => void
-}) {
+}: ExampleDialogProps) {
 	const [dontShowAgain, setDontShowAgain] = React.useState(false)
 
 	return (
@@ -231,7 +221,7 @@ export function ExampleDialog({
 				<TldrawUiDialogTitle>{title}</TldrawUiDialogTitle>
 				<TldrawUiDialogCloseButton />
 			</TldrawUiDialogHeader>
-			<TldrawUiDialogBody style={{ maxWidth: 350 }}>{body}</TldrawUiDialogBody>
+			<TldrawUiDialogBody style={{ maxWidth }}>{body}</TldrawUiDialogBody>
 			<TldrawUiDialogFooter className="tlui-dialog__footer__actions">
 				{displayDontShowAgain && (
 					<TldrawUiButton
@@ -240,13 +230,13 @@ export function ExampleDialog({
 						style={{ marginRight: 'auto' }}
 					>
 						<TldrawUiButtonCheck checked={dontShowAgain} />
-						<TldrawUiButtonLabel>Don't show again</TldrawUiButtonLabel>
+						<TldrawUiButtonLabel>Don’t show again</TldrawUiButtonLabel>
 					</TldrawUiButton>
 				)}
 				<TldrawUiButton type="normal" onClick={onCancel}>
 					<TldrawUiButtonLabel>{cancel}</TldrawUiButtonLabel>
 				</TldrawUiButton>
-				<TldrawUiButton type="primary" onClick={async () => onContinue()}>
+				<TldrawUiButton type="primary" onClick={() => onContinue()}>
 					<TldrawUiButtonLabel>{confirm}</TldrawUiButtonLabel>
 				</TldrawUiButton>
 			</TldrawUiDialogFooter>
@@ -259,7 +249,7 @@ const DebugFlagToggle = track(function DebugFlagToggle({
 	onChange,
 }: {
 	flag: DebugFlag<boolean>
-	onChange?: (newValue: boolean) => void
+	onChange?(newValue: boolean): void
 }) {
 	const value = flag.get()
 	return (
@@ -278,23 +268,25 @@ const DebugFlagToggle = track(function DebugFlagToggle({
 	)
 })
 
-let t = 0
-
-function createNShapes(editor: Editor, n: number) {
+/** @internal */
+export function createNShapes(editor: Editor, n: number) {
+	const gap = editor.options.adjacentShapeMargin
 	const shapesToCreate: TLShapePartial[] = Array(n)
 	const cols = Math.floor(Math.sqrt(n))
+	const { x, y } = editor.getViewportPageBounds()
 
 	for (let i = 0; i < n; i++) {
-		t++
 		shapesToCreate[i] = {
-			id: createShapeId('box' + t),
+			id: createShapeId(),
 			type: 'geo',
-			x: (i % cols) * 132,
-			y: Math.floor(i / cols) * 132,
+			x: x + (i % cols) * (100 + gap),
+			y: y + Math.floor(i / cols) * (100 + gap),
 		}
 	}
 
-	editor.batch(() => {
+	editor.markHistoryStoppingPoint('create n shapes')
+	editor.run(() => {
+		// allow this to trigger the max shapes alert
 		editor.createShapes(shapesToCreate).setSelectedShapes(shapesToCreate.map((s) => s.id))
 	})
 }

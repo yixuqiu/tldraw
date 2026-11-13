@@ -1,10 +1,11 @@
 import { TLShapePartial, Vec, createShapeId } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { TestEditor } from '../TestEditor'
 import { PerformanceMeasurer } from './PerformanceMeasurer'
 
 let editor = new TestEditor()
 
-jest.useRealTimers()
+vi.useRealTimers()
 
 describe.skip('Example perf tests', () => {
 	it('measures Editor.createShape vs Editor.createShapes', () => {
@@ -196,7 +197,7 @@ it.skip('measures dist', () => {
 		iterations: 100,
 	}).add(() => {
 		for (let i = 0; i < ITEMS - 1; i++) {
-			Vec.Dist(vecs[i], vecs[i + 1]) < MIN_DIST
+			const _result = Vec.Dist(vecs[i], vecs[i + 1]) < MIN_DIST
 		}
 	})
 	const withDistB = new PerformanceMeasurer('new', {
@@ -204,7 +205,7 @@ it.skip('measures dist', () => {
 		iterations: 100,
 	}).add(() => {
 		for (let i = 0; i < ITEMS - 1; i++) {
-			Vec.DistMin(vecs[i], vecs[i + 1], MIN_DIST)
+			const _result = Vec.DistMin(vecs[i], vecs[i + 1], MIN_DIST)
 		}
 	})
 	PerformanceMeasurer.Table(withDistA, withDistB)

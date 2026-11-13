@@ -10,6 +10,8 @@ it('zooms out and in by increments', () => {
 	const cameraOptions = editor.getCameraOptions()
 
 	// Starts at 1
+	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[4])
+	editor.zoomOut()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[3])
 	editor.zoomOut()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[2])
@@ -25,10 +27,10 @@ it('zooms out and in by increments', () => {
 it('is ignored by undo/redo', () => {
 	const cameraOptions = editor.getCameraOptions()
 
-	editor.mark()
+	editor.markHistoryStoppingPoint()
 	editor.zoomOut()
 	editor.undo()
-	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[2])
+	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[3])
 })
 
 it('does not zoom out when camera is frozen', () => {
@@ -53,6 +55,8 @@ it('zooms out and in by increments when the camera options have constraints but 
 		},
 	})
 	// Starts at 1
+	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[4])
+	editor.zoomOut()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[3])
 	editor.zoomOut()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[2])
@@ -84,6 +88,8 @@ it('zooms out and in by increments when the camera options have constraints and 
 
 	expect(editor.getInitialZoom()).toBe(0.5) // fitting the x axis
 	// Starts at 1
+	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[4] * 0.5)
+	editor.zoomOut()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[3] * 0.5)
 	editor.zoomOut()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[2] * 0.5)
@@ -111,6 +117,8 @@ it('zooms out and in by increments when the camera options have constraints and 
 
 	expect(editor.getInitialZoom()).toBe(0.25) // fitting the y axis
 	// Starts at 1
+	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[4] * 0.25)
+	editor.zoomOut()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[3] * 0.25)
 	editor.zoomOut()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[2] * 0.25)

@@ -1,9 +1,8 @@
-import { useQuickReactor } from '@tldraw/state'
+import { useQuickReactor } from '@tldraw/state-react'
 import { TLCursorType } from '@tldraw/tlschema'
 import { PI, radiansToDegrees } from '../primitives/utils'
 import { useContainer } from './useContainer'
 import { useEditor } from './useEditor'
-import { useIsDarkMode } from './useIsDarkMode'
 
 const CORNER_SVG = `<path d='m19.7432 17.0869-4.072 4.068 2.829 2.828-8.473-.013-.013-8.47 2.841 2.842 4.075-4.068 1.414-1.415-2.844-2.842h8.486v8.484l-2.83-2.827z' fill='%23fff'/><path d='m18.6826 16.7334-4.427 4.424 1.828 1.828-5.056-.016-.014-5.054 1.842 1.841 4.428-4.422 2.474-2.475-1.844-1.843h5.073v5.071l-1.83-1.828z' fill='%23000'/>`
 const EDGE_SVG = `<path d='m9 17.9907v.005l5.997 5.996.001-3.999h1.999 2.02v4l5.98-6.001-5.98-5.999.001 4.019-2.021.002h-2l.001-4.022zm1.411.003 3.587-3.588-.001 2.587h3.5 2.521v-2.585l3.565 3.586-3.564 3.585-.001-2.585h-2.521l-3.499-.001-.001 2.586z' fill='%23fff'/><path d='m17.4971 18.9932h2.521v2.586l3.565-3.586-3.565-3.585v2.605h-2.521-3.5v-2.607l-3.586 3.587 3.586 3.586v-2.587z' fill='%23000'/>`
@@ -24,8 +23,9 @@ function getCursorCss(
 	const dx = 1 * c - 1 * s
 	const dy = 1 * s + 1 * c
 
+	// A raw '#' in the colour (hex) would end the unencoded data url as a fragment.
 	return (
-		`url("data:image/svg+xml,<svg height='32' width='32' viewBox='0 0 32 32' xmlns='http://www.w3.org/2000/svg' style='color: ${color};'><defs><filter id='shadow' y='-40%' x='-40%' width='180px' height='180%' color-interpolation-filters='sRGB'><feDropShadow dx='${dx}' dy='${dy}' stdDeviation='1.2' flood-opacity='.5'/></filter></defs><g fill='none' transform='rotate(${
+		`url("data:image/svg+xml,<svg height='32' width='32' viewBox='0 0 32 32' xmlns='http://www.w3.org/2000/svg' style='color: ${encodeURIComponent(color)};'><defs><filter id='shadow' y='-40%' x='-40%' width='180px' height='180%' color-interpolation-filters='sRGB'><feDropShadow dx='${dx}' dy='${dy}' stdDeviation='1.2' flood-opacity='.5'/></filter></defs><g fill='none' transform='rotate(${
 			r + tr
 		} 16 16)${f ? ` scale(-1,-1) translate(0, -32)` : ''}' filter='url(%23shadow)'>` +
 		svg.replaceAll(`"`, `'`) +
@@ -33,21 +33,26 @@ function getCursorCss(
 	)
 }
 
-const STATIC_CURSORS = [
+// Cursors that map straight to a prerendered `--tl-cursor-*` css variable rather than a runtime svg.
+const STATIC_CURSORS = new Set<TLCursorType>([
 	'default',
 	'pointer',
 	'cross',
+	'comment',
 	'move',
 	'grab',
 	'grabbing',
 	'text',
 	'zoom-in',
 	'zoom-out',
-]
+	'rotate',
+	'resize-edge',
+	'resize-corner',
+])
 
 type CursorFunction = (rotation: number, flip: boolean, color: string) => string
 
-const CURSORS: Record<TLCursorType, CursorFunction> = {
+const DYNAMIC_CURSORS: Record<TLCursorType, CursorFunction> = {
 	none: () => 'none',
 	'ew-resize': (r, f, c) => getCursorCss(EDGE_SVG, r, 0, f, c),
 	'ns-resize': (r, f, c) => getCursorCss(EDGE_SVG, r, 90, f, c),
@@ -61,29 +66,28 @@ const CURSORS: Record<TLCursorType, CursorFunction> = {
 
 /** @public */
 export function getCursor(cursor: TLCursorType, rotation = 0, color = 'black') {
-	return CURSORS[cursor](radiansToDegrees(rotation), false, color)
+	if (STATIC_CURSORS.has(cursor)) return `var(--tl-cursor-${cursor})`
+	return DYNAMIC_CURSORS[cursor](radiansToDegrees(rotation), false, color)
 }
 
 export function useCursor() {
 	const editor = useEditor()
 	const container = useContainer()
-	const isDarkMode = useIsDarkMode()
 
 	useQuickReactor(
 		'useCursor',
 		() => {
 			const { type, rotation } = editor.getInstanceState().cursor
 
-			if (STATIC_CURSORS.includes(type)) {
-				container.style.setProperty('--tl-cursor', `var(--tl-cursor-${type})`)
+			// Static cursors don't need the theme colour, so skip reading it to avoid depending on it.
+			if (STATIC_CURSORS.has(type)) {
+				container.style.setProperty('--tl-cursor', getCursor(type))
 				return
 			}
 
-			container.style.setProperty(
-				'--tl-cursor',
-				getCursor(type, rotation, isDarkMode ? 'white' : 'black')
-			)
+			const { cursor } = editor.getCurrentTheme().colors[editor.getColorMode()]
+			container.style.setProperty('--tl-cursor', getCursor(type, rotation, cursor))
 		},
-		[editor, container, isDarkMode]
+		[editor, container]
 	)
 }

@@ -1,18 +1,19 @@
-import type { PlaywrightTestConfig } from '@playwright/test'
-import { devices } from '@playwright/test'
-import { config as _config } from 'dotenv'
 import path from 'path'
+import { devices } from '@playwright/test'
+import type { PlaywrightTestConfig } from '@playwright/test'
+import { config as _config } from 'dotenv'
 /**
  * Read environment variables from file.
  * https://github.com/motdotla/dotenv
  */
 _config()
 
+const __dirname = path.dirname(new URL(import.meta.url).pathname)
+
 /**
  * See https://playwright.dev/docs/test-configuration.
  */
 const config: PlaywrightTestConfig = {
-	testDir: './tests',
 	globalSetup: './global-setup.ts',
 	globalTeardown: './global-teardown.ts',
 	/* Maximum time one test can run for. */
@@ -24,11 +25,12 @@ const config: PlaywrightTestConfig = {
 		 */
 		timeout: 2000,
 		toHaveScreenshot: {
-			maxDiffPixelRatio: 0.001,
+			maxDiffPixelRatio: 0.0001,
 			threshold: 0.01,
 		},
 	},
-	/* Run tests in files in parallel */
+	// Run tests fully in parallel for faster execution.
+	// Clipboard tests are already skipped due to flakiness.
 	fullyParallel: true,
 	/* Fail the build on CI if you accidentally left test.only in the source code. */
 	forbidOnly: false, // !!process.env.CI,
@@ -99,12 +101,22 @@ const config: PlaywrightTestConfig = {
 	outputDir: './test-results',
 
 	/* Run your local dev server before starting the tests */
-	webServer: {
-		command: 'yarn dev',
-		port: 5420,
-		reuseExistingServer: !process.env.CI,
-		cwd: path.join(__dirname, '../../..'),
-	},
+	webServer: [
+		{
+			command: process.env.CI ? 'pnpm preview' : 'pnpm preview-examples',
+			port: 5420,
+			reuseExistingServer: !process.env.CI,
+			cwd: process.env.CI ? path.join(__dirname, '..') : path.join(__dirname, '../../..'),
+			timeout: process.env.CI ? 30_000 : 300_000,
+		},
+		{
+			command: 'pnpm dev',
+			port: 8989,
+			reuseExistingServer: !process.env.CI,
+			cwd: path.join(__dirname, '../../../apps/bemo-worker'),
+			timeout: 60_000,
+		},
+	],
 }
 
 export default config

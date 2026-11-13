@@ -11,25 +11,25 @@ it('zooms by increments', () => {
 	const cameraOptions = DEFAULT_CAMERA_OPTIONS
 
 	// Starts at 1
-	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[3])
-	editor.zoomIn()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[4])
 	editor.zoomIn()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[5])
 	editor.zoomIn()
 	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[6])
+	editor.zoomIn()
+	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[7])
 	// does not zoom out past min
 	editor.zoomIn()
-	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[6])
+	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[7])
 })
 
 it('is ignored by undo/redo', () => {
 	const cameraOptions = editor.getCameraOptions()
 
-	editor.mark()
+	editor.markHistoryStoppingPoint()
 	editor.zoomIn()
 	editor.undo()
-	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[4])
+	expect(editor.getZoomLevel()).toBe(cameraOptions.zoomSteps[5])
 })
 
 it('preserves the screen center', () => {

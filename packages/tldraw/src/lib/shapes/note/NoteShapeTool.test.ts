@@ -1,10 +1,11 @@
+import { TLNoteShape } from '@tldraw/editor'
 import { TestEditor } from '../../../test/TestEditor'
 import { NoteShapeTool } from './NoteShapeTool'
 
 let editor: TestEditor
 
 beforeEach(() => {
-	editor = new TestEditor()
+	editor = new TestEditor({ options: { adjacentShapeMargin: 20 } })
 })
 afterEach(() => {
 	editor?.dispose()
@@ -133,7 +134,7 @@ describe('When in the pointing state', () => {
 		expect(editor.getCurrentPageShapes().length).toBe(1)
 	})
 
-	it('Creates a frame and returns to frame.idle on pointer up if tool lock is enabled', () => {
+	it('Creates a note and returns to note.idle on pointer up if tool lock is enabled', () => {
 		editor.updateInstanceState({ isToolLocked: true })
 		expect(editor.getCurrentPageShapes().length).toBe(0)
 		editor.setCurrentTool('note')
@@ -142,9 +143,36 @@ describe('When in the pointing state', () => {
 		editor.expectToBeIn('note.idle')
 		expect(editor.getCurrentPageShapes().length).toBe(1)
 	})
+
+	it('Leaves nothing behind on complete before the pointer is released', () => {
+		editor.setCurrentTool('note')
+		editor.pointerDown(50, 50)
+		editor.expectToBeIn('note.pointing')
+		editor.complete()
+		editor.expectToBeIn('note.idle')
+		expect(editor.getCurrentPageShapes().length).toBe(0)
+	})
+
+	it('Does not create a note when undo is pressed mid-press', () => {
+		editor.setCurrentTool('note')
+		editor.pointerDown(50, 50)
+		editor.undo()
+		editor.expectToBeIn('note.idle')
+		expect(editor.getCurrentPageShapes().length).toBe(0)
+	})
+
+	it('Leaves nothing behind on complete before the pointer is released on a coarse pointer', () => {
+		editor.updateInstanceState({ isCoarsePointer: true })
+		editor.setCurrentTool('note')
+		editor.pointerDown(50, 50)
+		editor.expectToBeIn('note.pointing')
+		editor.complete()
+		editor.expectToBeIn('note.idle')
+		expect(editor.getCurrentPageShapes().length).toBe(0)
+	})
 })
 
-describe('Grid placement helpers', () => {
+describe('Adjacent note position helpers (sticky pits)', () => {
 	it('Creates a new sticky note outside of a sticky pit', () => {
 		editor.createShape({ type: 'note', x: 0, y: 0 })
 
@@ -203,6 +231,24 @@ describe('Grid placement helpers', () => {
 			})
 	})
 
+	it('Falls into a pit beside the note the tool just created when tool lock is on', () => {
+		editor.updateInstanceState({ isToolLocked: true })
+		editor.setCurrentTool('note').pointerMove(100, 100).click()
+		const first = editor.getLastCreatedShape()
+		expect(first).toMatchObject({ type: 'note', x: 0, y: 0 })
+		expect(editor.getSelectedShapeIds()).toEqual([first.id])
+
+		editor.pointerMove(324, 104).click()
+		const second = editor.getLastCreatedShape()
+		expect(second.id).not.toBe(first.id)
+		editor.expectShapeToMatch({
+			...second,
+			// in the pit to the right of the first note
+			x: 220,
+			y: 0,
+		})
+	})
+
 	it('Does not create a new sticky note in a sticky pit if a note is already there', () => {
 		editor
 			.createShape({ type: 'note', x: 0, y: 0 })
@@ -242,7 +288,7 @@ describe('Grid placement helpers', () => {
 
 	it('Falls into correct pit below notes with growY', () => {
 		editor.createShape({ type: 'note', x: 0, y: 0 }).updateShape({
-			...editor.getLastCreatedShape(),
+			...editor.getLastCreatedShape<TLNoteShape>(),
 			props: { growY: 100 },
 		})
 
@@ -270,5 +316,24 @@ describe('Grid placement helpers', () => {
 				y: 320,
 			})
 			.undo()
+	})
+	it('Prefers snapping to adjacent note position over the grid', () => {
+		editor.updateInstanceState({ isGridMode: true })
+
+		editor.createShape({ type: 'note', x: 2, y: 0 })
+
+		const pit = { x: 322, y: 100 }
+
+		editor
+			.setCurrentTool('note')
+			.pointerDown(0, 0)
+			.pointerMove(pit.x, pit.y)
+			.pointerUp()
+			.expectShapeToMatch({
+				...editor.getLastCreatedShape(),
+				x: pit.x - 100,
+				y: pit.y - 100,
+			})
+		expect(editor.getLastCreatedShape().x).not.toBe(220)
 	})
 })

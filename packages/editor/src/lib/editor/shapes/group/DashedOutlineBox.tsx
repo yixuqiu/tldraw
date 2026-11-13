@@ -1,4 +1,4 @@
-import { useValue } from '@tldraw/state'
+import { useValue } from '@tldraw/state-react'
 import { useEditor } from '../../../hooks/useEditor'
 import { Box } from '../../../primitives/Box'
 import { getPerfectDashProps } from '../shared/getPerfectDashProps'
@@ -6,7 +6,7 @@ import { getPerfectDashProps } from '../shared/getPerfectDashProps'
 export function DashedOutlineBox({ bounds, className }: { bounds: Box; className: string }) {
 	const editor = useEditor()
 
-	const zoomLevel = useValue('zoom level', () => editor.getZoomLevel(), [editor])
+	const zoomLevel = useValue('zoom level', () => editor.getEfficientZoomLevel(), [editor])
 
 	return (
 		<g className={className} pointerEvents="none" strokeLinecap="round" strokeLinejoin="round">

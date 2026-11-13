@@ -1,5 +1,10 @@
-import { IndexKey, TLArrowShape, Vec, createShapeId } from '@tldraw/editor'
+import { IndexKey, TLArrowShape, TLShapeId, Vec, createShapeId } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { TestEditor } from '../../../test/TestEditor'
+import { defaultShapeUtils } from '../../defaultShapeUtils'
+import { ArrowShapeUtil } from './ArrowShapeUtil'
+import { getArrowTargetState } from './arrowTargetState'
+import { getArrowBindings } from './shared'
 
 let editor: TestEditor
 
@@ -11,16 +16,21 @@ global.cancelAnimationFrame = function cancelAnimationFrame(id) {
 	clearTimeout(id)
 }
 
-jest.useFakeTimers()
+vi.useFakeTimers()
 
 const ids = {
 	box1: createShapeId('box1'),
 	box2: createShapeId('box2'),
 	box3: createShapeId('box3'),
+	arrow1: createShapeId('arrow1'),
 }
 
-beforeEach(() => {
-	editor = new TestEditor()
+function bindings(id: TLShapeId) {
+	return getArrowBindings(editor, editor.getShape(id) as TLArrowShape)
+}
+
+function init(opts?: ConstructorParameters<typeof TestEditor>[0]) {
+	editor = new TestEditor(opts)
 	editor
 		.selectAll()
 		.deleteShapes(editor.getSelectedShapeIds())
@@ -29,7 +39,9 @@ beforeEach(() => {
 			{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
 			{ id: ids.box3, type: 'geo', x: 350, y: 350, props: { w: 50, h: 50 } }, // overlapping box2, but smaller!
 		])
-})
+}
+
+beforeEach(init)
 
 it('enters the arrow state', () => {
 	editor.setCurrentTool('arrow')
@@ -50,6 +62,49 @@ describe('When in the idle state', () => {
 		editor.setCurrentTool('arrow')
 		editor.cancel()
 		editor.expectToBeIn('select.idle')
+	})
+
+	it('drops the precise hint when hovering a new target', () => {
+		editor.setCurrentTool('arrow')
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
+		editor.pointerMove(150, 150)
+		expect(getArrowTargetState(editor)).toMatchObject({
+			target: { id: ids.box1 },
+			isPrecise: false,
+		})
+
+		vi.advanceTimersByTime(1000)
+		expect(getArrowTargetState(editor)).toMatchObject({ target: { id: ids.box1 }, isPrecise: true })
+
+		// Moving quickly onto another target should publish an imprecise hint for it without
+		// waiting for another pointer event
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
+		editor.pointerMove(320, 320)
+		expect(getArrowTargetState(editor)).toMatchObject({
+			target: { id: ids.box2 },
+			isPrecise: false,
+		})
+
+		editor.pointerDown(320, 320).pointerMove(330, 330)
+		const arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
+		expect(bindings(arrow.id)).toMatchObject({
+			start: { toId: ids.box2, props: { isPrecise: false } },
+		})
+	})
+
+	it('does not carry precise mode to a target pressed without a move first', () => {
+		editor.setCurrentTool('arrow')
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
+		editor.pointerMove(150, 150)
+		vi.advanceTimersByTime(1000)
+		expect(getArrowTargetState(editor)).toMatchObject({ target: { id: ids.box1 }, isPrecise: true })
+
+		// Touch input can press on a new target without a hover move in between
+		editor.pointerDown(320, 320).pointerMove(330, 330)
+		const arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
+		expect(bindings(arrow.id)).toMatchObject({
+			start: { toId: ids.box2, props: { isPrecise: false } },
+		})
 	})
 })
 
@@ -76,6 +131,23 @@ describe('When in the pointing state', () => {
 		editor.setCurrentTool('arrow').pointerDown(0, 0).pointerMove(10, 10)
 		editor.expectToBeIn('select.dragging_handle')
 	})
+
+	it('removes the pressed arrow when switching tools before dragging', () => {
+		const shapesBefore = editor.getCurrentPageShapes().length
+		editor.setCurrentTool('arrow').pointerDown(0, 0)
+		expect(editor.getCurrentPageShapes().length).toBe(shapesBefore + 1)
+		editor.setCurrentTool('geo')
+		expect(editor.getCurrentPageShapes().length).toBe(shapesBefore)
+		editor.expectToBeIn('geo.idle')
+	})
+
+	it('removes the pressed arrow when switching to the select tool before dragging', () => {
+		const shapesBefore = editor.getCurrentPageShapes().length
+		editor.setCurrentTool('arrow').pointerDown(0, 0)
+		editor.setCurrentTool('select')
+		expect(editor.getCurrentPageShapes().length).toBe(shapesBefore)
+		editor.expectToBeIn('select.idle')
+	})
 })
 
 // This could be moved to dragging_handle
@@ -89,10 +161,11 @@ describe('When dragging the arrow', () => {
 			x: 0,
 			y: 0,
 			props: {
-				start: { type: 'point', x: 0, y: 0 },
-				end: { type: 'point', x: 10, y: 10 },
+				start: { x: 0, y: 0 },
+				end: { x: 10, y: 10 },
 			},
 		})
+		expect(bindings(arrow.id)).toMatchObject({ start: undefined, end: undefined })
 		editor.expectToBeIn('select.dragging_handle')
 	})
 
@@ -124,20 +197,86 @@ describe('When dragging the arrow', () => {
 	})
 })
 
+describe('When double-clicking an arrow handle', () => {
+	function createArrow() {
+		editor.selectAll().deleteShapes(editor.getSelectedShapeIds())
+		editor.createShapes([
+			{
+				id: ids.arrow1,
+				type: 'arrow',
+				x: 0,
+				y: 0,
+				props: {
+					start: { x: 0, y: 0 },
+					end: { x: 100, y: 100 },
+					arrowheadEnd: 'arrow',
+				},
+			},
+		])
+		editor.select(ids.arrow1)
+		return editor.getShape(ids.arrow1) as TLArrowShape
+	}
+
+	function getEndHandle() {
+		return { id: 'end', type: 'vertex' as const, index: 'a0' as IndexKey, x: 100, y: 100 }
+	}
+
+	function getEndHandleInfo() {
+		return {
+			target: 'handle' as const,
+			shape: editor.getShape(ids.arrow1) as TLArrowShape,
+			handle: getEndHandle(),
+		}
+	}
+
+	beforeEach(() => {
+		editor._transformPointerDownSpy.mockRestore()
+		editor._transformPointerUpSpy.mockRestore()
+	})
+
+	it('toggles the arrowhead on the second pointer up', () => {
+		createArrow()
+
+		editor.pointerDown(100, 100, getEndHandleInfo()).pointerUp(100, 100, getEndHandleInfo())
+		expect((editor.getShape(ids.arrow1) as TLArrowShape).props.arrowheadEnd).toBe('arrow')
+
+		editor.pointerDown(100, 100, getEndHandleInfo())
+		expect((editor.getShape(ids.arrow1) as TLArrowShape).props.arrowheadEnd).toBe('arrow')
+		editor.expectToBeIn('select.pointing_handle')
+
+		editor.pointerUp(100, 100, getEndHandleInfo())
+		expect((editor.getShape(ids.arrow1) as TLArrowShape).props.arrowheadEnd).toBe('none')
+	})
+
+	it('starts a drag instead of toggling when the second click moves', () => {
+		createArrow()
+
+		editor.pointerDown(100, 100, getEndHandleInfo()).pointerUp(100, 100, getEndHandleInfo())
+
+		editor.pointerDown(100, 100, getEndHandleInfo())
+		expect((editor.getShape(ids.arrow1) as TLArrowShape).props.arrowheadEnd).toBe('arrow')
+
+		editor.pointerMove(140, 140)
+
+		editor.expectToBeIn('select.dragging_handle')
+		expect((editor.getShape(ids.arrow1) as TLArrowShape).props.arrowheadEnd).toBe('arrow')
+	})
+})
+
 describe('When pointing a start shape', () => {
 	it('binds to the top shape', () => {
 		editor.setCurrentTool('arrow').pointerDown(375, 375)
 
 		// Set hinting ids when moving away
-		expect(editor.getHintingShapeIds().length).toBe(1)
+		expect(getArrowTargetState(editor)).not.toBeNull()
 
 		// Fake some velocity
-		editor.inputs.pointerVelocity = new Vec(1, 1)
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
 
 		editor.pointerMove(375, 500)
 
 		// Clear hinting ids when moving away
-		expect(editor.getHintingShapeIds().length).toBe(0)
+		expect(getArrowTargetState(editor)).toBeNull()
 
 		const arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
 		editor.expectShapeToMatch(arrow, {
@@ -146,15 +285,20 @@ describe('When pointing a start shape', () => {
 			x: 375,
 			y: 375,
 			props: {
-				start: {
-					type: 'binding',
+				start: { x: 0, y: 0 },
+				end: { x: 0, y: 125 },
+			},
+		})
+		expect(bindings(arrow.id)).toMatchObject({
+			start: {
+				toId: ids.box3,
+				props: {
 					isExact: false,
 					normalizedAnchor: { x: 0.5, y: 0.5 }, // center!
 					isPrecise: false,
-					boundShapeId: ids.box3,
 				},
-				end: { type: 'point', x: 0, y: 125 },
 			},
+			end: undefined,
 		})
 
 		editor.pointerUp()
@@ -172,13 +316,13 @@ describe('When pointing an end shape', () => {
 		expect(editor.getHintingShapeIds().length).toBe(0)
 
 		// Fake some velocity
-		editor.inputs.pointerVelocity = new Vec(1, 1)
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
 
 		// Move onto shape
 		editor.pointerMove(375, 375)
 
 		// Set hinting id when pointing the shape
-		expect(editor.getHintingShapeIds().length).toBe(1)
+		expect(getArrowTargetState(editor)).not.toBeNull()
 
 		const arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
 		editor.expectShapeToMatch(arrow, {
@@ -187,73 +331,67 @@ describe('When pointing an end shape', () => {
 			x: 0,
 			y: 0,
 			props: {
-				start: { type: 'point', x: 0, y: 0 },
-				end: {
-					type: 'binding',
+				start: { x: 0, y: 0 },
+			},
+		})
+		expect(bindings(arrow.id)).toMatchObject({
+			start: undefined,
+			end: {
+				toId: ids.box3,
+				props: {
 					isExact: false,
 					normalizedAnchor: { x: 0.5, y: 0.5 }, // center!
 					isPrecise: false,
-					boundShapeId: ids.box3,
 				},
 			},
 		})
 
 		// Clear hinting ids on pointer up
 		editor.pointerUp()
-		expect(editor.getHintingShapeIds().length).toBe(0)
+		expect(getArrowTargetState(editor)).toBeNull()
 	})
 
 	it('unbinds and rebinds', () => {
 		editor.setCurrentTool('arrow').pointerDown(0, 0)
 
-		editor.inputs.pointerVelocity = new Vec(1, 1)
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
 
 		editor.pointerMove(375, 375)
 
 		let arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
 
-		expect(editor.getHintingShapeIds().length).toBe(1)
+		expect(getArrowTargetState(editor)).not.toBeNull()
 
-		editor.expectShapeToMatch(arrow, {
-			id: arrow.id,
-			type: 'arrow',
-			x: 0,
-			y: 0,
-			props: {
-				start: { type: 'point', x: 0, y: 0 },
-				end: {
-					type: 'binding',
+		expect(bindings(arrow.id)).toMatchObject({
+			start: undefined,
+			end: {
+				toId: ids.box3,
+				props: {
 					isExact: false,
 					normalizedAnchor: { x: 0.5, y: 0.5 },
 					isPrecise: false,
-					boundShapeId: ids.box3,
 				},
 			},
 		})
 
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
 
-		editor.expectShapeToMatch(arrow, {
-			id: arrow.id,
-			type: 'arrow',
-			x: 0,
-			y: 0,
-			props: {
-				start: { type: 'point', x: 0, y: 0 },
-				end: {
-					type: 'binding',
+		expect(bindings(arrow.id)).toMatchObject({
+			start: undefined,
+			end: {
+				toId: ids.box3,
+				props: {
 					isExact: false,
 					normalizedAnchor: { x: 0.5, y: 0.5 },
 					isPrecise: true,
-					boundShapeId: ids.box3,
 				},
 			},
 		})
 
 		editor.pointerMove(375, 0)
-		expect(editor.getHintingShapeIds().length).toBe(0)
+		expect(getArrowTargetState(editor)).toBeNull()
 		arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
 
 		editor.expectShapeToMatch(arrow, {
@@ -262,15 +400,19 @@ describe('When pointing an end shape', () => {
 			x: 0,
 			y: 0,
 			props: {
-				start: { type: 'point', x: 0, y: 0 },
-				end: { type: 'point', x: 375, y: 0 },
+				start: { x: 0, y: 0 },
+				end: { x: 375, y: 0 },
 			},
+		})
+		expect(bindings(arrow.id)).toMatchObject({
+			start: undefined,
+			end: undefined,
 		})
 
 		// Build up some velocity
-		editor.inputs.pointerVelocity = new Vec(1, 1)
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
 		editor.pointerMove(325, 325)
-		expect(editor.getHintingShapeIds().length).toBe(1)
+		expect(getArrowTargetState(editor)).not.toBeNull()
 
 		arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
 
@@ -280,64 +422,129 @@ describe('When pointing an end shape', () => {
 			x: 0,
 			y: 0,
 			props: {
-				start: { type: 'point', x: 0, y: 0 },
-				end: {
-					type: 'binding',
+				start: { x: 0, y: 0 },
+			},
+		})
+		expect(bindings(arrow.id)).toMatchObject({
+			start: undefined,
+			end: {
+				toId: ids.box2,
+				props: {
 					isExact: false,
-					normalizedAnchor: { x: 0.25, y: 0.25 }, // center!
+					normalizedAnchor: { x: 0.5, y: 0.5 }, // center!
 					isPrecise: false,
-					boundShapeId: ids.box2,
 				},
 			},
 		})
 
 		// Give time for the velocity to die down
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
 
-		editor.expectShapeToMatch(arrow, {
-			id: arrow.id,
-			type: 'arrow',
-			x: 0,
-			y: 0,
-			props: {
-				start: { type: 'point', x: 0, y: 0 },
-				end: {
-					type: 'binding',
+		expect(bindings(arrow.id)).toMatchObject({
+			start: undefined,
+			end: {
+				toId: ids.box2,
+				props: {
 					isExact: false,
 					normalizedAnchor: { x: 0.25, y: 0.25 }, // precise!
-					boundShapeId: ids.box2,
+					isPrecise: true,
 				},
 			},
 		})
 
 		editor.pointerUp()
-		expect(editor.getHintingShapeIds().length).toBe(0)
+		expect(getArrowTargetState(editor)).toBeNull()
+	})
+
+	it('respects shouldIgnoreTargets option when ctrl key is held', () => {
+		editor.setCurrentTool('arrow')
+
+		// Test without ctrl key - should bind normally
+		editor.pointerDown(0, 0)
+		editor.pointerMove(375, 375) // Move to box3
+
+		let arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
+		expect(bindings(arrow.id)).toMatchObject({
+			end: {
+				toId: ids.box3,
+			},
+		})
+
+		editor.pointerUp()
+		editor.setCurrentTool('arrow')
+
+		// Test with ctrl key - should not bind
+		editor.keyDown('Control')
+		editor.pointerDown(0, 0)
+		editor.pointerMove(375, 375) // Move to box3
+
+		arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
+		expect(bindings(arrow.id)).toMatchObject({
+			end: undefined,
+		})
+
+		editor.pointerUp()
+		editor.keyUp('Control')
+	})
+
+	it('respects shouldBeExact option when alt key is held', () => {
+		editor.setCurrentTool('arrow')
+
+		// Test without alt key - should not be exact
+		editor.pointerDown(0, 0)
+		editor.pointerMove(375, 375) // Move to box3
+
+		let arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
+		expect(bindings(arrow.id)).toMatchObject({
+			end: {
+				toId: ids.box3,
+				props: {
+					isExact: false,
+				},
+			},
+		})
+
+		editor.pointerUp()
+		editor.setCurrentTool('arrow')
+
+		// Test with alt key - should be exact
+		editor.keyDown('Alt')
+		editor.pointerDown(0, 0)
+		editor.pointerMove(375, 375) // Move to box3
+
+		arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
+		expect(bindings(arrow.id)).toMatchObject({
+			end: {
+				toId: ids.box3,
+				props: {
+					isExact: true,
+				},
+			},
+		})
+
+		editor.pointerUp()
+		editor.keyUp('Alt')
 	})
 
 	it('begins imprecise when moving quickly', () => {
 		editor.setCurrentTool('arrow').pointerDown(0, 0)
-		editor.inputs.pointerVelocity = new Vec(1, 1)
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
 		editor.pointerMove(370, 370)
 
 		const arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
 
-		expect(editor.getHintingShapeIds().length).toBe(1)
+		expect(getArrowTargetState(editor)).not.toBeNull()
 
-		editor.expectShapeToMatch(arrow, {
-			id: arrow.id,
-			type: 'arrow',
-			x: 0,
-			y: 0,
-			props: {
-				start: { type: 'point', x: 0, y: 0 },
-				end: {
-					type: 'binding',
+		expect(bindings(arrow.id)).toMatchObject({
+			start: undefined,
+			end: {
+				toId: ids.box3,
+				props: {
 					isExact: false,
-					normalizedAnchor: { x: 0.4, y: 0.4 },
+					normalizedAnchor: { x: 0.5, y: 0.5 },
 					isPrecise: false,
-					boundShapeId: ids.box3,
 				},
 			},
 		})
@@ -348,39 +555,34 @@ describe('When pointing an end shape', () => {
 
 		let arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
 
-		editor.expectShapeToMatch(arrow, {
-			id: arrow.id,
-			type: 'arrow',
-			x: 0,
-			y: 0,
-			props: {
-				start: { type: 'point', x: 0, y: 0 },
-				end: { type: 'point', x: 2, y: 0 },
-			},
+		expect(bindings(arrow.id)).toMatchObject({
+			start: undefined,
+			end: undefined,
 		})
 
-		expect(editor.getHintingShapeIds().length).toBe(0)
+		expect(getArrowTargetState(editor)).toBeNull()
 
-		editor.inputs.pointerVelocity = new Vec(0.001, 0.001)
+		editor.inputs.setPointerVelocity(new Vec(0.001, 0.001))
 		editor.pointerMove(375, 375)
 
 		arrow = editor.getCurrentPageShapes()[editor.getCurrentPageShapes().length - 1]
 
-		expect(editor.getHintingShapeIds().length).toBe(1)
+		expect(getArrowTargetState(editor)).not.toBeNull()
 
 		editor.expectShapeToMatch(arrow, {
 			id: arrow.id,
 			type: 'arrow',
 			x: 0,
 			y: 0,
-			props: {
-				start: { type: 'point', x: 0, y: 0 },
-				end: {
-					type: 'binding',
+		})
+		expect(bindings(arrow.id)).toMatchObject({
+			start: undefined,
+			end: {
+				toId: ids.box3,
+				props: {
 					isExact: false,
 					normalizedAnchor: { x: 0.5, y: 0.5 },
 					isPrecise: true,
-					boundShapeId: ids.box3,
 				},
 			},
 		})
@@ -423,8 +625,8 @@ describe('reparenting issue', () => {
 		editor.expectShapeToMatch({
 			id: arrowId,
 			index: 'a3V' as IndexKey,
-			props: { end: { boundShapeId: ids.box2 } },
 		}) // between box 2 (a3) and 3 (a4)
+		expect(bindings(arrowId)).toMatchObject({ end: { toId: ids.box2 } })
 
 		expect(editor.getShapeAtPoint({ x: 350, y: 350 }, { hitInside: true })).toMatchObject({
 			id: ids.box3,
@@ -434,8 +636,8 @@ describe('reparenting issue', () => {
 		editor.expectShapeToMatch({
 			id: arrowId,
 			index: 'a5' as IndexKey,
-			props: { end: { boundShapeId: ids.box3 } },
 		}) // above box 3 (a4)
+		expect(bindings(arrowId)).toMatchObject({ end: { toId: ids.box3 } })
 
 		editor.pointerMove(150, 150) // over box 1
 		editor.expectShapeToMatch({ id: arrowId, index: 'a2V' as IndexKey }) // between box 1 (a2) and box 3 (a3)
@@ -465,14 +667,14 @@ describe('reparenting issue', () => {
 				type: 'arrow',
 				x: 0,
 				y: 0,
-				props: { start: { type: 'point', x: 0, y: 0 }, end: { type: 'point', x: 100, y: 100 } },
+				props: { start: { x: 0, y: 0 }, end: { x: 100, y: 100 } },
 			},
 			{
 				id: arrow2Id,
 				type: 'arrow',
 				x: 0,
 				y: 0,
-				props: { start: { type: 'point', x: 0, y: 0 }, end: { type: 'point', x: 100, y: 100 } },
+				props: { start: { x: 0, y: 0 }, end: { x: 100, y: 100 } },
 			},
 		])
 
@@ -507,6 +709,96 @@ describe('reparenting issue', () => {
 	})
 })
 
+describe('precision timeout configuration', () => {
+	it('uses a timeout when dragging arrow handles', () => {
+		// Create an arrow first
+
+		editor.setCurrentTool('arrow').pointerDown(0, 0)
+		// Use high velocity to avoid precise mode immediately
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
+		editor.pointerMove(100, 100)
+
+		const arrow = editor.getCurrentPageShapes()[
+			editor.getCurrentPageShapes().length - 1
+		] as TLArrowShape
+
+		editor.expectToBeIn('select.dragging_handle')
+
+		expect(bindings(arrow.id)).toMatchObject({
+			end: {
+				toId: ids.box1,
+				props: {
+					isPrecise: false,
+				},
+			},
+		})
+
+		vi.advanceTimersByTime(1000)
+
+		expect(bindings(arrow.id)).toMatchObject({
+			end: {
+				toId: ids.box1,
+				props: {
+					isPrecise: true,
+				},
+			},
+		})
+	})
+
+	it('allows configuring the pointingPreciseTimeout', () => {
+		init({
+			shapeUtils: [
+				...defaultShapeUtils.map((s) =>
+					s.type === 'arrow' ? ArrowShapeUtil.configure({ pointingPreciseTimeout: 2000 }) : s
+				),
+			],
+		})
+		// Create an arrow first
+
+		editor.setCurrentTool('arrow').pointerDown(0, 0)
+		// Use high velocity to avoid precise mode immediately
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
+		editor.pointerMove(100, 100)
+
+		const arrow = editor.getCurrentPageShapes()[
+			editor.getCurrentPageShapes().length - 1
+		] as TLArrowShape
+
+		editor.expectToBeIn('select.dragging_handle')
+
+		expect(bindings(arrow.id)).toMatchObject({
+			end: {
+				toId: ids.box1,
+				props: {
+					isPrecise: false,
+				},
+			},
+		})
+
+		vi.advanceTimersByTime(1000)
+
+		expect(bindings(arrow.id)).toMatchObject({
+			end: {
+				toId: ids.box1,
+				props: {
+					isPrecise: false,
+				},
+			},
+		})
+
+		vi.advanceTimersByTime(1000)
+
+		expect(bindings(arrow.id)).toMatchObject({
+			end: {
+				toId: ids.box1,
+				props: {
+					isPrecise: true,
+				},
+			},
+		})
+	})
+})
+
 describe('line bug', () => {
 	it('works as expected when binding to a straight line', () => {
 		editor.selectAll().deleteShapes(editor.getSelectedShapeIds())
@@ -530,8 +822,8 @@ describe('line bug', () => {
 			.keyUp('Shift')
 
 		expect(editor.getCurrentPageShapes().length).toBe(2)
-		const arrow = editor.getCurrentPageShapes()[1] as TLArrowShape
-		expect(arrow.props.end.type).toBe('binding')
+		const bindings = getArrowBindings(editor, editor.getCurrentPageShapes()[1] as TLArrowShape)
+		expect(bindings.end).toBeDefined()
 	})
 
 	it('works as expected when binding to a straight horizontal line', () => {
@@ -552,7 +844,7 @@ describe('line bug', () => {
 			.pointerUp()
 
 		expect(editor.getCurrentPageShapes().length).toBe(2)
-		const arrow = editor.getCurrentPageShapes()[1] as TLArrowShape
-		expect(arrow.props.end.type).toBe('binding')
+		const bindings = getArrowBindings(editor, editor.getCurrentPageShapes()[1] as TLArrowShape)
+		expect(bindings.end).toBeDefined()
 	})
 })

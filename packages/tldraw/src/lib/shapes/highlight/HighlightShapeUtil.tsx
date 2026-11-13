@@ -1,30 +1,55 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 import {
 	Circle2d,
+	Editor,
 	Polygon2d,
 	SVGContainer,
 	ShapeUtil,
-	TLDrawShapeSegment,
+	SvgExportContext,
 	TLHighlightShape,
-	TLOnResizeHandler,
+	TLHighlightShapeProps,
+	TLResizeInfo,
 	VecLike,
+	b64Vecs,
+	debugFlags,
+	getColorValue,
 	highlightShapeMigrations,
 	highlightShapeProps,
 	last,
+	lerp,
 	rng,
+	tlenvReactive,
+	useColorMode,
+	useValue,
 } from '@tldraw/editor'
-import { getHighlightFreehandSettings, getPointsFromSegments } from '../draw/getPath'
-import { useDefaultColorTheme } from '../shared/ShapeFill'
+import { getHighlightFreehandSettings, getPointsFromDrawSegments } from '../draw/getPath'
 import { FONT_SIZES } from '../shared/default-shape-constants'
-import { getStrokeOutlinePoints } from '../shared/freehand/getStrokeOutlinePoints'
+import { getStroke } from '../shared/freehand/getStroke'
 import { getStrokePoints } from '../shared/freehand/getStrokePoints'
-import { setStrokePointRadii } from '../shared/freehand/setStrokePointRadii'
 import { getSvgPathFromStrokePoints } from '../shared/freehand/svg'
-import { useColorSpace } from '../shared/useColorSpace'
-import { useForceSolid } from '../shared/useForceSolid'
+import type { ShapeOptionsWithDisplayValues } from '../shared/getDisplayValues'
+import { getDisplayValues } from '../shared/getDisplayValues'
+import { interpolateSegments } from '../shared/interpolate-props'
 
-const OVERLAY_OPACITY = 0.35
-const UNDERLAY_OPACITY = 0.82
+/** @public */
+export interface HighlightShapeUtilDisplayValues {
+	strokeColor: string
+	strokeWidth: number
+	underlayOpacity: number
+	overlayOpacity: number
+}
+
+/** @public */
+export interface HighlightShapeOptions extends ShapeOptionsWithDisplayValues<
+	TLHighlightShape,
+	HighlightShapeUtilDisplayValues
+> {
+	/**
+	 * The maximum number of points in a line before the draw tool will begin a new shape.
+	 * A higher number will lead to poor performance while drawing very long lines.
+	 */
+	readonly maxPointsPerShape: number
+}
 
 /** @public */
 export class HighlightShapeUtil extends ShapeUtil<TLHighlightShape> {
@@ -32,9 +57,36 @@ export class HighlightShapeUtil extends ShapeUtil<TLHighlightShape> {
 	static override props = highlightShapeProps
 	static override migrations = highlightShapeMigrations
 
-	override hideResizeHandles = (shape: TLHighlightShape) => getIsDot(shape)
-	override hideRotateHandle = (shape: TLHighlightShape) => getIsDot(shape)
-	override hideSelectionBoundsFg = (shape: TLHighlightShape) => getIsDot(shape)
+	override options: HighlightShapeOptions = {
+		maxPointsPerShape: 600,
+		getDefaultDisplayValues(_editor, shape, theme, colorMode): HighlightShapeUtilDisplayValues {
+			const { color, size } = shape.props
+			const colors = theme.colors[colorMode]
+			const useP3 = !debugFlags.forceSrgb.get() && tlenvReactive.get().supportsP3ColorSpace
+			const strokeColor = useP3
+				? getColorValue(colors, color, 'highlightP3')
+				: getColorValue(colors, color, 'highlightSrgb')
+			return {
+				strokeColor,
+				strokeWidth: theme.fontSize * FONT_SIZES[size] * 1.12,
+				underlayOpacity: 0.82,
+				overlayOpacity: 0.35,
+			}
+		},
+		getCustomDisplayValues(): Partial<HighlightShapeUtilDisplayValues> {
+			return {}
+		},
+	}
+
+	override hideResizeHandles(shape: TLHighlightShape) {
+		return getIsDot(shape)
+	}
+	override hideRotateHandle(shape: TLHighlightShape) {
+		return getIsDot(shape)
+	}
+	override hideSelectionBoundsFg(shape: TLHighlightShape) {
+		return getIsDot(shape)
+	}
 
 	override getDefaultProps(): TLHighlightShape['props'] {
 		return {
@@ -43,12 +95,17 @@ export class HighlightShapeUtil extends ShapeUtil<TLHighlightShape> {
 			size: 'm',
 			isComplete: false,
 			isPen: false,
+			scale: 1,
+			scaleX: 1,
+			scaleY: 1,
 		}
 	}
 
 	getGeometry(shape: TLHighlightShape) {
-		const strokeWidth = getStrokeWidth(shape)
-		if (getIsDot(shape)) {
+		const dv = getDisplayValues(this, shape)
+		const strokeWidth = dv.strokeWidth * shape.props.scale
+		// No segments yet (the default props): treat it as a dot so geometry lookups don't throw.
+		if (getIsDot(shape) || shape.props.segments.length === 0) {
 			return new Circle2d({
 				x: -strokeWidth / 2,
 				y: -strokeWidth / 2,
@@ -57,101 +114,140 @@ export class HighlightShapeUtil extends ShapeUtil<TLHighlightShape> {
 			})
 		}
 
-		const { strokePoints, sw } = getHighlightStrokePoints(shape, strokeWidth, true)
-		const opts = getHighlightFreehandSettings({ strokeWidth: sw, showAsComplete: true })
-		setStrokePointRadii(strokePoints, opts)
+		const allPointsFromSegments = getPointsFromDrawSegments(
+			shape.props.segments,
+			shape.props.scaleX,
+			shape.props.scaleY
+		)
+		const showAsComplete = shape.props.isComplete || last(shape.props.segments)?.type === 'straight'
+		const opts = getHighlightFreehandSettings({ strokeWidth, showAsComplete })
 
 		return new Polygon2d({
-			points: getStrokeOutlinePoints(strokePoints, opts),
+			points: getStroke(allPointsFromSegments, opts),
 			isFilled: true,
 		})
 	}
 
 	component(shape: TLHighlightShape) {
+		const dv = getDisplayValues(this, shape)
+		const sw = dv.strokeWidth * shape.props.scale
+		const forceSolid = useHighlightForceSolid(this.editor, sw)
+
 		return (
-			<SVGContainer id={shape.id} style={{ opacity: OVERLAY_OPACITY }}>
-				<HighlightRenderer strokeWidth={getStrokeWidth(shape)} shape={shape} />
+			<SVGContainer>
+				<HighlightRenderer
+					shape={shape}
+					forceSolid={forceSolid}
+					strokeWidth={sw}
+					opacity={dv.overlayOpacity}
+					strokeColor={dv.strokeColor}
+				/>
 			</SVGContainer>
 		)
 	}
 
 	override backgroundComponent(shape: TLHighlightShape) {
+		const colorMode = useColorMode()
+		const dv = getDisplayValues(this, shape, colorMode)
+		const sw = dv.strokeWidth * shape.props.scale
+		const forceSolid = useHighlightForceSolid(this.editor, sw)
 		return (
-			<SVGContainer id={shape.id} style={{ opacity: UNDERLAY_OPACITY }}>
-				<HighlightRenderer strokeWidth={getStrokeWidth(shape)} shape={shape} />
+			<SVGContainer>
+				<HighlightRenderer
+					shape={shape}
+					forceSolid={forceSolid}
+					strokeWidth={sw}
+					opacity={dv.underlayOpacity}
+					strokeColor={dv.strokeColor}
+				/>
 			</SVGContainer>
 		)
 	}
 
-	indicator(shape: TLHighlightShape) {
-		const forceSolid = useForceSolid()
-		const strokeWidth = getStrokeWidth(shape)
-		const allPointsFromSegments = getPointsFromSegments(shape.props.segments)
+	override getIndicatorPath(shape: TLHighlightShape): Path2D {
+		const dv = getDisplayValues(this, shape)
+		const strokeWidth = dv.strokeWidth * shape.props.scale
+		const zoomLevel = this.editor.getEfficientZoomLevel()
+		const forceSolid = strokeWidth / zoomLevel < 1.5
 
-		let sw = strokeWidth
-		if (!forceSolid && !shape.props.isPen && allPointsFromSegments.length === 1) {
-			sw += rng(shape.id)() * (strokeWidth / 6)
-		}
-
-		const showAsComplete = shape.props.isComplete || last(shape.props.segments)?.type === 'straight'
-		const options = getHighlightFreehandSettings({
-			strokeWidth,
-			showAsComplete,
-		})
-		const strokePoints = getStrokePoints(allPointsFromSegments, options)
+		const { strokePoints, sw } = getHighlightStrokePoints(shape, strokeWidth, forceSolid)
+		const allPointsFromSegments = getPointsFromDrawSegments(
+			shape.props.segments,
+			shape.props.scaleX,
+			shape.props.scaleY
+		)
 
 		let strokePath
 		if (strokePoints.length < 2) {
-			strokePath = getIndicatorDot(allPointsFromSegments[0], sw)
+			strokePath = getIndicatorDot(allPointsFromSegments[0] ?? { x: 0, y: 0 }, sw)
 		} else {
 			strokePath = getSvgPathFromStrokePoints(strokePoints, false)
 		}
 
-		return <path d={strokePath} />
+		return new Path2D(strokePath)
 	}
 
-	override toSvg(shape: TLHighlightShape) {
+	override toSvg(shape: TLHighlightShape, ctx: SvgExportContext) {
+		const dv = getDisplayValues(this, shape, ctx.colorMode)
+		const strokeWidth = dv.strokeWidth * shape.props.scale
+		const forceSolid = strokeWidth < 1.5
+		const scaleFactor = 1 / shape.props.scale
 		return (
-			<HighlightRenderer
-				strokeWidth={getStrokeWidth(shape)}
-				shape={shape}
-				opacity={OVERLAY_OPACITY}
-			/>
+			<g transform={`scale(${scaleFactor})`}>
+				<HighlightRenderer
+					forceSolid={forceSolid}
+					strokeWidth={strokeWidth}
+					shape={shape}
+					opacity={dv.overlayOpacity}
+					strokeColor={dv.strokeColor}
+				/>
+			</g>
 		)
 	}
 
-	override toBackgroundSvg(shape: TLHighlightShape) {
+	override toBackgroundSvg(shape: TLHighlightShape, ctx: SvgExportContext) {
+		const dv = getDisplayValues(this, shape, ctx.colorMode)
+		const strokeWidth = dv.strokeWidth * shape.props.scale
+		const forceSolid = strokeWidth < 1.5
+		const scaleFactor = 1 / shape.props.scale
 		return (
-			<HighlightRenderer
-				strokeWidth={getStrokeWidth(shape)}
-				shape={shape}
-				opacity={UNDERLAY_OPACITY}
-			/>
+			<g transform={`scale(${scaleFactor})`}>
+				<HighlightRenderer
+					forceSolid={forceSolid}
+					strokeWidth={strokeWidth}
+					shape={shape}
+					opacity={dv.underlayOpacity}
+					strokeColor={dv.strokeColor}
+				/>
+			</g>
 		)
 	}
 
-	override onResize: TLOnResizeHandler<TLHighlightShape> = (shape, info) => {
-		const { scaleX, scaleY } = info
+	override canFlip() {
+		return true
+	}
 
-		const newSegments: TLDrawShapeSegment[] = []
-
-		for (const segment of shape.props.segments) {
-			newSegments.push({
-				...segment,
-				points: segment.points.map(({ x, y, z }) => {
-					return {
-						x: scaleX * x,
-						y: scaleY * y,
-						z,
-					}
-				}),
-			})
-		}
+	override onResize(shape: TLHighlightShape, info: TLResizeInfo<TLHighlightShape>) {
+		const newScaleX = info.scaleX * shape.props.scaleX
+		const newScaleY = info.scaleY * shape.props.scaleY
+		if (newScaleX === 0 || newScaleY === 0) return
 
 		return {
 			props: {
-				segments: newSegments,
+				scaleX: newScaleX,
+				scaleY: newScaleY,
 			},
+		}
+	}
+	override getInterpolatedProps(
+		startShape: TLHighlightShape,
+		endShape: TLHighlightShape,
+		t: number
+	): TLHighlightShapeProps {
+		return {
+			...(t > 0.5 ? endShape.props : startShape.props),
+			segments: interpolateSegments(startShape.props.segments, endShape.props.segments, t),
+			scale: lerp(startShape.props.scale, endShape.props.scale, t),
 		}
 	}
 }
@@ -175,7 +271,11 @@ function getHighlightStrokePoints(
 	strokeWidth: number,
 	forceSolid: boolean
 ) {
-	const allPointsFromSegments = getPointsFromSegments(shape.props.segments)
+	const allPointsFromSegments = getPointsFromDrawSegments(
+		shape.props.segments,
+		shape.props.scaleX,
+		shape.props.scaleY
+	)
 	const showAsComplete = shape.props.isComplete || last(shape.props.segments)?.type === 'straight'
 
 	let sw = strokeWidth
@@ -187,36 +287,54 @@ function getHighlightStrokePoints(
 		strokeWidth: sw,
 		showAsComplete,
 	})
+
 	const strokePoints = getStrokePoints(allPointsFromSegments, options)
 
 	return { strokePoints, sw }
 }
 
-function getHighlightSvgPath(shape: TLHighlightShape, strokeWidth: number, forceSolid: boolean) {
-	const { strokePoints, sw } = getHighlightStrokePoints(shape, strokeWidth, forceSolid)
-
-	const solidStrokePath =
-		strokePoints.length > 1
-			? getSvgPathFromStrokePoints(strokePoints, false)
-			: getShapeDot(shape.props.segments[0].points[0])
-
-	return { solidStrokePath, sw }
+function getIsDot(shape: TLHighlightShape) {
+	// A dot is a single-point segment. isSinglePoint knows the per-encoding length
+	// (and takes the segment's dim), so this stays correct for both 2D and 3D paths.
+	const segment = shape.props.segments[0]
+	return shape.props.segments.length === 1 && b64Vecs.isSinglePoint(segment.path, segment.dim)
 }
 
 function HighlightRenderer({
 	strokeWidth,
+	forceSolid,
 	shape,
 	opacity,
+	strokeColor,
 }: {
 	strokeWidth: number
+	forceSolid: boolean
 	shape: TLHighlightShape
-	opacity?: number
+	opacity: number
+	strokeColor: string
 }) {
-	const theme = useDefaultColorTheme()
-	const forceSolid = useForceSolid()
-	const { solidStrokePath, sw } = getHighlightSvgPath(shape, strokeWidth, forceSolid)
-	const colorSpace = useColorSpace()
-	const color = theme[shape.props.color].highlight[colorSpace]
+	const allPointsFromSegments = getPointsFromDrawSegments(
+		shape.props.segments,
+		shape.props.scaleX,
+		shape.props.scaleY
+	)
+
+	let sw = strokeWidth
+	if (!forceSolid && !shape.props.isPen && allPointsFromSegments.length === 1) {
+		sw += rng(shape.id)() * (sw / 6)
+	}
+
+	const options = getHighlightFreehandSettings({
+		strokeWidth: sw,
+		showAsComplete: shape.props.isComplete || last(shape.props.segments)?.type === 'straight',
+	})
+
+	const strokePoints = getStrokePoints(allPointsFromSegments, options)
+
+	const solidStrokePath =
+		strokePoints.length > 1
+			? getSvgPathFromStrokePoints(strokePoints, false)
+			: getShapeDot(allPointsFromSegments[0] ?? { x: 0, y: 0 })
 
 	return (
 		<path
@@ -224,17 +342,20 @@ function HighlightRenderer({
 			strokeLinecap="round"
 			fill="none"
 			pointerEvents="all"
-			stroke={color}
+			stroke={strokeColor}
 			strokeWidth={sw}
 			opacity={opacity}
 		/>
 	)
 }
 
-function getStrokeWidth(shape: TLHighlightShape) {
-	return FONT_SIZES[shape.props.size] * 1.12
-}
-
-function getIsDot(shape: TLHighlightShape) {
-	return shape.props.segments.length === 1 && shape.props.segments[0].points.length < 2
+function useHighlightForceSolid(editor: Editor, scaledStrokeWidth: number) {
+	return useValue(
+		'forceSolid',
+		() => {
+			const zoomLevel = editor.getEfficientZoomLevel()
+			return scaledStrokeWidth / zoomLevel < 1.5
+		},
+		[editor, scaledStrokeWidth]
+	)
 }

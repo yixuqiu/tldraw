@@ -1,11 +1,20 @@
-import { Box, DEFAULT_CAMERA_OPTIONS, Vec } from '@tldraw/editor'
+import { Box, DEFAULT_CAMERA_OPTIONS, Vec, createShapeId, last } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { TestEditor } from '../TestEditor'
 
 let editor: TestEditor
 
 beforeEach(() => {
-	editor = new TestEditor()
+	editor = new TestEditor({
+		options: {
+			edgeScrollDelay: 0,
+			edgeScrollEaseDuration: 0,
+		},
+	})
 	editor.updateViewportScreenBounds(new Box(0, 0, 1600, 900))
+	editor.user.updateUserPreferences({ inputMode: null })
+	editor._transformPointerDownSpy.mockRestore()
+	editor._transformPointerUpSpy.mockRestore()
 })
 
 const wheelEvent = {
@@ -16,18 +25,266 @@ const wheelEvent = {
 	shiftKey: false,
 	altKey: false,
 	ctrlKey: false,
+	metaKey: false,
+	accelKey: false,
+} as const
+
+const pinchEvent = {
+	type: 'pinch',
+	name: 'pinch',
+	delta: new Vec(0, 0, 1),
+	point: new Vec(0, 0),
+	shiftKey: false,
+	altKey: false,
+	ctrlKey: false,
+	metaKey: false,
+	accelKey: false,
+} as const
+
+const keyBoardEvent = {
+	type: 'keyboard',
+	name: 'key_down',
+	key: ' ',
+	code: 'Space',
+	shiftKey: false,
+	altKey: false,
+	ctrlKey: false,
+	metaKey: false,
+	accelKey: false,
 } as const
 
 describe('With default options', () => {
 	beforeEach(() => {
 		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS })
 	})
+	it('pans', () => {
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		editor
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch_start',
+			})
+			.forceTick()
+		editor
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch',
+				delta: new Vec(100, -10),
+			})
+			.forceTick()
+		editor
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch_end',
+			})
+			.forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 100, y: -10, z: 1 })
+	})
+	it('pans with wheel', () => {
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		editor.dispatch({ ...wheelEvent, delta: new Vec(5, 10) }).forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 5, y: 10, z: 1 })
+	})
+	it('zooms with wheel', () => {
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		// zoom in 10%
+		editor.dispatch({ ...wheelEvent, delta: new Vec(0, 0, -0.1), ctrlKey: true }).forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 0.9 })
+		// zoom out 10%
+		editor.dispatch({ ...wheelEvent, delta: new Vec(0, 0, 0.1), ctrlKey: true }).forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 0.99 })
+	})
+	it('pinch zooms', () => {
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		// zoom in
+		editor
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch_start',
+			})
+			.forceTick()
+		editor
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch',
+				point: new Vec(0, 0, 0.5),
+			})
+			.forceTick()
+		editor
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch_end',
+			})
+			.forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 0.5 })
+		// zoom out
+		editor
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch_start',
+			})
+			.forceTick()
+		editor
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch',
+				point: new Vec(0, 0, 1),
+			})
+			.forceTick()
+		editor
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch_end',
+			})
+			.forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+	})
+})
 
-	it.todo('pans')
-	it.todo('zooms in')
-	it.todo('zooms out')
-	it.todo('resets zoom')
-	it.todo('pans with wheel')
+describe('Zoom clamping preserves the focal point', () => {
+	beforeEach(() => {
+		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS })
+	})
+
+	// An off-center screen point, so a center-preserving clamp would shift it.
+	const cursor = { x: 200, y: 150 }
+
+	it('keeps the point under the cursor fixed when wheel zooming out past the min', () => {
+		editor.setCamera({ x: 0, y: 0, z: 0.06 }) // just above the 0.05 min
+		editor.pointerMove(cursor.x, cursor.y)
+		const before = editor.screenToPage(cursor)
+
+		// Each event halves the zoom, overshooting the min, then pins at it.
+		for (let i = 0; i < 4; i++) {
+			editor
+				.dispatch({
+					...wheelEvent,
+					point: new Vec(cursor.x, cursor.y),
+					delta: new Vec(0, 0, -0.5),
+					ctrlKey: true,
+				})
+				.forceTick()
+		}
+
+		expect(editor.getZoomLevel()).toBe(DEFAULT_CAMERA_OPTIONS.zoomSteps[0])
+		const after = editor.screenToPage(cursor)
+		expect(after.x).toBeCloseTo(before.x, 4)
+		expect(after.y).toBeCloseTo(before.y, 4)
+	})
+
+	it('keeps the point under the cursor fixed when wheel zooming in past the max', () => {
+		const max = last(DEFAULT_CAMERA_OPTIONS.zoomSteps)!
+		editor.setCamera({ x: 0, y: 0, z: max * 0.9 }) // just below the max
+		editor.pointerMove(cursor.x, cursor.y)
+		const before = editor.screenToPage(cursor)
+
+		for (let i = 0; i < 4; i++) {
+			editor
+				.dispatch({
+					...wheelEvent,
+					point: new Vec(cursor.x, cursor.y),
+					delta: new Vec(0, 0, 0.5),
+					ctrlKey: true,
+				})
+				.forceTick()
+		}
+
+		expect(editor.getZoomLevel()).toBe(max)
+		const after = editor.screenToPage(cursor)
+		expect(after.x).toBeCloseTo(before.x, 4)
+		expect(after.y).toBeCloseTo(before.y, 4)
+	})
+
+	it('does not translate the camera once zoom is pinned at the min', () => {
+		const min = DEFAULT_CAMERA_OPTIONS.zoomSteps[0]
+		editor.setCamera({ x: 0, y: 0, z: min })
+		editor.pointerMove(cursor.x, cursor.y)
+		const camera = { ...editor.getCamera() }
+
+		for (let i = 0; i < 3; i++) {
+			editor
+				.dispatch({
+					...wheelEvent,
+					point: new Vec(cursor.x, cursor.y),
+					delta: new Vec(0, 0, -0.5),
+					ctrlKey: true,
+				})
+				.forceTick()
+		}
+
+		expect(editor.getCamera()).toMatchObject({ x: camera.x, y: camera.y, z: min })
+	})
+
+	it('keeps the focal point fixed when setCamera requests an out-of-range zoom', () => {
+		// Mimic a cursor-anchored zoom request that overshoots the min: choose
+		// x/y so screen point (200, 150) stays fixed at the requested zoom.
+		const px = cursor.x
+		const py = cursor.y
+		editor.setCamera({ x: 0, y: 0, z: 0.06 })
+		const { x: cx, y: cy, z: cz } = editor.getCamera()
+		const before = editor.screenToPage(cursor)
+
+		const requestedZoom = 0.02 // below the 0.05 min
+		editor.setCamera(
+			new Vec(cx + px / requestedZoom - px / cz, cy + py / requestedZoom - py / cz, requestedZoom),
+			{ immediate: true }
+		)
+
+		expect(editor.getZoomLevel()).toBe(DEFAULT_CAMERA_OPTIONS.zoomSteps[0])
+		const after = editor.screenToPage(cursor)
+		expect(after.x).toBeCloseTo(before.x, 4)
+		expect(after.y).toBeCloseTo(before.y, 4)
+	})
+})
+
+describe('Non-finite camera values', () => {
+	beforeEach(() => {
+		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS })
+	})
+
+	it('rejects a non-finite x', () => {
+		expect(() => editor.setCamera({ x: NaN, y: 0, z: 1 })).toThrow()
+	})
+
+	it('rejects a non-finite y', () => {
+		expect(() => editor.setCamera({ x: 0, y: Infinity, z: 1 })).toThrow()
+	})
+
+	it('rejects a non-finite z', () => {
+		expect(() => editor.setCamera({ x: 0, y: 0, z: NaN })).toThrow()
+	})
+
+	// Every internal camera mover passes a Vec, which Vec.Cast returns as-is.
+	it('rejects a non-finite Vec', () => {
+		expect(() => editor.setCamera(new Vec(NaN, 0, 1))).toThrow()
+	})
+
+	it('does not mutate the point it was given', () => {
+		const point = { x: 0, y: 0, z: NaN }
+		expect(() => editor.setCamera(point)).toThrow()
+		expect(point.z).toBeNaN()
+	})
+
+	it('leaves the camera untouched', () => {
+		const before = { ...editor.getCamera() }
+		expect(() => editor.setCamera({ x: NaN, y: 0, z: 1 })).toThrow()
+		expect(editor.getCamera()).toMatchObject(before)
+	})
+
+	it('throws at the call site when animated, rather than from a later tick', () => {
+		expect(() =>
+			editor.setCamera({ x: NaN, y: 0, z: 1 }, { animation: { duration: 100 } })
+		).toThrow()
+		expect(() => editor.forceTick()).not.toThrow()
+	})
+
+	it('does not stop an in-flight camera animation', () => {
+		editor.setCamera({ x: 100, y: 100, z: 1 }, { animation: { duration: 100 } })
+		expect(() => editor.setCamera({ x: NaN, y: 0, z: 1 })).toThrow()
+
+		editor.forceTick()
+		expect(editor.getCamera()).not.toMatchObject({ x: 0, y: 0, z: 1 })
+	})
 })
 
 it('Sets the camera options', () => {
@@ -96,10 +353,85 @@ describe('CameraOptions.wheelBehavior', () => {
 			.forceTick()
 		expect(editor.getCamera()).toMatchObject({ x: 0, y: 5, z: 1 })
 	})
+
+	it('When input mode is set, camera wheel behavior is ignored', () => {
+		editor.user.updateUserPreferences({ inputMode: 'trackpad' })
+		editor
+			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, wheelBehavior: 'zoom' })
+			.dispatch({
+				...wheelEvent,
+				delta: new Vec(0, 5, 0.01),
+			})
+			.forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 5, z: 1 })
+	})
+
+	it('When wheelBehavior is none, the input mode preference does not re-enable the wheel', () => {
+		editor.user.updateUserPreferences({ inputMode: 'trackpad' })
+		editor
+			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, wheelBehavior: 'none' })
+			.dispatch({
+				...wheelEvent,
+				delta: new Vec(5, 10, 0.01),
+			})
+			.forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+	})
+})
+
+describe('Zoom direction inversion', () => {
+	it('should invert zoom when input mode is mouse and preference is enabled', () => {
+		editor.user.updateUserPreferences({ inputMode: 'mouse', isZoomDirectionInverted: true })
+
+		const cameraBefore = editor.getCamera().z
+		editor
+			.dispatch({
+				...wheelEvent,
+				delta: new Vec(0, -1, 0),
+				point: new Vec(100, 100),
+			})
+			.forceTick()
+		const cameraAfter = editor.getCamera().z
+
+		expect(cameraAfter).toBeGreaterThan(cameraBefore)
+	})
+
+	it('should NOT invert zoom when input mode is auto', () => {
+		editor.user.updateUserPreferences({ inputMode: null, isZoomDirectionInverted: true })
+		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, wheelBehavior: 'zoom' })
+
+		const cameraBefore = editor.getCamera().z
+		editor
+			.dispatch({
+				...wheelEvent,
+				delta: new Vec(0, -1, 0),
+				point: new Vec(100, 100),
+			})
+			.forceTick()
+		const cameraAfter = editor.getCamera().z
+
+		expect(cameraAfter).toBeLessThan(cameraBefore)
+	})
+
+	it('should zoom normally when input mode is mouse but preference is disabled', () => {
+		editor.user.updateUserPreferences({ inputMode: 'mouse', isZoomDirectionInverted: false })
+
+		const cameraBefore = editor.getCamera().z
+		editor
+			.dispatch({
+				...wheelEvent,
+				delta: new Vec(0, -1, 0),
+				point: new Vec(100, 100),
+			})
+			.forceTick()
+		const cameraAfter = editor.getCamera().z
+
+		expect(cameraAfter).toBeLessThan(cameraBefore)
+	})
 })
 
 describe('CameraOptions.panSpeed', () => {
-	it('Effects wheel panning (2x)', () => {
+	it('Affects wheel panning (2x)', () => {
 		editor
 			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, panSpeed: 2, wheelBehavior: 'pan' })
 			.dispatch({
@@ -110,7 +442,7 @@ describe('CameraOptions.panSpeed', () => {
 		expect(editor.getCamera()).toMatchObject({ x: 10, y: 20, z: 1 })
 	})
 
-	it('Effects wheel panning (.5x)', () => {
+	it('Affects wheel panning (.5x)', () => {
 		editor
 			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, panSpeed: 0.5, wheelBehavior: 'pan' })
 			.dispatch({
@@ -121,7 +453,7 @@ describe('CameraOptions.panSpeed', () => {
 		expect(editor.getCamera()).toMatchObject({ x: 2.5, y: 5, z: 1 })
 	})
 
-	it('Does not effect zoom mouse wheeling', () => {
+	it('Does not affect zoom mouse wheeling', () => {
 		editor
 			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, panSpeed: 2, wheelBehavior: 'zoom' })
 			.dispatch({
@@ -132,13 +464,69 @@ describe('CameraOptions.panSpeed', () => {
 		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1.01 }) // 1 + 1
 	})
 
-	it.todo('hand tool panning')
-	it.todo('spacebar panning')
-	it.todo('edge scroll panning')
+	it('Does not affect hand tool panning', () => {
+		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, panSpeed: 2 })
+		editor.setCurrentTool('hand').pointerDown(0, 0).pointerMove(50, 50)
+		expect(editor.getCamera()).toMatchObject({ x: 50, y: 50, z: 1 })
+	})
+
+	it('Does not affect spacebar panning (2x)', () => {
+		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, panSpeed: 2 })
+		editor
+			.dispatch({ ...keyBoardEvent, key: ' ', code: 'Space' })
+			.pointerDown(0, 0)
+			.pointerMove(5, 10)
+			.forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 5, y: 10, z: 1 })
+	})
+
+	it('Does not affect spacebar panning (0.5x)', () => {
+		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, panSpeed: 0.5 })
+		editor
+			.dispatch({ ...keyBoardEvent, key: ' ', code: 'Space' })
+			.pointerDown(0, 0)
+			.pointerMove(5, 10)
+			.forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 5, y: 10, z: 1 })
+	})
+
+	it('Does not zoom when spacebar panning momentum is applied on release', () => {
+		editor
+			.dispatch({ ...keyBoardEvent, key: ' ', code: 'Space' })
+			.pointerDown(0, 0)
+			.pointerMove(50, 50)
+
+		editor.inputs.setPointerVelocity(new Vec(1, 1))
+		editor.pointerUp().forceTick()
+
+		expect(editor.getCamera().z).toBe(1)
+	})
+
+	it('Does not affect edge scroll panning', () => {
+		const shapeId = createShapeId()
+		const viewportScreenBounds = editor.getViewportScreenBounds()
+		editor.user.updateUserPreferences({ edgeScrollSpeed: 1 })
+		editor
+			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, panSpeed: 2 })
+			.createShape({ id: shapeId, type: 'geo', x: 10, y: 10 })
+			.select(shapeId)
+		const shape = editor.getSelectedShapes()[0]
+		// Move shape far beyond bounds to trigger edge scrolling at maximum speed
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		// pointerMove calls forceTick() internally, so we don't need an extra forceTick() call
+		editor.pointerDown(shape.x, shape.y, shapeId).forceTick().pointerMove(-5000, -5000)
+		// At maximum speed and a zoom level of 1, the camera should move by 25px per 60 Hz frame if the
+		// screen is wider than 1000 pixels, or by 25 * 0.612px if it is smaller. forceTick emits a 16ms
+		// tick, so scale the expectation to that.
+		const pxPerTick = 25 * (16 / (1000 / 60))
+		const newX = viewportScreenBounds.w < 1000 ? pxPerTick * 0.612 : pxPerTick
+		const newY = viewportScreenBounds.h < 1000 ? pxPerTick * 0.612 : pxPerTick
+		expect(editor.getCamera()).toCloselyMatchObject({ x: newX, y: newY, z: 1 })
+	})
 })
 
 describe('CameraOptions.zoomSpeed', () => {
-	it('Effects wheel zooming (2x)', () => {
+	it('Affects wheel zooming (2x)', () => {
 		editor
 			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, zoomSpeed: 2, wheelBehavior: 'zoom' })
 			.dispatch({
@@ -149,7 +537,7 @@ describe('CameraOptions.zoomSpeed', () => {
 		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1.02 }) // 1 + (.01 * 2)
 	})
 
-	it('Effects wheel zooming (.5x)', () => {
+	it('Affects wheel zooming (.5x)', () => {
 		editor
 			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, zoomSpeed: 0.5, wheelBehavior: 'zoom' })
 			.dispatch({
@@ -160,7 +548,7 @@ describe('CameraOptions.zoomSpeed', () => {
 		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1.005 }) // 1 + (.01 * .5)
 	})
 
-	it('Does not effect mouse wheel panning', () => {
+	it('Does not affect mouse wheel panning', () => {
 		editor
 			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, zoomSpeed: 0.5, wheelBehavior: 'pan' })
 			.dispatch({
@@ -171,9 +559,78 @@ describe('CameraOptions.zoomSpeed', () => {
 		expect(editor.getCamera()).toMatchObject({ x: 5, y: 10, z: 1 })
 	})
 
-	it.todo('zoom method')
-	it.todo('zoom tool zooming')
-	it.todo('pinch zooming')
+	it('Does not affect pinch zooming (2x)', () => {
+		editor
+			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, zoomSpeed: 2 })
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch_start',
+			})
+			.forceTick()
+		editor.dispatch({
+			...pinchEvent,
+			name: 'pinch',
+			delta: new Vec(0, 0, 1),
+		})
+		editor.forceTick()
+		editor.dispatch({
+			...pinchEvent,
+			name: 'pinch_end',
+		})
+		editor.forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+	})
+	it('Does not affect pinch zooming (0.5x)', () => {
+		editor
+			.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, zoomSpeed: 0.5 })
+			.dispatch({
+				...pinchEvent,
+				name: 'pinch_start',
+			})
+			.forceTick()
+		editor.dispatch({
+			...pinchEvent,
+			name: 'pinch',
+			delta: new Vec(0, 0, 1),
+		})
+		editor.forceTick()
+		editor.dispatch({
+			...pinchEvent,
+			name: 'pinch_end',
+		})
+		editor.forceTick()
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+	})
+	it('Does not affect zoom tool zooming (2x)', () => {
+		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, zoomSpeed: 2 })
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		editor.setCurrentTool('zoom').click()
+		vi.advanceTimersByTime(300)
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 2 })
+	})
+	it('Does not affect zoom tool zooming (0.5x)', () => {
+		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, zoomSpeed: 0.5 })
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		editor.setCurrentTool('zoom').click()
+		vi.advanceTimersByTime(300)
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 2 })
+	})
+	it('Does not affect editor zoom method (2x)', () => {
+		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, zoomSpeed: 2 })
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		editor.zoomIn(new Vec(0, 0), { immediate: true })
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 2 })
+		editor.zoomOut(new Vec(0, 0), { immediate: true })
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+	})
+	it('Does not affect editor zoom method (0.5x)', () => {
+		editor.setCameraOptions({ ...DEFAULT_CAMERA_OPTIONS, zoomSpeed: 0.5 })
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		editor.zoomIn(new Vec(0, 0), { immediate: true })
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 2 })
+		editor.zoomOut(new Vec(0, 0), { immediate: true })
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+	})
 })
 
 describe('CameraOptions.isLocked', () => {
@@ -325,11 +782,11 @@ describe('When constraints are free', () => {
 
 	it('zooms onto mouse position', () => {
 		editor.pointerMove(100, 100)
-		expect(editor.inputs.currentPagePoint).toMatchObject({ x: 100, y: 100 })
-		editor.zoomIn(editor.inputs.currentScreenPoint, { immediate: true })
-		expect(editor.inputs.currentPagePoint).toMatchObject({ x: 100, y: 100 })
-		editor.zoomOut(editor.inputs.currentScreenPoint, { immediate: true })
-		expect(editor.inputs.currentPagePoint).toMatchObject({ x: 100, y: 100 })
+		expect(editor.inputs.getCurrentPagePoint()).toMatchObject({ x: 100, y: 100 })
+		editor.zoomIn(editor.inputs.getCurrentScreenPoint(), { immediate: true })
+		expect(editor.inputs.getCurrentPagePoint()).toMatchObject({ x: 100, y: 100 })
+		editor.zoomOut(editor.inputs.getCurrentScreenPoint(), { immediate: true })
+		expect(editor.inputs.getCurrentPagePoint()).toMatchObject({ x: 100, y: 100 })
 	})
 })
 
@@ -661,19 +1118,311 @@ describe('Padding', () => {
 })
 
 describe('Contain behavior', () => {
-	it.todo(
-		'Locks axis until the bounds are bigger than the padded viewport, then allows "inside" panning'
-	)
+	it('Locks axis until the bounds are smaller than the padded viewport, then allows "inside" panning', () => {
+		const boundsW = 1600
+		const boundsH = 900
+		const padding = 100
+		editor.setCameraOptions({
+			...DEFAULT_CAMERA_OPTIONS,
+			constraints: {
+				...DEFAULT_CONSTRAINTS,
+				bounds: { x: 0, y: 0, w: boundsW, h: boundsH },
+				behavior: 'contain',
+				origin: { x: 0.5, y: 0.5 },
+				padding: { x: padding, y: padding },
+				initialZoom: 'fit-max',
+				baseZoom: 'fit-max',
+			},
+		})
+
+		editor.setCamera(editor.getCamera(), { reset: true })
+
+		const baseZoom = 700 / 900
+		const x = padding / baseZoom - boundsW + (boundsW - padding * 2) / baseZoom - padding
+		const y = padding / baseZoom - boundsH + (boundsH - padding * 2) / baseZoom
+		expect(editor.getCamera()).toCloselyMatchObject({ x, y, z: baseZoom }, 5)
+		// We should not be able to pan
+		editor.pan(new Vec(-10000, -10000))
+		expect(editor.getCamera()).toCloselyMatchObject({ x, y, z: baseZoom }, 5)
+		// But we can zoom
+		editor.zoomOut()
+		const newZoom = 0.5 * baseZoom
+		const newX =
+			padding / newZoom - boundsW + (boundsW - padding * 2) / newZoom - boundsW / 2 - padding * 2
+		const newY = padding / newZoom - boundsH + (boundsH - padding * 2) / newZoom - boundsH / 2
+		const newCamera = { x: newX, y: newY, z: newZoom }
+		expect(editor.getCamera()).toCloselyMatchObject(newCamera, 5)
+		// Panning is still locked
+		editor.pan(new Vec(-10000, -10000))
+		expect(editor.getCamera()).toCloselyMatchObject(newCamera, 5)
+		// Zooming to within bounds will allow us to pan
+		editor.zoomIn().zoomIn()
+		const camera = editor.getCamera()
+		editor.pan(new Vec(-10000, -10000))
+		expect(editor.getCamera()).not.toMatchObject(camera)
+	})
 })
 
 describe('Inside behavior', () => {
-	it.todo('Allows panning that keeps the bounds inside of the padded viewport')
+	it('Allows panning that keeps the bounds inside of the padded viewport', () => {
+		const bounds = editor.getViewportScreenBounds()
+		// set the constraints to be inside the viewport + 100px padding
+		editor.setCameraOptions({
+			...DEFAULT_CAMERA_OPTIONS,
+			constraints: {
+				...DEFAULT_CONSTRAINTS,
+				bounds: { x: 0, y: 0, w: bounds.w, h: bounds.h },
+				behavior: 'inside',
+				origin: { x: 0, y: 0 },
+				padding: { x: 100, y: 100 },
+				initialZoom: 'fit-min',
+			},
+		})
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		// panning far outside of the bounds
+		editor.pan(new Vec(-10000, -10000))
+
+		// should be clamped to the bounds + padding
+		expect(editor.getCamera()).toMatchObject({ x: -100, y: -100, z: 1 })
+		// panning to the opposite direction, far outside of the bounds
+		editor.pan(new Vec(10000, 10000))
+
+		// should be clamped to the bounds + padding
+		expect(editor.getCamera()).toMatchObject({ x: 100, y: 100, z: 1 })
+	})
 })
 
 describe('Outside behavior', () => {
-	it.todo('Allows panning that keeps the bounds adjacent to the padded viewport')
+	it('Allows panning that keeps the bounds adjacent to the padded viewport', () => {
+		const bounds = editor.getViewportScreenBounds()
+		// set the constraints to be the viewport + 100px padding
+		editor.setCameraOptions({
+			...DEFAULT_CAMERA_OPTIONS,
+			constraints: {
+				...DEFAULT_CONSTRAINTS,
+				bounds: { x: 0, y: 0, w: bounds.w, h: bounds.h },
+				behavior: 'outside',
+				origin: { x: 0, y: 0 },
+				padding: { x: 100, y: 100 },
+				initialZoom: 'fit-min',
+			},
+		})
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: 0, z: 1 })
+		// panning far outside of the bounds
+		editor.pan(new Vec(-10000, -10000))
+
+		// should be clamped so that the far edge of the bounds is adjacent to the viewport + padding
+		expect(editor.getCamera()).toMatchObject({ x: -bounds.w + 100, y: -bounds.h + 100, z: 1 })
+		// panning to the opposite direction, far outside of the bounds
+		editor.pan(new Vec(10000, 10000))
+
+		// should be clamped so that the far edge of the bounds is adjacent to the viewport + padding
+		expect(editor.getCamera()).toMatchObject({ x: bounds.w - 100, y: bounds.h - 100, z: 1 })
+	})
 })
 
 describe('Allows mixed values for x and y', () => {
-	it.todo('Allows different values to be set for x and y axes')
+	it('Allows different values to be set for x and y behaviour', () => {
+		editor.setCameraOptions({
+			...DEFAULT_CAMERA_OPTIONS,
+			constraints: {
+				...DEFAULT_CONSTRAINTS,
+				behavior: { x: 'inside', y: 'outside' },
+				initialZoom: 'fit-x',
+				baseZoom: 'fit-x',
+			},
+		})
+		editor.setCamera(editor.getCamera(), { reset: true })
+		const camera = editor.getCamera()
+		editor.pan(new Vec(-100, 0))
+
+		// no change when panning on x axis because it's set to inside
+		expect(editor.getCamera()).toMatchObject(camera)
+		editor.pan(new Vec(0, -100))
+
+		// change when panning on y axis because it's set to outside
+		expect(editor.getCamera()).toMatchObject({ ...camera, y: camera.y - 100 / camera.z })
+		editor.pan(new Vec(0, -1000000))
+
+		// clamped to the bounds
+		expect(editor.getCamera()).toMatchObject({ ...camera, y: -800 })
+	})
+	it('Allows different values to be set for x and y origin', () => {
+		editor.setCameraOptions({
+			...DEFAULT_CAMERA_OPTIONS,
+			constraints: {
+				...DEFAULT_CONSTRAINTS,
+				behavior: 'contain',
+				origin: { x: 0, y: 1 },
+				initialZoom: 'default',
+			},
+		})
+		editor.setCamera(editor.getCamera(), { reset: true })
+		const camera = editor.getCamera()
+		editor.zoomOut()
+		// zooms out and keeps the bounds in the bottom left of the viewport, so no change on x axis
+		expect(editor.getCamera()).toMatchObject({ x: 0, y: camera.y + 900, z: 0.5 })
+	})
+})
+
+test('it animated towards the constrained viewport rather than the given viewport', () => {
+	// @ts-expect-error
+	const mockAnimateToViewport = (editor._animateToViewport = vi.fn())
+	editor.setCameraOptions({
+		...DEFAULT_CAMERA_OPTIONS,
+		constraints: {
+			...DEFAULT_CONSTRAINTS,
+			behavior: 'contain',
+			origin: { x: 0.5, y: 0.5 },
+			padding: { x: 100, y: 100 },
+			initialZoom: 'fit-max',
+		},
+	})
+
+	editor.setCamera(new Vec(-1000000, -1000000), { animation: { duration: 4000 } })
+	expect(mockAnimateToViewport).toHaveBeenCalledTimes(1)
+	expect(mockAnimateToViewport.mock.calls[0][0]).toMatchInlineSnapshot(`
+		Box {
+		  "h": 900,
+		  "w": 1600,
+		  "x": -200,
+		  "y": -0,
+		}
+	`)
+})
+
+test('calling setCameraOptions will apply the new constraints', () => {
+	editor.setCameraOptions({
+		...DEFAULT_CAMERA_OPTIONS,
+		constraints: {
+			...DEFAULT_CONSTRAINTS,
+		},
+	})
+	editor.setCamera(new Vec(-1000000, -1000000, 1))
+	const camera = editor.getCamera()
+	expect(camera).toMatchObject({ x: -1000000, y: -1000000, z: 1 })
+	editor.setCameraOptions({
+		...DEFAULT_CAMERA_OPTIONS,
+		constraints: {
+			...DEFAULT_CONSTRAINTS,
+			bounds: { x: 0, y: 0, w: 1600, h: 900 },
+			behavior: 'contain',
+		},
+	})
+	expect(editor.getCamera()).toMatchInlineSnapshot(`
+		{
+		  "id": "camera:page:page",
+		  "meta": {},
+		  "typeName": "camera",
+		  "x": 0,
+		  "y": 0,
+		  "z": 1,
+		}
+	`)
+})
+
+describe('Constraint bounds away from the page origin', () => {
+	it('keeps the bounds inside the padded viewport with the inside behavior', () => {
+		editor.setCameraOptions({
+			...DEFAULT_CAMERA_OPTIONS,
+			constraints: {
+				...DEFAULT_CONSTRAINTS,
+				bounds: { x: 1000, y: 0, w: 800, h: 600 },
+				padding: { x: 100, y: 100 },
+				behavior: { x: 'inside', y: 'free' },
+			},
+		})
+		// the bounds' right edge stops at the right padding edge
+		editor.setCamera({ x: 100000, y: 0, z: 1 })
+		expect(editor.getCamera()).toMatchObject({ x: -300, y: 0, z: 1 })
+		expect(editor.pageToScreen({ x: 1800, y: 0 }).x).toBe(1500)
+		// the bounds' left edge stops at the left padding edge
+		editor.setCamera({ x: -100000, y: 0, z: 1 })
+		expect(editor.getCamera()).toMatchObject({ x: -900, y: 0, z: 1 })
+		expect(editor.pageToScreen({ x: 1000, y: 0 }).x).toBe(100)
+	})
+
+	it('keeps the bounds adjacent to the padded viewport with the outside behavior', () => {
+		editor.setCameraOptions({
+			...DEFAULT_CAMERA_OPTIONS,
+			constraints: {
+				...DEFAULT_CONSTRAINTS,
+				bounds: { x: 1000, y: 0, w: 800, h: 600 },
+				padding: { x: 100, y: 100 },
+				behavior: { x: 'outside', y: 'free' },
+			},
+		})
+		// the bounds' left edge stops at the right padding edge
+		editor.setCamera({ x: 100000, y: 0, z: 1 })
+		expect(editor.getCamera()).toMatchObject({ x: 500, y: 0, z: 1 })
+		expect(editor.pageToScreen({ x: 1000, y: 0 }).x).toBe(1500)
+		// the bounds' right edge stops at the left padding edge
+		editor.setCamera({ x: -100000, y: 0, z: 1 })
+		expect(editor.getCamera()).toMatchObject({ x: -1700, y: 0, z: 1 })
+		expect(editor.pageToScreen({ x: 1800, y: 0 }).x).toBe(100)
+	})
+})
+
+test('clamps horizontal padding against the viewport width, not its height', () => {
+	editor.setCameraOptions({
+		...DEFAULT_CAMERA_OPTIONS,
+		constraints: {
+			...DEFAULT_CONSTRAINTS,
+			bounds: { x: 0, y: 0, w: 200, h: 100 },
+			padding: { x: 600, y: 0 },
+			behavior: { x: 'inside', y: 'free' },
+		},
+	})
+	// 600 is below half of the 1600px viewport width, so the padding is honoured as is
+	editor.setCamera({ x: -100000, y: 0, z: 1 })
+	expect(editor.getCamera()).toMatchObject({ x: 600, y: 0, z: 1 })
+})
+
+test('slideCamera zoom momentum survives a long frame', () => {
+	editor.user.updateUserPreferences({ animationSpeed: 1 })
+	editor.setCamera({ x: 0, y: 0, z: 1 })
+	editor.slideCamera({ speed: 1, direction: { x: 0, y: 0, z: -0.01 } })
+	// a 100ms frame would have driven a linear zoom factor to zero (and the camera to NaN)
+	editor.emit('tick', 100)
+	const { x, y, z } = editor.getCamera()
+	expect(z).toBeGreaterThan(0)
+	expect(z).toBeLessThan(1)
+	expect(Number.isFinite(x) && Number.isFinite(y)).toBe(true)
+})
+
+test('slideCamera coasts the same distance regardless of tick rate', () => {
+	editor.user.updateUserPreferences({ animationSpeed: 1 })
+
+	const coastFor = (ticksPerSecond: number) => {
+		editor.setCamera({ x: 0, y: 0, z: 1 })
+		editor.slideCamera({ speed: 1, direction: { x: 1, y: 0 } })
+		// two seconds of ticks at the given rate, more than enough for the slide to finish
+		for (let i = 0; i < ticksPerSecond * 2; i++) editor.emit('tick', 1000 / ticksPerSecond)
+		return editor.getCamera().x
+	}
+
+	const at60Hz = coastFor(60)
+	const at120Hz = coastFor(120)
+
+	expect(at60Hz).toBeGreaterThan(0)
+	expect(at120Hz / at60Hz).toBeCloseTo(1, 1)
+})
+
+test('keeps the current zoom when setCamera is called without a zoom', () => {
+	editor.setCamera({ x: 0, y: 0, z: 0.5 })
+	editor.setCamera({ x: 100, y: 100 })
+	expect(editor.getCamera()).toMatchObject({ x: 100, y: 100, z: 0.5 })
+})
+
+test('a forced animated camera move ends at the forced position', () => {
+	editor.user.updateUserPreferences({ animationSpeed: 1 })
+	editor.setCameraOptions({
+		...DEFAULT_CAMERA_OPTIONS,
+		constraints: { ...DEFAULT_CONSTRAINTS, behavior: 'contain' },
+	})
+	editor.setCamera({ x: -5000, y: -5000, z: 1 }, { force: true, animation: { duration: 100 } })
+	editor.emit('tick', 50)
+	editor.emit('tick', 100)
+	// the final frame must not re-apply the constraints that `force` bypassed
+	expect(editor.getCamera()).toMatchObject({ x: -5000, y: -5000, z: 1 })
 })

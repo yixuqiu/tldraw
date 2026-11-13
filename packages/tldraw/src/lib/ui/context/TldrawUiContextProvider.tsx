@@ -1,23 +1,33 @@
-import { RecursivePartial } from '@tldraw/editor'
-import { ReactNode } from 'react'
+import {
+	EditorI18nFallbackContext,
+	RecursivePartial,
+	defaultUserPreferences,
+	track,
+	useMaybeEditor,
+} from '@tldraw/editor'
+import { ReactNode, useContext, useLayoutEffect } from 'react'
 import { TLUiAssetUrls, useDefaultUiAssetUrlsWithOverrides } from '../assetUrls'
+import { TldrawUiTooltipProvider } from '../components/primitives/TldrawUiTooltip'
 import { ToolsProvider } from '../hooks/useTools'
-import { TranslationProvider } from '../hooks/useTranslation/useTranslation'
-import { TLUiOverrides, useMergedOverrides, useMergedTranslationOverrides } from '../overrides'
+import { TldrawUiTranslationProvider } from '../hooks/useTranslation/useTranslation'
+import {
+	MimeTypeContext,
+	TLUiOverrides,
+	useMergedOverrides,
+	useMergedTranslationOverrides,
+} from '../overrides'
+import { TldrawUiA11yProvider } from './a11y'
 import { ActionsProvider } from './actions'
 import { AssetUrlsProvider } from './asset-urls'
 import { BreakPointProvider } from './breakpoints'
 import { TLUiComponents, TldrawUiComponentsProvider } from './components'
-import { DialogsProvider } from './dialogs'
-import { TLUiEventHandler, UiEventsProvider } from './events'
-import { ToastsProvider } from './toasts'
+import { TldrawUiDialogsProvider } from './dialogs'
+import { TLUiEventHandler, TldrawUiEventsProvider } from './events'
+import { useTldrawI18n } from './i18n'
+import { TldrawUiToastsProvider } from './toasts'
 
-/**
- * Props for the {@link tldraw#Tldraw} and {@link TldrawUi} components.
- *
- * @public
- **/
-export interface TldrawUiContextProviderProps {
+/** @public */
+export interface TLUiContextProviderProps {
 	/**
 	 * Urls for where to find fonts and other assets for the UI.
 	 */
@@ -47,44 +57,79 @@ export interface TldrawUiContextProviderProps {
 	 * The component's children.
 	 */
 	children?: ReactNode
+
+	/**
+	 * Supported mime types for media files.
+	 */
+	mediaMimeTypes?: string[]
 }
 
-/** @public */
-export function TldrawUiContextProvider({
+/** @public @react */
+export const TldrawUiContextProvider = track(function TldrawUiContextProvider({
 	overrides,
 	components,
 	assetUrls,
 	onUiEvent,
 	forceMobile,
+	mediaMimeTypes,
 	children,
-}: TldrawUiContextProviderProps) {
+}: TLUiContextProviderProps) {
+	// To allow mounting the sidebar without an editor running, we use a 'maybe' editor here
+	// The sidebar makes use of toasts and dialogs etc, which typically require an editor to be present
+	// but we are overriding the providers to allow them to be used without an editor.
+	const editor = useMaybeEditor()
 	return (
-		<AssetUrlsProvider assetUrls={useDefaultUiAssetUrlsWithOverrides(assetUrls)}>
-			<TranslationProvider overrides={useMergedTranslationOverrides(overrides)}>
-				<UiEventsProvider onEvent={onUiEvent}>
-					<ToastsProvider>
-						<DialogsProvider>
-							<BreakPointProvider forceMobile={forceMobile}>
-								<TldrawUiComponentsProvider overrides={components}>
-									<InternalProviders overrides={overrides}>{children}</InternalProviders>
-								</TldrawUiComponentsProvider>
-							</BreakPointProvider>
-						</DialogsProvider>
-					</ToastsProvider>
-				</UiEventsProvider>
-			</TranslationProvider>
-		</AssetUrlsProvider>
+		<MimeTypeContext.Provider value={mediaMimeTypes}>
+			<AssetUrlsProvider assetUrls={useDefaultUiAssetUrlsWithOverrides(assetUrls)}>
+				<TldrawUiTranslationProvider
+					overrides={useMergedTranslationOverrides(overrides)}
+					locale={editor?.user.getLocale() ?? defaultUserPreferences.locale}
+				>
+					<SupplyEditorI18n />
+					<TldrawUiTooltipProvider>
+						<TldrawUiEventsProvider onEvent={onUiEvent}>
+							<TldrawUiToastsProvider>
+								<TldrawUiDialogsProvider context={'tla'}>
+									<TldrawUiA11yProvider>
+										<BreakPointProvider forceMobile={forceMobile}>
+											<TldrawUiComponentsProvider overrides={components}>
+												<InternalProviders overrides={overrides}>{children}</InternalProviders>
+											</TldrawUiComponentsProvider>
+										</BreakPointProvider>
+									</TldrawUiA11yProvider>
+								</TldrawUiDialogsProvider>
+							</TldrawUiToastsProvider>
+						</TldrawUiEventsProvider>
+					</TldrawUiTooltipProvider>
+				</TldrawUiTranslationProvider>
+			</AssetUrlsProvider>
+		</MimeTypeContext.Provider>
 	)
-}
+})
 
 function InternalProviders({
 	overrides,
 	children,
-}: Omit<TldrawUiContextProviderProps, 'assetBaseUrl'>) {
+}: Pick<TLUiContextProviderProps, 'overrides' | 'children'>) {
 	const mergedOverrides = useMergedOverrides(overrides)
 	return (
 		<ActionsProvider overrides={mergedOverrides.actions}>
 			<ToolsProvider overrides={mergedOverrides.tools}>{children}</ToolsProvider>
 		</ActionsProvider>
 	)
+}
+
+// Hands the editor this UI's translations when its host passed none — a `<TldrawEditor>` and
+// `<TldrawUi>` composed by hand. See `EditorI18nFallbackContext`.
+function SupplyEditorI18n() {
+	const slot = useContext(EditorI18nFallbackContext)
+	const i18n = useTldrawI18n()
+	useLayoutEffect(() => {
+		if (!slot) return
+		slot.current = i18n
+		return () => {
+			if (slot.current === i18n) slot.current = null
+		}
+	}, [slot, i18n])
+	return null
 }

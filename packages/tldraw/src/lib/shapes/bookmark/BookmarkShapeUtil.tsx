@@ -1,24 +1,51 @@
+// oxlint-disable typescript/no-empty-object-type
 import {
-	AssetRecordType,
 	BaseBoxShapeUtil,
-	Editor,
+	bookmarkShapeMigrations,
+	bookmarkShapeProps,
+	defineMessages,
 	HTMLContainer,
+	lerp,
+	Rectangle2d,
 	T,
 	TLAssetId,
 	TLBookmarkAsset,
 	TLBookmarkShape,
-	TLOnBeforeCreateHandler,
-	TLOnBeforeUpdateHandler,
-	bookmarkShapeMigrations,
-	bookmarkShapeProps,
-	debounce,
-	getHashForString,
-	stopEventPropagation,
-	toDomPrecision,
+	TLBookmarkShapeProps,
+	tlenv,
+	translateMessage,
+	useEditor,
+	useSvgExportContext,
 } from '@tldraw/editor'
-import { truncateStringWithEllipsis } from '../../utils/text/text'
+import classNames from 'classnames'
+import { PointerEventHandler, useCallback, useState } from 'react'
+import { convertCommonTitleHTMLEntities } from '../../utils/text/text'
+import type { ShapeOptionsWithDisplayValues } from '../shared/getDisplayValues'
 import { HyperlinkButton } from '../shared/HyperlinkButton'
+import { LINK_ICON } from '../shared/icons-editor'
 import { getRotatedBoxShadow } from '../shared/rotated-box-shadow'
+import {
+	BOOKMARK_HEIGHT,
+	BOOKMARK_WIDTH,
+	getBookmarkShapeHeight,
+	getHumanReadableAddress,
+	getResolvedBookmarkAssetId,
+	setBookmarkHeight,
+	resolveBookmarkAssetForUrlChange,
+} from './bookmarks'
+
+/** @public */
+export type BookmarkShapeUtilDisplayValues = object
+
+/** @public */
+export interface BookmarkShapeOptions extends ShapeOptionsWithDisplayValues<
+	TLBookmarkShape,
+	BookmarkShapeUtilDisplayValues
+> {}
+
+const messages = defineMessages({
+	name: { id: 'tool.bookmark', defaultMessage: 'Bookmark' },
+})
 
 /** @public */
 export class BookmarkShapeUtil extends BaseBoxShapeUtil<TLBookmarkShape> {
@@ -26,171 +53,216 @@ export class BookmarkShapeUtil extends BaseBoxShapeUtil<TLBookmarkShape> {
 	static override props = bookmarkShapeProps
 	static override migrations = bookmarkShapeMigrations
 
-	override canResize = () => false
+	override options: BookmarkShapeOptions = {
+		getDefaultDisplayValues(): BookmarkShapeUtilDisplayValues {
+			return {}
+		},
+		getCustomDisplayValues(): Partial<BookmarkShapeUtilDisplayValues> {
+			return {}
+		},
+	}
 
-	override hideSelectionBoundsFg = () => true
+	override getShapeName() {
+		return translateMessage(this.editor.i18n(), messages.name)
+	}
+
+	override canResize(shape: TLBookmarkShape) {
+		return false
+	}
+
+	override hideSelectionBoundsFg(shape: TLBookmarkShape) {
+		return true
+	}
+
+	override getText(shape: TLBookmarkShape) {
+		return shape.props.url
+	}
+
+	override getAriaDescriptor(shape: TLBookmarkShape) {
+		const asset = (
+			shape.props.assetId ? this.editor.getAsset(shape.props.assetId) : null
+		) as TLBookmarkAsset | null
+
+		if (!asset?.props.title) return undefined
+
+		return (
+			convertCommonTitleHTMLEntities(asset.props.title) +
+			(asset.props.description ? ', ' + asset.props.description : '')
+		)
+	}
 
 	override getDefaultProps(): TLBookmarkShape['props'] {
 		return {
 			url: '',
-			w: 300,
-			h: 320,
+			w: BOOKMARK_WIDTH,
+			h: BOOKMARK_HEIGHT,
 			assetId: null,
 		}
 	}
 
+	override getGeometry(shape: TLBookmarkShape) {
+		return new Rectangle2d({
+			width: shape.props.w,
+			height: getBookmarkShapeHeight(this.editor, shape),
+			isFilled: true,
+		})
+	}
+
 	override component(shape: TLBookmarkShape) {
-		const asset = (
-			shape.props.assetId ? this.editor.getAsset(shape.props.assetId) : null
-		) as TLBookmarkAsset
+		const { assetId, url } = shape.props
+		const h = getBookmarkShapeHeight(this.editor, shape)
+		const rotation = this.editor.getShapePageTransform(shape)!.rotation()
 
-		const pageRotation = this.editor.getShapePageTransform(shape)!.rotation()
+		return <BookmarkShapeComponent assetId={assetId} url={url} h={h} rotation={rotation} />
+	}
 
-		const address = getHumanReadableAddress(shape)
+	override getIndicatorPath(shape: TLBookmarkShape): Path2D {
+		const path = new Path2D()
+		path.rect(0, 0, shape.props.w, getBookmarkShapeHeight(this.editor, shape))
+		return path
+	}
 
-		return (
-			<HTMLContainer>
-				<div
-					className="tl-bookmark__container"
-					style={{
-						boxShadow: getRotatedBoxShadow(pageRotation),
-					}}
-				>
+	override onBeforeCreate(next: TLBookmarkShape) {
+		return setBookmarkHeight(this.editor, next)
+	}
+
+	override onBeforeUpdate(prev: TLBookmarkShape, shape: TLBookmarkShape) {
+		let next = shape
+		if (prev.props.url !== shape.props.url) {
+			if (!T.linkUrl.isValid(shape.props.url)) {
+				return { ...shape, props: { ...shape.props, url: prev.props.url } }
+			}
+			next = resolveBookmarkAssetForUrlChange(this.editor, shape)
+		}
+
+		if (prev.props.assetId !== next.props.assetId) {
+			return setBookmarkHeight(this.editor, next)
+		}
+
+		return next === shape ? undefined : next
+	}
+	override getInterpolatedProps(
+		startShape: TLBookmarkShape,
+		endShape: TLBookmarkShape,
+		t: number
+	): TLBookmarkShapeProps {
+		return {
+			...(t > 0.5 ? endShape.props : startShape.props),
+			w: lerp(startShape.props.w, endShape.props.w, t),
+			h: lerp(startShape.props.h, endShape.props.h, t),
+		}
+	}
+}
+
+export function BookmarkShapeComponent({
+	assetId,
+	rotation,
+	url,
+	h,
+	showImageContainer = true,
+}: {
+	assetId: TLAssetId | null
+	rotation: number
+	h: number
+	url: string
+	showImageContainer?: boolean
+}) {
+	const editor = useEditor()
+
+	const resolvedAssetId = getResolvedBookmarkAssetId(editor, assetId, url)
+	const asset = resolvedAssetId ? (editor.getAsset(resolvedAssetId) as TLBookmarkAsset) : null
+
+	const isSafariExport = !!useSvgExportContext() && tlenv.isSafari
+
+	const address = getHumanReadableAddress(url)
+
+	const [isFaviconValid, setIsFaviconValid] = useState(true)
+	const onFaviconError = () => setIsFaviconValid(false)
+
+	const markAsHandledOnShiftKey = useCallback<PointerEventHandler>(
+		(e) => {
+			if (!editor.inputs.getShiftKey()) editor.markEventAsHandled(e)
+		},
+		[editor]
+	)
+
+	return (
+		<HTMLContainer>
+			<div
+				className={classNames(
+					'tl-bookmark__container',
+					isSafariExport && 'tl-bookmark__container--safariExport'
+				)}
+				style={{
+					boxShadow: isSafariExport ? undefined : getRotatedBoxShadow(rotation),
+					maxHeight: h,
+				}}
+			>
+				{showImageContainer && (!asset || asset.props.image) && (
 					<div className="tl-bookmark__image_container">
-						{asset?.props.image ? (
+						{asset ? (
 							<img
 								className="tl-bookmark__image"
 								draggable={false}
+								referrerPolicy="strict-origin-when-cross-origin"
 								src={asset?.props.image}
 								alt={asset?.props.title || ''}
 							/>
 						) : (
 							<div className="tl-bookmark__placeholder" />
 						)}
-						<HyperlinkButton url={shape.props.url} zoomLevel={this.editor.getZoomLevel()} />
+						{asset?.props.image && <HyperlinkButton url={url} />}
 					</div>
-					<div className="tl-bookmark__copy_container">
-						{asset?.props.title && (
-							<h2 className="tl-bookmark__heading">
-								{truncateStringWithEllipsis(asset?.props.title || '', 54)}
-							</h2>
-						)}
-						{asset?.props.description && (
-							<p className="tl-bookmark__description">
-								{truncateStringWithEllipsis(asset?.props.description || '', 128)}
-							</p>
-						)}
+				)}
+				<div className="tl-bookmark__copy_container">
+					{asset?.props.title ? (
 						<a
 							className="tl-bookmark__link"
-							href={shape.props.url || ''}
+							href={url || ''}
 							target="_blank"
 							rel="noopener noreferrer"
-							onPointerDown={stopEventPropagation}
-							onPointerUp={stopEventPropagation}
-							onClick={stopEventPropagation}
+							draggable={false}
+							onPointerDown={markAsHandledOnShiftKey}
+							onPointerUp={markAsHandledOnShiftKey}
 						>
-							{truncateStringWithEllipsis(address, 45)}
+							<h2 className="tl-bookmark__heading">
+								{convertCommonTitleHTMLEntities(asset.props.title)}
+							</h2>
 						</a>
-					</div>
+					) : null}
+					{asset?.props.description && asset?.props.image ? (
+						<p className="tl-bookmark__description">{asset.props.description}</p>
+					) : null}
+					<a
+						className="tl-bookmark__link"
+						href={url || ''}
+						target="_blank"
+						rel="noopener noreferrer"
+						draggable={false}
+						onPointerDown={markAsHandledOnShiftKey}
+						onPointerUp={markAsHandledOnShiftKey}
+					>
+						{isFaviconValid && asset?.props.favicon ? (
+							<img
+								className="tl-bookmark__favicon"
+								src={asset?.props.favicon}
+								referrerPolicy="strict-origin-when-cross-origin"
+								onError={onFaviconError}
+								alt={`favicon of ${address}`}
+							/>
+						) : (
+							<div
+								className="tl-hyperlink__icon"
+								style={{
+									mask: `url("${LINK_ICON}") center 100% / 100% no-repeat`,
+									WebkitMask: `url("${LINK_ICON}") center 100% / 100% no-repeat`,
+								}}
+							/>
+						)}
+						<span>{address}</span>
+					</a>
 				</div>
-			</HTMLContainer>
-		)
-	}
-
-	override indicator(shape: TLBookmarkShape) {
-		return (
-			<rect
-				width={toDomPrecision(shape.props.w)}
-				height={toDomPrecision(shape.props.h)}
-				rx="6"
-				ry="6"
-			/>
-		)
-	}
-
-	override onBeforeCreate?: TLOnBeforeCreateHandler<TLBookmarkShape> = (shape) => {
-		updateBookmarkAssetOnUrlChange(this.editor, shape)
-	}
-
-	override onBeforeUpdate?: TLOnBeforeUpdateHandler<TLBookmarkShape> = (prev, shape) => {
-		if (prev.props.url !== shape.props.url) {
-			if (!T.linkUrl.isValid(shape.props.url)) {
-				return { ...shape, props: { ...shape.props, url: prev.props.url } }
-			} else {
-				updateBookmarkAssetOnUrlChange(this.editor, shape)
-			}
-		}
-	}
+			</div>
+		</HTMLContainer>
+	)
 }
-
-/** @internal */
-export const getHumanReadableAddress = (shape: TLBookmarkShape) => {
-	try {
-		const url = new URL(shape.props.url)
-		const path = url.pathname.replace(/\/*$/, '')
-		return `${url.hostname}${path}`
-	} catch (e) {
-		return shape.props.url
-	}
-}
-
-function updateBookmarkAssetOnUrlChange(editor: Editor, shape: TLBookmarkShape) {
-	const { url } = shape.props
-
-	// Derive the asset id from the URL
-	const assetId: TLAssetId = AssetRecordType.createId(getHashForString(url))
-
-	if (editor.getAsset(assetId)) {
-		// Existing asset for this URL?
-		if (shape.props.assetId !== assetId) {
-			editor.updateShapes<TLBookmarkShape>([
-				{
-					id: shape.id,
-					type: shape.type,
-					props: { assetId },
-				},
-			])
-		}
-	} else {
-		// No asset for this URL?
-
-		// First, clear out the existing asset reference
-		editor.updateShapes<TLBookmarkShape>([
-			{
-				id: shape.id,
-				type: shape.type,
-				props: { assetId: null },
-			},
-		])
-
-		// Then try to asyncronously create a new one
-		createBookmarkAssetOnUrlChange(editor, shape)
-	}
-}
-
-const createBookmarkAssetOnUrlChange = debounce(async (editor: Editor, shape: TLBookmarkShape) => {
-	const { url } = shape.props
-
-	// Create the asset using the external content manager's createAssetFromUrl method.
-	// This may be overwritten by the user (for example, we overwrite it on tldraw.com)
-	const asset = await editor.getAssetForExternalContent({ type: 'url', url })
-
-	if (!asset) {
-		// No asset? Just leave the bookmark as a null assetId.
-		return
-	}
-
-	editor.batch(() => {
-		// Create the new asset
-		editor.createAssets([asset])
-
-		// And update the shape
-		editor.updateShapes<TLBookmarkShape>([
-			{
-				id: shape.id,
-				type: shape.type,
-				props: { assetId: asset.id },
-			},
-		])
-	})
-}, 500)

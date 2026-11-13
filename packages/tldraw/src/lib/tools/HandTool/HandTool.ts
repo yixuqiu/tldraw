@@ -1,45 +1,35 @@
-import { EASINGS, StateNode, TLClickEvent } from '@tldraw/editor'
+import { EASINGS, StateNode, TLClickEventInfo, TLStateNodeConstructor } from '@tldraw/editor'
 import { Dragging } from './childStates/Dragging'
 import { Idle } from './childStates/Idle'
+import { OneFingerZooming } from './childStates/OneFingerZooming'
 import { Pointing } from './childStates/Pointing'
 
 /** @public */
 export class HandTool extends StateNode {
 	static override id = 'hand'
 	static override initial = 'idle'
-	static override children = () => [Idle, Pointing, Dragging]
-
-	override onDoubleClick: TLClickEvent = (info) => {
-		if (info.phase === 'settle') {
-			const { currentScreenPoint } = this.editor.inputs
-			this.editor.zoomIn(currentScreenPoint, {
-				animation: { duration: 220, easing: EASINGS.easeOutQuint },
-			})
-		}
+	static override isLockable = false
+	static override children(): TLStateNodeConstructor[] {
+		return [Idle, Pointing, Dragging, OneFingerZooming]
 	}
 
-	override onTripleClick: TLClickEvent = (info) => {
-		if (info.phase === 'settle') {
-			const { currentScreenPoint } = this.editor.inputs
-			this.editor.zoomOut(currentScreenPoint, {
-				animation: { duration: 320, easing: EASINGS.easeOutQuint },
-			})
-		}
-	}
-
-	override onQuadrupleClick: TLClickEvent = (info) => {
-		if (info.phase === 'settle') {
-			const zoomLevel = this.editor.getZoomLevel()
-			const {
-				inputs: { currentScreenPoint },
-			} = this.editor
-
-			if (zoomLevel === 1) {
-				this.editor.zoomToFit({ animation: { duration: 400, easing: EASINGS.easeOutQuint } })
-			} else {
-				this.editor.resetZoom(currentScreenPoint, {
-					animation: { duration: 320, easing: EASINGS.easeOutQuint },
+	override onDoubleClick(info: TLClickEventInfo) {
+		switch (info.phase) {
+			case 'settle-down': {
+				// A double-tap whose second press is still held down: begin one-finger
+				// drag-to-zoom. This is a touch gesture, so only enter it on a coarse pointer.
+				if (this.editor.getInstanceState().isCoarsePointer) {
+					this.transition('one_finger_zooming', info)
+				}
+				break
+			}
+			case 'settle-up': {
+				// A double-tap whose second press was released: zoom in by one step.
+				const currentScreenPoint = this.editor.inputs.getCurrentScreenPoint()
+				this.editor.zoomIn(currentScreenPoint, {
+					animation: { duration: 220, easing: EASINGS.easeOutQuint },
 				})
+				break
 			}
 		}
 	}

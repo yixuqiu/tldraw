@@ -1,33 +1,33 @@
-import { ToastProvider } from '@radix-ui/react-toast'
-import { Expand, useEditor, useValue } from '@tldraw/editor'
+import { defineMessages, useContainer, useEditor, useValue } from '@tldraw/editor'
 import classNames from 'classnames'
-import React, { ReactNode } from 'react'
+import React, { ReactNode, useEffect, useMemo } from 'react'
 import { TLUiAssetUrlOverrides } from './assetUrls'
-import { Dialogs } from './components/Dialogs'
-import { FollowingIndicator } from './components/FollowingIndicator'
-import { ToastViewport, Toasts } from './components/Toasts'
+import { SkipToMainContent } from './components/A11y'
 import { TldrawUiButton } from './components/primitives/Button/TldrawUiButton'
 import { TldrawUiButtonIcon } from './components/primitives/Button/TldrawUiButtonIcon'
-import { PORTRAIT_BREAKPOINT } from './constants'
-import {
-	TldrawUiContextProvider,
-	TldrawUiContextProviderProps,
-} from './context/TldrawUiContextProvider'
+import { PORTRAIT_BREAKPOINT, PORTRAIT_BREAKPOINTS } from './constants'
 import { useActions } from './context/actions'
 import { useBreakpoint } from './context/breakpoints'
 import { TLUiComponents, useTldrawUiComponents } from './context/components'
+import {
+	TLUiContextProviderProps,
+	TldrawUiContextProvider,
+} from './context/TldrawUiContextProvider'
 import { useNativeClipboardEvents } from './hooks/useClipboardEvents'
 import { useEditorEvents } from './hooks/useEditorEvents'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useReadonly } from './hooks/useReadonly'
-import { useTranslation } from './hooks/useTranslation/useTranslation'
+import { useDirection, useTranslation } from './hooks/useTranslation/useTranslation'
 
-/**
- * Base props for the {@link tldraw#Tldraw} and {@link TldrawUi} components.
- *
- * @public
- */
-export interface TldrawUiBaseProps {
+const messages = defineMessages({
+	focusModeToggleFocusMode: {
+		id: 'focus-mode.toggle-focus-mode',
+		defaultMessage: 'Toggle focus mode',
+	},
+})
+
+/** @public */
+export interface TldrawUiProps extends TLUiContextProviderProps {
 	/**
 	 * The component's children.
 	 */
@@ -46,21 +46,15 @@ export interface TldrawUiBaseProps {
 	/**
 	 * Additional items to add to the debug menu (will be deprecated)
 	 */
-	renderDebugMenuItems?: () => React.ReactNode
+	renderDebugMenuItems?(): React.ReactNode
 
 	/** Asset URL override. */
 	assetUrls?: TLUiAssetUrlOverrides
 }
 
 /**
- * Props for the {@link tldraw#Tldraw} and {@link TldrawUi} components.
- *
  * @public
- */
-export type TldrawUiProps = Expand<TldrawUiBaseProps & TldrawUiContextProviderProps>
-
-/**
- * @public
+ * @react
  */
 export const TldrawUi = React.memo(function TldrawUi({
 	renderDebugMenuItems,
@@ -78,26 +72,28 @@ export const TldrawUi = React.memo(function TldrawUi({
 	)
 })
 
-type TldrawUiContentProps = {
+interface TldrawUiContentProps {
 	hideUi?: boolean
-	shareZone?: ReactNode
-	topZone?: ReactNode
-	renderDebugMenuItems?: () => React.ReactNode
+	renderDebugMenuItems?(): React.ReactNode
 }
 
 const TldrawUiInner = React.memo(function TldrawUiInner({
 	children,
 	hideUi,
-	...rest
 }: TldrawUiContentProps & { children: ReactNode }) {
 	// The hideUi prop should prevent the UI from mounting.
 	// If we ever need want the UI to mount and preserve state, then
 	// we should change this behavior and hide the UI via CSS instead.
 
+	// Keyboard shortcuts and clipboard events should always be mounted,
+	// even when the UI is hidden.
+	useKeyboardShortcuts()
+	useNativeClipboardEvents()
+
 	return (
 		<>
 			{children}
-			{hideUi ? null : <TldrawUiContent {...rest} />}
+			{hideUi ? null : <TldrawUiContent />}
 		</>
 	)
 })
@@ -110,6 +106,14 @@ const TldrawUiContent = React.memo(function TldrawUI() {
 	const isFocusMode = useValue('focus', () => editor.getInstanceState().isFocusMode, [editor])
 	const isDebugMode = useValue('debug', () => editor.getInstanceState().isDebugMode, [editor])
 
+	const container = useContainer()
+	const dir = useDirection()
+	const locale = useValue('locale', () => editor.user.getLocale(), [editor])
+	useEffect(() => {
+		container.dir = dir
+		container.lang = locale
+	}, [container, dir, locale])
+
 	const {
 		SharePanel,
 		TopPanel,
@@ -120,63 +124,94 @@ const TldrawUiContent = React.memo(function TldrawUI() {
 		NavigationPanel,
 		HelperButtons,
 		DebugPanel,
+		Toasts,
+		Dialogs,
+		A11y,
+		FollowingIndicator,
 	} = useTldrawUiComponents()
 
-	useKeyboardShortcuts()
-	useNativeClipboardEvents()
 	useEditorEvents()
 
 	const { 'toggle-focus-mode': toggleFocus } = useActions()
 
+	const { breakpointsAbove, breakpointsBelow } = useMemo(() => {
+		const all = PORTRAIT_BREAKPOINTS.map((_, bp) => bp)
+		return {
+			breakpointsAbove: all.slice(0, breakpoint + 1).join(' '),
+			breakpointsBelow: all.slice(breakpoint + 1).join(' '),
+		}
+	}, [breakpoint])
+
 	return (
-		<ToastProvider>
-			<div
-				className={classNames('tlui-layout', {
-					'tlui-layout__mobile': breakpoint < PORTRAIT_BREAKPOINT.TABLET_SM,
-				})}
-				data-breakpoint={breakpoint}
-			>
-				{isFocusMode ? (
+		<div
+			className={classNames('tlui-layout', {
+				'tlui-layout__mobile': breakpoint < PORTRAIT_BREAKPOINT.TABLET_SM,
+			})}
+			// The outer editor container has role="application" so that desktop screen readers treat
+			// the canvas as an interactive surface. Mark the UI layer as role="document" so that the
+			// toolbar, menus, and dialogs stay navigable to assistive tech — especially mobile screen
+			// readers like VoiceOver and TalkBack that do not announce role="application". See
+			// https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Roles/application_role
+			role="document"
+			data-breakpoint={breakpoint}
+			data-breakpoints-above={breakpointsAbove}
+			data-breakpoints-below={breakpointsBelow}
+		>
+			<SkipToMainContent />
+			{isFocusMode ? (
+				<div className="tlui-layout__top">
+					<TldrawUiButton
+						type="icon"
+						className="tlui-focus-button"
+						title={msg(messages.focusModeToggleFocusMode)}
+						onClick={() => toggleFocus.onSelect('menu')}
+					>
+						<TldrawUiButtonIcon icon="dot" />
+					</TldrawUiButton>
+				</div>
+			) : (
+				<>
 					<div className="tlui-layout__top">
-						<TldrawUiButton
-							type="icon"
-							className="tlui-focus-button"
-							title={msg('focus-mode.toggle-focus-mode')}
-							onClick={() => toggleFocus.onSelect('menu')}
-						>
-							<TldrawUiButtonIcon icon="dot" />
-						</TldrawUiButton>
+						<div className="tlui-layout__top__left">
+							{MenuPanel && <MenuPanel />}
+							{HelperButtons && <HelperButtons />}
+						</div>
+						<div className="tlui-layout__top__center">{TopPanel && <TopPanel />}</div>
+						<div className="tlui-layout__top__right">
+							{SharePanel && <SharePanel />}
+							{StylePanel && breakpoint >= PORTRAIT_BREAKPOINT.TABLET_SM && !isReadonlyMode && (
+								<StylePanel />
+							)}
+						</div>
 					</div>
-				) : (
-					<>
-						<div className="tlui-layout__top">
-							<div className="tlui-layout__top__left">
-								{MenuPanel && <MenuPanel />}
-								{HelperButtons && <HelperButtons />}
-							</div>
-							<div className="tlui-layout__top__center">{TopPanel && <TopPanel />}</div>
-							<div className="tlui-layout__top__right">
-								{SharePanel && <SharePanel />}
-								{StylePanel && breakpoint >= PORTRAIT_BREAKPOINT.TABLET_SM && !isReadonlyMode && (
-									<StylePanel />
-								)}
-							</div>
+					<div className="tlui-layout__bottom">
+						<div className="tlui-layout__bottom__main">
+							{NavigationPanel && <NavigationPanel />}
+							{Toolbar && <Toolbar />}
+							{HelpMenu && <HelpMenu />}
 						</div>
-						<div className="tlui-layout__bottom">
-							<div className="tlui-layout__bottom__main">
-								{NavigationPanel && <NavigationPanel />}
-								{Toolbar && <Toolbar />}
-								{HelpMenu && <HelpMenu />}
-							</div>
-							{isDebugMode && DebugPanel && <DebugPanel />}
-						</div>
-					</>
-				)}
-				<Toasts />
-				<Dialogs />
-				<ToastViewport />
-				<FollowingIndicator />
-			</div>
-		</ToastProvider>
+						{isDebugMode && DebugPanel && <DebugPanel />}
+						{A11y && <A11y />}
+					</div>
+				</>
+			)}
+			{FollowingIndicator && <FollowingIndicator />}
+			{Toasts && <Toasts />}
+			{Dialogs && <Dialogs />}
+		</div>
 	)
 })
+
+/** @public @react */
+export function TldrawUiInFrontOfTheCanvas() {
+	const { RichTextToolbar, ImageToolbar, VideoToolbar, CursorChatBubble } = useTldrawUiComponents()
+
+	return (
+		<>
+			{RichTextToolbar && <RichTextToolbar />}
+			{ImageToolbar && <ImageToolbar />}
+			{VideoToolbar && <VideoToolbar />}
+			{CursorChatBubble && <CursorChatBubble />}
+		</>
+	)
+}

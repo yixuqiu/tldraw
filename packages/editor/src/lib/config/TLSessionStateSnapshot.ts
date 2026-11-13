@@ -1,25 +1,27 @@
-import { Signal, computed, transact } from '@tldraw/state'
-import { RecordsDiff, UnknownRecord, squashRecordDiffs } from '@tldraw/store'
+import { Signal, computed } from '@tldraw/state'
+import { UnknownRecord } from '@tldraw/store'
 import {
 	CameraRecordType,
 	InstancePageStateRecordType,
 	TLINSTANCE_ID,
 	TLPageId,
-	TLRecord,
 	TLShapeId,
 	TLStore,
 	pageIdValidator,
+	pluckPreservingValues,
 	shapeIdValidator,
 } from '@tldraw/tlschema'
 import {
 	deleteFromSessionStorage,
 	getFromSessionStorage,
-	objectMapFromEntries,
+	isEqual,
 	setInSessionStorage,
 	structuredClone,
+	uniqueId,
 } from '@tldraw/utils'
 import { T } from '@tldraw/validate'
-import { uniqueId } from '../utils/uniqueId'
+import { tlenv } from '../globals/environment'
+import { getGlobalDocument, getGlobalWindow } from '../utils/dom'
 
 const tabIdKey = 'TLDRAW_TAB_ID_v2' as const
 
@@ -36,11 +38,11 @@ function iOS() {
 	if (!window) return false
 	return (
 		['iPad Simulator', 'iPhone Simulator', 'iPod Simulator', 'iPad', 'iPhone', 'iPod'].includes(
-			// eslint-disable-next-line deprecation/deprecation
-			window.navigator.platform
+			// eslint-disable-next-line @typescript-eslint/no-deprecated
+			getGlobalWindow().navigator.platform
 		) ||
 		// iPad on iOS 13 detection
-		(window.navigator.userAgent.includes('Mac') && 'ontouchend' in document)
+		(tlenv.isDarwin && 'ontouchend' in getGlobalDocument())
 	)
 }
 
@@ -49,7 +51,9 @@ function iOS() {
  * @public
  */
 export const TAB_ID: string = window
-	? window[tabIdKey] ?? getFromSessionStorage(tabIdKey) ?? `TLDRAW_INSTANCE_STATE_V1_` + uniqueId()
+	? (window[tabIdKey] ??
+		getFromSessionStorage(tabIdKey) ??
+		`TLDRAW_INSTANCE_STATE_V1_` + uniqueId())
 	: '<error>'
 if (window) {
 	window[tabIdKey] = TAB_ID
@@ -66,9 +70,11 @@ if (window) {
 	}
 }
 
-window?.addEventListener('beforeunload', () => {
-	setInSessionStorage(tabIdKey, TAB_ID)
-})
+if (typeof window !== 'undefined') {
+	getGlobalWindow().addEventListener('beforeunload', () => {
+		setInSessionStorage(tabIdKey, TAB_ID)
+	})
+}
 
 const Versions = {
 	Initial: 0,
@@ -94,28 +100,28 @@ function migrate(snapshot: any) {
  */
 export interface TLSessionStateSnapshot {
 	version: number
-	currentPageId: TLPageId
-	isFocusMode: boolean
-	exportBackground: boolean
-	isDebugMode: boolean
-	isToolLocked: boolean
-	isGridMode: boolean
-	pageStates: Array<{
+	currentPageId?: TLPageId
+	isFocusMode?: boolean
+	exportBackground?: boolean
+	isDebugMode?: boolean
+	isToolLocked?: boolean
+	isGridMode?: boolean
+	pageStates?: Array<{
 		pageId: TLPageId
-		camera: { x: number; y: number; z: number }
-		selectedShapeIds: TLShapeId[]
-		focusedGroupId: TLShapeId | null
+		camera?: { x: number; y: number; z: number }
+		selectedShapeIds?: TLShapeId[]
+		focusedGroupId?: TLShapeId | null
 	}>
 }
 
 const sessionStateSnapshotValidator: T.Validator<TLSessionStateSnapshot> = T.object({
 	version: T.number,
-	currentPageId: pageIdValidator,
-	isFocusMode: T.boolean,
-	exportBackground: T.boolean,
-	isDebugMode: T.boolean,
-	isToolLocked: T.boolean,
-	isGridMode: T.boolean,
+	currentPageId: pageIdValidator.optional(),
+	isFocusMode: T.boolean.optional(),
+	exportBackground: T.boolean.optional(),
+	isDebugMode: T.boolean.optional(),
+	isToolLocked: T.boolean.optional(),
+	isGridMode: T.boolean.optional(),
 	pageStates: T.arrayOf(
 		T.object({
 			pageId: pageIdValidator,
@@ -123,11 +129,11 @@ const sessionStateSnapshotValidator: T.Validator<TLSessionStateSnapshot> = T.obj
 				x: T.number,
 				y: T.number,
 				z: T.number,
-			}),
-			selectedShapeIds: T.arrayOf(shapeIdValidator),
-			focusedGroupId: shapeIdValidator.nullable(),
+			}).optional(),
+			selectedShapeIds: T.arrayOf(shapeIdValidator).optional(),
+			focusedGroupId: shapeIdValidator.nullable().optional(),
 		})
-	),
+	).optional(),
 })
 
 function migrateAndValidateSessionStateSnapshot(state: unknown): TLSessionStateSnapshot | null {
@@ -163,35 +169,52 @@ export function createSessionStateSnapshotSignal(
 ): Signal<TLSessionStateSnapshot | null> {
 	const $allPageIds = store.query.ids('page')
 
-	return computed<TLSessionStateSnapshot | null>('sessionStateSnapshot', () => {
-		const instanceState = store.get(TLINSTANCE_ID)
-		if (!instanceState) return null
+	return computed<TLSessionStateSnapshot | null>(
+		'sessionStateSnapshot',
+		() => {
+			const instanceState = store.get(TLINSTANCE_ID)
+			if (!instanceState) return null
 
-		const allPageIds = [...$allPageIds.get()]
-		return {
-			version: CURRENT_SESSION_STATE_SNAPSHOT_VERSION,
-			currentPageId: instanceState.currentPageId,
-			exportBackground: instanceState.exportBackground,
-			isFocusMode: instanceState.isFocusMode,
-			isDebugMode: instanceState.isDebugMode,
-			isToolLocked: instanceState.isToolLocked,
-			isGridMode: instanceState.isGridMode,
-			pageStates: allPageIds.map((id) => {
-				const ps = store.get(InstancePageStateRecordType.createId(id))
-				const camera = store.get(CameraRecordType.createId(id))
-				return {
-					pageId: id,
-					camera: {
-						x: camera?.x ?? 0,
-						y: camera?.y ?? 0,
-						z: camera?.z ?? 1,
-					},
-					selectedShapeIds: ps?.selectedShapeIds ?? [],
-					focusedGroupId: ps?.focusedGroupId ?? null,
-				} satisfies TLSessionStateSnapshot['pageStates'][0]
-			}),
-		} satisfies TLSessionStateSnapshot
-	})
+			const allPageIds = [...$allPageIds.get()]
+			return {
+				version: CURRENT_SESSION_STATE_SNAPSHOT_VERSION,
+				currentPageId: instanceState.currentPageId,
+				exportBackground: instanceState.exportBackground,
+				isFocusMode: instanceState.isFocusMode,
+				isDebugMode: instanceState.isDebugMode,
+				isToolLocked: instanceState.isToolLocked,
+				isGridMode: instanceState.isGridMode,
+				pageStates: allPageIds.map((id) => {
+					const ps = store.get(InstancePageStateRecordType.createId(id))
+					const camera = store.get(CameraRecordType.createId(id))
+					return {
+						pageId: id,
+						camera: {
+							x: camera?.x ?? 0,
+							y: camera?.y ?? 0,
+							z: camera?.z ?? 1,
+						},
+						selectedShapeIds: ps?.selectedShapeIds ?? [],
+						focusedGroupId: ps?.focusedGroupId ?? null,
+					} satisfies NonNullable<TLSessionStateSnapshot['pageStates']>[0]
+				}),
+			} satisfies TLSessionStateSnapshot
+		},
+		{ isEqual }
+	)
+}
+
+/**
+ * Options for {@link loadSessionStateSnapshotIntoStore}
+ * @public
+ */
+export interface TLLoadSessionStateSnapshotOptions {
+	/**
+	 * By default, some session state flags like `isDebugMode` are not overwritten when loading a snapshot.
+	 * These are usually considered "sticky" by users while the document data is not.
+	 * If you want to overwrite these flags, set this to `true`.
+	 */
+	forceOverwrite?: boolean
 }
 
 /**
@@ -204,63 +227,53 @@ export function createSessionStateSnapshotSignal(
  */
 export function loadSessionStateSnapshotIntoStore(
 	store: TLStore,
-	snapshot: TLSessionStateSnapshot
+	snapshot: TLSessionStateSnapshot,
+	opts?: TLLoadSessionStateSnapshotOptions
 ) {
 	const res = migrateAndValidateSessionStateSnapshot(snapshot)
 	if (!res) return
 
-	// remove all page states and cameras and the instance state
-	const allPageStatesAndCameras = store
-		.allRecords()
-		.filter((r) => r.typeName === 'instance_page_state' || r.typeName === 'camera')
+	const existingInstance = store.get(TLINSTANCE_ID)
+	const preserved = pluckPreservingValues(existingInstance)
+	const primary = opts?.forceOverwrite ? res : preserved
+	const secondary = opts?.forceOverwrite ? preserved : res
 
-	const removeDiff: RecordsDiff<TLRecord> = {
-		added: {},
-		updated: {},
-		removed: {
-			...objectMapFromEntries(allPageStatesAndCameras.map((r) => [r.id, r])),
-		},
-	}
-	if (store.has(TLINSTANCE_ID)) {
-		removeDiff.removed[TLINSTANCE_ID] = store.get(TLINSTANCE_ID)!
-	}
+	const instanceState = store.schema.types.instance.create({
+		id: TLINSTANCE_ID,
+		...preserved,
+		// the integrity checker will ensure that the currentPageId is valid
+		currentPageId: res.currentPageId ?? existingInstance?.currentPageId,
+		isDebugMode: primary?.isDebugMode ?? secondary?.isDebugMode,
+		isFocusMode: primary?.isFocusMode ?? secondary?.isFocusMode,
+		isToolLocked: primary?.isToolLocked ?? secondary?.isToolLocked,
+		isGridMode: primary?.isGridMode ?? secondary?.isGridMode,
+		exportBackground: primary?.exportBackground ?? secondary?.exportBackground,
+	})
 
-	const addDiff: RecordsDiff<TLRecord> = {
-		removed: {},
-		updated: {},
-		added: {
-			[TLINSTANCE_ID]: store.schema.types.instance.create({
-				id: TLINSTANCE_ID,
-				currentPageId: res.currentPageId,
-				isDebugMode: res.isDebugMode,
-				isFocusMode: res.isFocusMode,
-				isToolLocked: res.isToolLocked,
-				isGridMode: res.isGridMode,
-				exportBackground: res.exportBackground,
-			}),
-		},
-	}
+	store.atomic(() => {
+		for (const ps of res.pageStates ?? []) {
+			if (!store.has(ps.pageId)) continue
+			const cameraId = CameraRecordType.createId(ps.pageId)
+			const instancePageState = InstancePageStateRecordType.createId(ps.pageId)
+			const previousCamera = store.get(cameraId)
+			const previousInstanceState = store.get(instancePageState)
+			store.put([
+				CameraRecordType.create({
+					id: cameraId,
+					x: ps.camera?.x ?? previousCamera?.x,
+					y: ps.camera?.y ?? previousCamera?.y,
+					z: ps.camera?.z ?? previousCamera?.z,
+				}),
+				InstancePageStateRecordType.create({
+					id: instancePageState,
+					pageId: ps.pageId,
+					selectedShapeIds: ps.selectedShapeIds ?? previousInstanceState?.selectedShapeIds,
+					focusedGroupId: ps.focusedGroupId ?? previousInstanceState?.focusedGroupId,
+				}),
+			])
+		}
 
-	// replace them with new ones
-	for (const ps of res.pageStates) {
-		const cameraId = CameraRecordType.createId(ps.pageId)
-		const pageStateId = InstancePageStateRecordType.createId(ps.pageId)
-		addDiff.added[cameraId] = CameraRecordType.create({
-			id: CameraRecordType.createId(ps.pageId),
-			x: ps.camera.x,
-			y: ps.camera.y,
-			z: ps.camera.z,
-		})
-		addDiff.added[pageStateId] = InstancePageStateRecordType.create({
-			id: InstancePageStateRecordType.createId(ps.pageId),
-			pageId: ps.pageId,
-			selectedShapeIds: ps.selectedShapeIds,
-			focusedGroupId: ps.focusedGroupId,
-		})
-	}
-
-	transact(() => {
-		store.applyDiff(squashRecordDiffs([removeDiff, addDiff]))
+		store.put([instanceState])
 		store.ensureStoreIsUsable()
 	})
 }
@@ -295,7 +308,7 @@ export function extractSessionStateFromLegacySnapshot(
 		isGridMode: false,
 		pageStates: instanceRecords
 			.filter((r: any) => r.typeName === 'instance_page_state' && r.instanceId === oldInstance.id)
-			.map((ps: any): TLSessionStateSnapshot['pageStates'][0] => {
+			.map((ps: any) => {
 				const camera = (store[ps.cameraId] as any) ?? { x: 0, y: 0, z: 1 }
 				return {
 					pageId: ps.pageId,
@@ -306,14 +319,14 @@ export function extractSessionStateFromLegacySnapshot(
 					},
 					selectedShapeIds: ps.selectedShapeIds,
 					focusedGroupId: ps.focusedGroupId,
-				}
+				} satisfies NonNullable<TLSessionStateSnapshot['pageStates']>[0]
 			}),
 	}
 
 	try {
 		sessionStateSnapshotValidator.validate(result)
 		return result
-	} catch (e) {
+	} catch {
 		return null
 	}
 }

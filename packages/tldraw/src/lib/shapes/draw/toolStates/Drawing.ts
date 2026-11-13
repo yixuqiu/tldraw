@@ -1,16 +1,17 @@
 import {
-	DRAG_DISTANCE,
 	Mat,
 	StateNode,
 	TLDefaultSizeStyle,
 	TLDrawShape,
 	TLDrawShapeSegment,
-	TLEventHandlers,
 	TLHighlightShape,
+	TLKeyboardEventInfo,
 	TLPointerEventInfo,
 	TLShapePartial,
+	DIM_2D,
 	Vec,
 	VecModel,
+	b64Vecs,
 	createShapeId,
 	last,
 	snapAngle,
@@ -18,12 +19,16 @@ import {
 	toFixed,
 	uniqueId,
 } from '@tldraw/editor'
+import { HighlightShapeUtil } from '../../highlight/HighlightShapeUtil'
 import { STROKE_SIZES } from '../../shared/default-shape-constants'
+import { getDisplayValues } from '../../shared/getDisplayValues'
+import { DrawShapeUtil } from '../DrawShapeUtil'
 
 type DrawableShape = TLDrawShape | TLHighlightShape
 
 export class Drawing extends StateNode {
 	static override id = 'drawing'
+	static override trackPerformance = true
 
 	info = {} as TLPointerEventInfo
 
@@ -31,10 +36,15 @@ export class Drawing extends StateNode {
 
 	override shapeType = this.parent.id === 'highlight' ? ('highlight' as const) : ('draw' as const)
 
-	util = this.editor.getShapeUtil(this.shapeType)
+	util = this.editor.getShapeUtil(this.shapeType) as DrawShapeUtil | HighlightShapeUtil
 
 	isPen = false
 	isPenOrStylus = false
+
+	// Encoding dimension for segments created during this stroke. `2` drops the
+	// constant pressure value (non-pressure devices), `undefined` keeps full 3D.
+	// Decided once in startShape from the input device — see the note there.
+	segmentDim: 2 | undefined = undefined
 
 	segmentMode = 'free' as 'free' | 'straight' | 'starting_straight' | 'starting_free'
 
@@ -47,25 +57,26 @@ export class Drawing extends StateNode {
 	lastRecordedPoint = {} as Vec
 	mergeNextPoint = false
 	currentLineLength = 0
+	zoomOnEnter = 1
 
-	canDraw = false
+	// Cache for current segment's points to avoid repeated b64 decode/encode
+	currentSegmentPoints: Vec[] = []
 
 	markId = null as null | string
 
-	override onEnter = (info: TLPointerEventInfo) => {
+	override onEnter(info: TLPointerEventInfo) {
 		this.markId = null
 		this.info = info
-		this.canDraw = !this.editor.getIsMenuOpen()
-		this.lastRecordedPoint = this.editor.inputs.currentPagePoint.clone()
-		if (this.canDraw) {
-			this.startShape()
-		}
+		this.lastRecordedPoint = this.editor.inputs.getCurrentPagePoint().clone()
+		this.zoomOnEnter = this.editor.getZoomLevel()
+		this.startShape()
 	}
 
-	override onPointerMove: TLEventHandlers['onPointerMove'] = () => {
+	override onPointerMove() {
 		const { inputs } = this.editor
+		const isPen = inputs.getIsPen()
 
-		if (this.isPen && !inputs.isPen) {
+		if (this.isPen && !isPen) {
 			// The user made a palm gesture before starting a pen gesture;
 			// ideally we'd start the new shape here but we could also just bail
 			// as the next interaction will work correctly
@@ -74,41 +85,31 @@ export class Drawing extends StateNode {
 				this.startShape()
 				return
 			}
-		} else {
-			// If we came in from a menu but have no started dragging...
-			if (!this.canDraw && inputs.isDragging) {
-				this.startShape()
-				this.canDraw = true // bad name
-			}
 		}
 
-		if (this.canDraw) {
-			if (this.isPenOrStylus) {
-				// Don't update the shape if we haven't moved far enough from the last time we recorded a point
-				if (
-					Vec.Dist(inputs.currentPagePoint, this.lastRecordedPoint) >=
-					1 / this.editor.getZoomLevel()
-				) {
-					this.lastRecordedPoint = inputs.currentPagePoint.clone()
-					this.mergeNextPoint = false
-				} else {
-					this.mergeNextPoint = true
-				}
-			} else {
+		if (this.isPenOrStylus) {
+			// Don't update the shape if we haven't moved far enough from the last time we recorded a point
+			const currentPagePoint = inputs.getCurrentPagePoint()
+			if (Vec.Dist(currentPagePoint, this.lastRecordedPoint) >= 1 / this.zoomOnEnter) {
+				this.lastRecordedPoint = currentPagePoint.clone()
 				this.mergeNextPoint = false
+			} else {
+				this.mergeNextPoint = true
 			}
-
-			this.updateDrawingShape()
+		} else {
+			this.mergeNextPoint = false
 		}
+
+		this.updateDrawingShape()
 	}
 
-	override onKeyDown: TLEventHandlers['onKeyDown'] = (info) => {
+	override onKeyDown(info: TLKeyboardEventInfo) {
 		if (info.key === 'Shift') {
 			switch (this.segmentMode) {
 				case 'free': {
 					// We've just entered straight mode, go to straight mode
 					this.segmentMode = 'starting_straight'
-					this.pagePointWhereNextSegmentChanged = this.editor.inputs.currentPagePoint.clone()
+					this.pagePointWhereNextSegmentChanged = this.editor.inputs.getCurrentPagePoint().clone()
 					break
 				}
 				case 'starting_free': {
@@ -119,7 +120,7 @@ export class Drawing extends StateNode {
 		this.updateDrawingShape()
 	}
 
-	override onKeyUp: TLEventHandlers['onKeyUp'] = (info) => {
+	override onKeyUp(info: TLKeyboardEventInfo) {
 		if (info.key === 'Shift') {
 			this.editor.snaps.clearIndicators()
 
@@ -127,12 +128,21 @@ export class Drawing extends StateNode {
 				case 'straight': {
 					// We've just exited straight mode, go back to free mode
 					this.segmentMode = 'starting_free'
-					this.pagePointWhereNextSegmentChanged = this.editor.inputs.currentPagePoint.clone()
+					this.pagePointWhereNextSegmentChanged = this.editor.inputs.getCurrentPagePoint().clone()
 					break
 				}
 				case 'starting_straight': {
-					this.pagePointWhereNextSegmentChanged = null
-					this.segmentMode = 'free'
+					// Entered from 'starting_free' the last segment is still straight. A straight
+					// segment renders only its first two points, so writing free points into it
+					// freezes the stroke: go back to 'starting_free' instead of 'free'.
+					const shape =
+						this.initialShape && this.editor.getShape<DrawableShape>(this.initialShape.id)
+					if (shape && last(shape.props.segments)?.type === 'straight') {
+						this.segmentMode = 'starting_free'
+					} else {
+						this.pagePointWhereNextSegmentChanged = null
+						this.segmentMode = 'free'
+					}
 					break
 				}
 			}
@@ -141,50 +151,88 @@ export class Drawing extends StateNode {
 		this.updateDrawingShape()
 	}
 
-	override onExit? = () => {
+	override onExit() {
 		this.editor.snaps.clearIndicators()
-		this.pagePointWhereCurrentSegmentChanged = this.editor.inputs.currentPagePoint.clone()
+		this.pagePointWhereCurrentSegmentChanged = this.editor.inputs.getCurrentPagePoint().clone()
 	}
 
 	canClose() {
 		return this.shapeType !== 'highlight'
 	}
 
-	getIsClosed(segments: TLDrawShapeSegment[], size: TLDefaultSizeStyle) {
+	getIsClosed(
+		segments: TLDrawShapeSegment[],
+		size: TLDefaultSizeStyle,
+		scale: number,
+		strokeWidth?: number
+	) {
 		if (!this.canClose()) return false
 
-		const strokeWidth = STROKE_SIZES[size]
-		const firstPoint = segments[0].points[0]
+		if (strokeWidth === undefined) {
+			const theme = this.editor.getCurrentTheme()
+			strokeWidth = theme.strokeWidth * STROKE_SIZES[size]
+		}
+		const firstPoint = b64Vecs.decodeFirstPoint(segments[0].path, segments[0].dim)
 		const lastSegment = segments[segments.length - 1]
-		const lastPoint = lastSegment.points[lastSegment.points.length - 1]
+		const lastPoint = b64Vecs.decodeLastPoint(lastSegment.path, lastSegment.dim)
+
+		const isDynamicResizingEnabled = this.editor.user.getIsDynamicResizeMode()
+
+		const threshold = isDynamicResizingEnabled // when dynamic resizing is enabled scale is 1/zoom, so the threshold should not scale directly with zoom at all
+			? (strokeWidth + 2) * scale // +2 keeps tiny strokes from being too hard to close
+			: // 6 is a base floor, 2 is stroke influence, 0.8 tempers width growth
+				6 +
+				2 * Math.sqrt(strokeWidth * 0.8) +
+				// 100 is low-zoom boost, 0.18 is the zoom knee, 3 controls falloff steepness
+				100 / (1 + Math.pow(this.zoomOnEnter / 0.18, 3))
 
 		return (
-			firstPoint !== lastPoint &&
-			this.currentLineLength > strokeWidth * 4 &&
-			Vec.DistMin(firstPoint, lastPoint, strokeWidth * 2)
+			firstPoint !== null &&
+			lastPoint !== null &&
+			this.currentLineLength > strokeWidth * 4 * scale &&
+			Vec.DistMin(firstPoint, lastPoint, threshold)
 		)
 	}
 
-	private startShape() {
-		const {
-			inputs: { originPagePoint, isPen },
-		} = this.editor
+	/**
+	 * Build a segment from points, encoding `path` at this stroke's `segmentDim` and
+	 * attaching `dim: 2` only when z was dropped. 3D segments omit `dim` so they
+	 * serialize byte-identically to pre-#8879 data.
+	 */
+	private makeSegment(type: TLDrawShapeSegment['type'], points: VecModel[]): TLDrawShapeSegment {
+		const path = b64Vecs.encodePoints(points, this.segmentDim)
+		return this.segmentDim === DIM_2D ? { type, path, dim: DIM_2D } : { type, path }
+	}
 
-		this.markId = 'draw start ' + uniqueId()
-		this.editor.mark(this.markId)
+	private startShape() {
+		const inputs = this.editor.inputs
+		const originPagePoint = inputs.getOriginPagePoint()
+		const isPen = inputs.getIsPen()
+
+		this.markId = this.editor.markHistoryStoppingPoint('draw start')
 
 		// If the pressure is weird, then it's probably a stylus reporting as a mouse
 		// We treat pen/stylus inputs differently in the drawing tool, so we need to
 		// have our own value for this. The inputs.isPen is only if the input is a regular
 		// pen, like an iPad pen, which needs to trigger "pen mode" in order to avoid
 		// accidental palm touches. We don't have to worry about that with styluses though.
-		const z = this.info.point.z === undefined ? 0.5 : this.info.point.z
+		const { z = 0.5 } = this.info.point
+
 		this.isPen = isPen
-		this.isPenOrStylus = isPen || (z > 0 && z < 0.5) || (z > 0.5 && z < 1)
+		// if z === 0 on the initial point, treat this pen as a mouse because it's likely a broken pen
+		// or a broken OS.
+		this.isPenOrStylus = (isPen && z !== 0) || (z > 0 && z < 0.5) || (z > 0.5 && z < 1)
+
+		// Decide the encoding dimension once, here, from the input device — not by
+		// scanning point data (content-driven). Device-driven keeps the encoded bytes
+		// deterministic and is O(1) at stroke start. Non-pressure devices report a
+		// constant z (0 / 0.5 / 1) that we normalize to 0.5 and omit entirely (2D);
+		// pen/stylus input keeps the full 3D encoding.
+		this.segmentDim = this.isPenOrStylus ? undefined : DIM_2D
 
 		const pressure = this.isPenOrStylus ? z * 1.25 : 0.5
 
-		this.segmentMode = this.editor.inputs.shiftKey ? 'straight' : 'free'
+		this.segmentMode = this.editor.inputs.getShiftKey() ? 'straight' : 'free'
 
 		this.didJustShiftClickToExtendPreviousShapeLine = false
 
@@ -193,33 +241,24 @@ export class Drawing extends StateNode {
 		if (this.initialShape) {
 			const shape = this.editor.getShape<DrawableShape>(this.initialShape.id)
 
-			if (shape && this.segmentMode === 'straight') {
+			// The remembered shape survives a page change; extending it from another
+			// page would silently append a segment to content the user can't see (#10400)
+			if (shape && this.segmentMode === 'straight' && this.editor.isShapeInPage(shape)) {
 				// Connect dots
 
 				this.didJustShiftClickToExtendPreviousShapeLine = true
 
 				const prevSegment = last(shape.props.segments)
 				if (!prevSegment) throw Error('Expected a previous segment!')
-				const prevPoint = last(prevSegment.points)
+				const prevPoint = b64Vecs.decodeLastPoint(prevSegment.path, prevSegment.dim)
 				if (!prevPoint) throw Error('Expected a previous point!')
 
 				const { x, y } = this.editor.getPointInShapeSpace(shape, originPagePoint).toFixed()
 
-				const newSegment: TLDrawShapeSegment = {
-					type: this.segmentMode,
-					points: [
-						{
-							x: prevPoint.x,
-							y: prevPoint.y,
-							z: +pressure.toFixed(2),
-						},
-						{
-							x,
-							y,
-							z: +pressure.toFixed(2),
-						},
-					],
-				}
+				const newSegment = this.makeSegment(this.segmentMode, [
+					{ x: prevPoint.x, y: prevPoint.y, z: +pressure.toFixed(2) },
+					{ x, y, z: +pressure.toFixed(2) },
+				])
 
 				// Convert prevPoint to page space
 				const prevPointPageSpace = Mat.applyToPoint(
@@ -230,7 +269,9 @@ export class Drawing extends StateNode {
 				this.pagePointWhereNextSegmentChanged = null
 				const segments = [...shape.props.segments, newSegment]
 
-				if (this.currentLineLength < STROKE_SIZES[shape.props.size] * 4) {
+				const dvStrokeWidth = (getDisplayValues(this.util as any, shape) as { strokeWidth: number })
+					.strokeWidth
+				if (this.currentLineLength < dvStrokeWidth * 4) {
 					this.currentLineLength = this.getLineLength(segments)
 				}
 
@@ -245,11 +286,12 @@ export class Drawing extends StateNode {
 				if (this.canClose()) {
 					;(shapePartial as TLShapePartial<TLDrawShape>).props!.isClosed = this.getIsClosed(
 						segments,
-						shape.props.size
+						shape.props.size,
+						shape.props.scale
 					)
 				}
 
-				this.editor.updateShapes<TLDrawShape | TLHighlightShape>([shapePartial])
+				this.editor.updateShapes([shapePartial])
 
 				return
 			}
@@ -260,29 +302,27 @@ export class Drawing extends StateNode {
 		this.pagePointWhereCurrentSegmentChanged = originPagePoint.clone()
 		const id = createShapeId()
 
-		this.editor.createShapes<DrawableShape>([
-			{
-				id,
-				type: this.shapeType,
-				x: originPagePoint.x,
-				y: originPagePoint.y,
-				props: {
-					isPen: this.isPenOrStylus,
-					segments: [
-						{
-							type: this.segmentMode,
-							points: [
-								{
-									x: 0,
-									y: 0,
-									z: +pressure.toFixed(2),
-								},
-							],
-						},
-					],
-				},
+		// Initialize the segment points cache
+		const initialPoint = new Vec(0, 0, +pressure.toFixed(2))
+		this.currentSegmentPoints = [initialPoint]
+
+		// Allow this to trigger the max shapes reached alert
+		this.editor.createShape({
+			id,
+			type: this.shapeType,
+			x: originPagePoint.x,
+			y: originPagePoint.y,
+			props: {
+				isPen: this.isPenOrStylus,
+				scale: this.editor.getResizeScaleFactor(),
+				segments: [this.makeSegment(this.segmentMode, [initialPoint])],
 			},
-		])
+		})
+		const shape = this.editor.getShape<DrawableShape>(id)
+		if (!shape) {
+			this.cancel()
+			return
+		}
 		this.currentLineLength = 0
 		this.initialShape = this.editor.getShape<DrawableShape>(id)
 	}
@@ -295,7 +335,7 @@ export class Drawing extends StateNode {
 
 		const {
 			id,
-			props: { size },
+			props: { size, scale },
 		} = initialShape
 
 		const shape = this.editor.getShape<DrawableShape>(id)!
@@ -304,9 +344,10 @@ export class Drawing extends StateNode {
 
 		const { segments } = shape.props
 
-		const { x, y, z } = this.editor.getPointInShapeSpace(shape, inputs.currentPagePoint).toFixed()
-
-		const newPoint = { x, y, z: this.isPenOrStylus ? +(z! * 1.25).toFixed(2) : 0.5 }
+		const currentPagePoint = inputs.getCurrentPagePoint()
+		const { x, y, z } = this.editor.getPointInShapeSpace(shape, currentPagePoint).toFixed()
+		const pressure = this.isPenOrStylus ? +(currentPagePoint.z! * 1.25).toFixed(2) : 0.5
+		const newPoint = { x, y, z: pressure }
 
 		switch (this.segmentMode) {
 			case 'starting_straight': {
@@ -316,8 +357,11 @@ export class Drawing extends StateNode {
 					throw Error('We should have a point where the segment changed')
 				}
 
+				// page-space distance against a screen-space threshold, so scale by the zoom
+				const zoom = this.editor.getZoomLevel()
 				const hasMovedFarEnough =
-					Vec.Dist2(pagePointWhereNextSegmentChanged, inputs.currentPagePoint) > DRAG_DISTANCE
+					Vec.Dist2(pagePointWhereNextSegmentChanged, inputs.getCurrentPagePoint()) * zoom * zoom >
+					this.editor.options.dragDistanceSquared
 
 				// Find the distance from where the pointer was when shift was released and
 				// where it is now; if it's far enough away, then update the page point where
@@ -333,7 +377,7 @@ export class Drawing extends StateNode {
 					const prevSegment = last(segments)
 					if (!prevSegment) throw Error('Expected a previous segment!')
 
-					const prevLastPoint = last(prevSegment.points)
+					const prevLastPoint = b64Vecs.decodeLastPoint(prevSegment.path, prevSegment.dim)
 					if (!prevLastPoint) throw Error('Expected a previous last point!')
 
 					let newSegment: TLDrawShapeSegment
@@ -346,37 +390,35 @@ export class Drawing extends StateNode {
 					if (prevSegment.type === 'straight') {
 						this.currentLineLength += Vec.Dist(prevLastPoint, newLastPoint)
 
-						newSegment = {
-							type: 'straight',
-							points: [{ ...prevLastPoint }, newLastPoint],
-						}
+						newSegment = this.makeSegment('straight', [prevLastPoint, newLastPoint])
 
 						const transform = this.editor.getShapePageTransform(shape)!
 
 						this.pagePointWhereCurrentSegmentChanged = Mat.applyToPoint(transform, prevLastPoint)
 					} else {
-						newSegment = {
-							type: 'straight',
-							points: [newLastPoint, newPoint],
-						}
+						this.currentLineLength += Vec.Dist(newLastPoint, newPoint)
+
+						newSegment = this.makeSegment('straight', [newLastPoint, newPoint])
 					}
 
+					const nextSegments = [...segments, newSegment]
 					const shapePartial: TLShapePartial<DrawableShape> = {
 						id,
 						type: this.shapeType,
 						props: {
-							segments: [...segments, newSegment],
+							segments: nextSegments,
 						},
 					}
 
 					if (this.canClose()) {
 						;(shapePartial as TLShapePartial<TLDrawShape>).props!.isClosed = this.getIsClosed(
-							segments,
-							size
+							nextSegments,
+							size,
+							scale
 						)
 					}
 
-					this.editor.updateShapes<TLDrawShape | TLHighlightShape>([shapePartial])
+					this.editor.updateShapes([shapePartial])
 				}
 				break
 			}
@@ -387,8 +429,11 @@ export class Drawing extends StateNode {
 					throw Error('We should have a point where the segment changed')
 				}
 
+				// page-space distance against a screen-space threshold, so scale by the zoom
+				const zoom = this.editor.getZoomLevel()
 				const hasMovedFarEnough =
-					Vec.Dist2(pagePointWhereNextSegmentChanged, inputs.currentPagePoint) > DRAG_DISTANCE
+					Vec.Dist2(pagePointWhereNextSegmentChanged, inputs.getCurrentPagePoint()) * zoom * zoom >
+					this.editor.options.dragDistanceSquared
 
 				// Find the distance from where the pointer was when shift was released and
 				// where it is now; if it's far enough away, then update the page point where
@@ -403,7 +448,10 @@ export class Drawing extends StateNode {
 
 					const newSegments = segments.slice()
 					const prevStraightSegment = newSegments[newSegments.length - 1]
-					const prevPoint = last(prevStraightSegment.points)
+					const prevPoint = b64Vecs.decodeLastPoint(
+						prevStraightSegment.path,
+						prevStraightSegment.dim
+					)
 
 					if (!prevPoint) {
 						throw Error('No previous point!')
@@ -411,14 +459,20 @@ export class Drawing extends StateNode {
 
 					// Create the new free segment and interpolate the points between where the last line
 					// ended and where the pointer is now
-					const newFreeSegment: TLDrawShapeSegment = {
-						type: 'free',
-						points: [...Vec.PointsBetween(prevPoint, newPoint, 6).map((p) => p.toFixed().toJson())],
-					}
+					const interpolatedPoints = Vec.PointsBetween(prevPoint, newPoint, 6).map(
+						(p) => new Vec(toFixed(p.x), toFixed(p.y), toFixed(p.z))
+					)
+					// Initialize cache for the new free segment
+					this.currentSegmentPoints = interpolatedPoints
+
+					const newFreeSegment = this.makeSegment('free', interpolatedPoints)
 
 					const finalSegments = [...newSegments, newFreeSegment]
 
-					if (this.currentLineLength < STROKE_SIZES[shape.props.size] * 4) {
+					const dvStrokeWidth = (
+						getDisplayValues(this.util as any, shape) as { strokeWidth: number }
+					).strokeWidth
+					if (this.currentLineLength < dvStrokeWidth * 4) {
 						this.currentLineLength = this.getLineLength(finalSegments)
 					}
 
@@ -433,7 +487,8 @@ export class Drawing extends StateNode {
 					if (this.canClose()) {
 						;(shapePartial as TLShapePartial<TLDrawShape>).props!.isClosed = this.getIsClosed(
 							finalSegments,
-							size
+							size,
+							scale
 						)
 					}
 
@@ -447,7 +502,9 @@ export class Drawing extends StateNode {
 				const newSegment = newSegments[newSegments.length - 1]
 
 				const { pagePointWhereCurrentSegmentChanged } = this
-				const { ctrlKey, currentPagePoint } = this.editor.inputs
+				const inputs = this.editor.inputs
+				const ctrlKey = inputs.getCtrlKey()
+				const currentPagePoint = inputs.getCurrentPagePoint()
 
 				if (!pagePointWhereCurrentSegmentChanged)
 					throw Error('We should have a point where the segment changed')
@@ -456,7 +513,7 @@ export class Drawing extends StateNode {
 				let shouldSnapToAngle = false
 
 				if (this.didJustShiftClickToExtendPreviousShapeLine) {
-					if (this.editor.inputs.isDragging) {
+					if (this.editor.inputs.getIsDragging()) {
 						// If we've just shift clicked to extend a line, only snap once we've started dragging
 						shouldSnapToAngle = !ctrlKey
 						this.didJustShiftClickToExtendPreviousShapeLine = false
@@ -477,7 +534,7 @@ export class Drawing extends StateNode {
 				if (shouldSnap) {
 					if (newSegments.length > 2) {
 						let nearestPoint: VecModel | undefined = undefined
-						let minDistance = 8 / this.editor.getZoomLevel()
+						let minDistance = 8 / this.zoomOnEnter
 
 						// Don't try to snap to the last two segments
 						for (let i = 0, n = segments.length - 2; i < n; i++) {
@@ -485,8 +542,8 @@ export class Drawing extends StateNode {
 							if (!segment) break
 							if (segment.type === 'free') continue
 
-							const first = segment.points[0]
-							const lastPoint = last(segment.points)
+							const first = b64Vecs.decodeFirstPoint(segment.path, segment.dim)
+							const lastPoint = b64Vecs.decodeLastPoint(segment.path, segment.dim)
 							if (!(first && lastPoint)) continue
 
 							// Snap to the nearest point on the segment, if it's closer than the previous snapped point
@@ -513,9 +570,9 @@ export class Drawing extends StateNode {
 
 				if (didSnap && snapSegment) {
 					const transform = this.editor.getShapePageTransform(shape)!
-					const first = snapSegment.points[0]
-					const lastPoint = last(snapSegment.points)
-					if (!lastPoint) throw Error('Expected a last point!')
+					const first = b64Vecs.decodeFirstPoint(snapSegment.path, snapSegment.dim)
+					const lastPoint = b64Vecs.decodeLastPoint(snapSegment.path, snapSegment.dim)
+					if (!first || !lastPoint) throw Error('Expected a last point!')
 
 					const A = Mat.applyToPoint(transform, first)
 
@@ -545,7 +602,7 @@ export class Drawing extends StateNode {
 							angleDiff
 						)
 					} else {
-						pagePoint = currentPagePoint
+						pagePoint = currentPagePoint.clone()
 					}
 
 					newPoint = this.editor.getPointInShapeSpace(shape, pagePoint).toFixed().toJson()
@@ -555,12 +612,17 @@ export class Drawing extends StateNode {
 				// then the user just did a click-and-immediately-press-shift to create a new straight line
 				// without continuing the previous line. In this case, we want to remove the previous segment.
 
-				this.currentLineLength += Vec.Dist(newSegment.points[0], newPoint)
+				// A straight segment is just [first, last]; swap its previous length for the new one
+				// (adding the whole length on every move would let tiny strokes close as if long).
+				const firstPoint = b64Vecs.decodeFirstPoint(newSegment.path, newSegment.dim)!
+				const prevLastPoint = b64Vecs.decodeLastPoint(newSegment.path, newSegment.dim)!
+				this.currentLineLength +=
+					Vec.Dist(firstPoint, Vec.From(newPoint)) - Vec.Dist(firstPoint, prevLastPoint)
 
 				newSegments[newSegments.length - 1] = {
 					...newSegment,
 					type: 'straight',
-					points: [newSegment.points[0], newPoint],
+					path: b64Vecs.encodePoints([firstPoint, Vec.From(newPoint)], newSegment.dim),
 				}
 
 				const shapePartial: TLShapePartial<DrawableShape> = {
@@ -573,8 +635,9 @@ export class Drawing extends StateNode {
 
 				if (this.canClose()) {
 					;(shapePartial as TLShapePartial<TLDrawShape>).props!.isClosed = this.getIsClosed(
-						segments,
-						size
+						newSegments,
+						size,
+						scale
 					)
 				}
 
@@ -583,30 +646,33 @@ export class Drawing extends StateNode {
 				break
 			}
 			case 'free': {
-				const newSegments = segments.slice()
-				const newSegment = newSegments[newSegments.length - 1]
-				const newPoints = [...newSegment.points]
+				// Use cached points instead of decoding from b64 on every update
+				const cachedPoints = this.currentSegmentPoints
 
-				if (newPoints.length && this.mergeNextPoint) {
-					const { z } = newPoints[newPoints.length - 1]
-					newPoints[newPoints.length - 1] = {
-						x: newPoint.x,
-						y: newPoint.y,
-						z: z ? Math.max(z, newPoint.z) : newPoint.z,
-					}
+				if (cachedPoints.length && this.mergeNextPoint) {
+					const lastPoint = cachedPoints[cachedPoints.length - 1]
+					lastPoint.x = newPoint.x
+					lastPoint.y = newPoint.y
+					lastPoint.z = lastPoint.z ? Math.max(lastPoint.z, newPoint.z) : newPoint.z
 					// Note: we could recompute the line length here, but it's not really necessary
 					// this.currentLineLength = this.getLineLength(newSegments)
 				} else {
-					this.currentLineLength += Vec.Dist(newPoints[newPoints.length - 1], newPoint)
-					newPoints.push(newPoint)
+					this.currentLineLength += cachedPoints.length
+						? Vec.Dist(cachedPoints[cachedPoints.length - 1], newPoint)
+						: 0
+					cachedPoints.push(new Vec(newPoint.x, newPoint.y, newPoint.z))
 				}
 
+				const newSegments = segments.slice()
+				const newSegment = newSegments[newSegments.length - 1]
 				newSegments[newSegments.length - 1] = {
 					...newSegment,
-					points: newPoints,
+					path: b64Vecs.encodePoints(cachedPoints, newSegment.dim),
 				}
 
-				if (this.currentLineLength < STROKE_SIZES[shape.props.size] * 4) {
+				const dvStrokeWidth = (getDisplayValues(this.util as any, shape) as { strokeWidth: number })
+					.strokeWidth
+				if (this.currentLineLength < dvStrokeWidth * 4) {
 					this.currentLineLength = this.getLineLength(newSegments)
 				}
 
@@ -621,39 +687,51 @@ export class Drawing extends StateNode {
 				if (this.canClose()) {
 					;(shapePartial as TLShapePartial<TLDrawShape>).props!.isClosed = this.getIsClosed(
 						newSegments,
-						size
+						size,
+						scale
 					)
 				}
 
 				this.editor.updateShapes([shapePartial])
 
 				// Set a maximum length for the lines array; after 200 points, complete the line.
-				if (newPoints.length > 500) {
+				if (cachedPoints.length > this.util.options.maxPointsPerShape) {
 					this.editor.updateShapes([{ id, type: this.shapeType, props: { isComplete: true } }])
 
 					const newShapeId = createShapeId()
 
-					this.editor.createShapes<DrawableShape>([
-						{
-							id: newShapeId,
-							type: this.shapeType,
-							x: toFixed(inputs.currentPagePoint.x),
-							y: toFixed(inputs.currentPagePoint.y),
-							props: {
-								isPen: this.isPenOrStylus,
-								segments: [
-									{
-										type: 'free',
-										points: [{ x: 0, y: 0, z: this.isPenOrStylus ? +(z! * 1.25).toFixed() : 0.5 }],
-									},
-								],
-							},
-						},
-					])
+					const props = this.editor.getShape<DrawableShape>(id)!.props
 
-					this.initialShape = structuredClone(this.editor.getShape<DrawableShape>(newShapeId)!)
+					if (!this.editor.canCreateShapes([newShapeId])) return this.cancel()
+					const currentPagePoint = inputs.getCurrentPagePoint()
+
+					// Reset cache for the new shape's segment
+					const initialPoint = new Vec(0, 0, this.isPenOrStylus ? +(z! * 1.25).toFixed(2) : 0.5)
+					this.currentSegmentPoints = [initialPoint]
+
+					this.editor.createShape({
+						id: newShapeId,
+						type: this.shapeType,
+						x: toFixed(currentPagePoint.x),
+						y: toFixed(currentPagePoint.y),
+						props: {
+							isPen: this.isPenOrStylus,
+							scale: props.scale,
+							segments: [this.makeSegment('free', [initialPoint])],
+						},
+					})
+
+					const shape = this.editor.getShape<DrawableShape>(newShapeId)
+
+					if (!shape) {
+						// This would only happen if the page is full and no more shapes can be created. The bug would manifest as a crash when we try to clone the shape.
+						// todo: handle this type of thing better
+						return this.cancel()
+					}
+
+					this.initialShape = structuredClone(shape)
 					this.mergeNextPoint = false
-					this.lastRecordedPoint = inputs.currentPagePoint.clone()
+					this.lastRecordedPoint = currentPagePoint.clone()
 					this.currentLineLength = 0
 				}
 
@@ -665,31 +743,30 @@ export class Drawing extends StateNode {
 	private getLineLength(segments: TLDrawShapeSegment[]) {
 		let length = 0
 
-		for (const segment of segments) {
-			for (let i = 0; i < segment.points.length - 1; i++) {
-				const A = segment.points[i]
-				const B = segment.points[i + 1]
-				length += Vec.Dist2(B, A)
+		for (let j = 0; j < segments.length; j++) {
+			const points = b64Vecs.decodePoints(segments[j].path, segments[j].dim)
+			for (let i = 0; i < points.length - 1; i++) {
+				length += Vec.Dist(points[i], points[i + 1])
 			}
 		}
 
-		return Math.sqrt(length)
+		return length
 	}
 
-	override onPointerUp: TLEventHandlers['onPointerUp'] = () => {
+	override onPointerUp() {
 		this.complete()
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onCancel() {
 		this.cancel()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onComplete() {
 		this.complete()
 	}
 
-	override onInterrupt: TLEventHandlers['onInterrupt'] = () => {
-		if (this.editor.inputs.isDragging) {
+	override onInterrupt() {
+		if (this.editor.inputs.getIsDragging()) {
 			return
 		}
 
@@ -700,15 +777,6 @@ export class Drawing extends StateNode {
 	}
 
 	complete() {
-		// If we weren't focused when the drawing shape started, and if
-		// we haven't dragged far enough to start dragging, then don't do
-		// anything here. Most likely we clicked back into the canvas from
-		// a menu or other UI element.
-		if (!this.canDraw) {
-			this.cancel()
-			return
-		}
-
 		const { initialShape } = this
 		if (!initialShape) return
 		this.editor.updateShapes([

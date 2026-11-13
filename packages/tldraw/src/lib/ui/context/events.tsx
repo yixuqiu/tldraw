@@ -21,6 +21,9 @@ export type TLUiEventSource =
 	| 'help-menu'
 	| 'helper-buttons'
 	| 'style-panel'
+	| 'rich-text-menu'
+	| 'image-toolbar'
+	| 'video-toolbar'
 	| 'unknown'
 
 /** @public */
@@ -29,10 +32,19 @@ export interface TLUiEventMap {
 	undo: null
 	redo: null
 	'change-language': { locale: string }
+	'change-page': { direction?: 'prev' | 'next' }
+	'select-adjacent-shape': { direction: 'prev' | 'next' | 'left' | 'right' | 'up' | 'down' }
+	'delete-page': null
+	'duplicate-page': null
+	'move-page': null
 	'new-page': null
+	'rename-page': null
 	'move-to-page': null
+	'move-to-new-page': null
+	'rename-document': null
 	'group-shapes': null
 	'ungroup-shapes': null
+	'frame-selection': null
 	'remove-frame': null
 	'fit-frame-to-content': null
 	'convert-to-embed': null
@@ -42,9 +54,14 @@ export interface TLUiEventMap {
 	'copy-as': { format: 'svg' | 'png' | 'json' }
 	'export-as': { format: 'svg' | 'png' | 'json' }
 	'export-all-as': { format: 'svg' | 'png' | 'json' }
+	'download-original': null
 	'edit-link': null
 	'insert-embed': null
 	'insert-media': null
+	'replace-media': null
+	'image-manipulate': null
+	'alt-text-start': null
+	'set-alt-text': null
 	'align-shapes': {
 		operation: 'left' | 'center-horizontal' | 'right' | 'top' | 'center-vertical' | 'bottom'
 	}
@@ -60,10 +77,10 @@ export interface TLUiEventMap {
 	'delete-shapes': null
 	'select-all-shapes': null
 	'select-none-shapes': null
-	'rotate-ccw': null
-	'rotate-cw': null
-	'zoom-in': null
-	'zoom-out': null
+	'rotate-ccw': { fine: boolean }
+	'rotate-cw': { fine: boolean }
+	'zoom-in': { towardsCursor: boolean }
+	'zoom-out': { towardsCursor: boolean }
 	'zoom-to-fit': null
 	'zoom-to-selection': null
 	'reset-zoom': null
@@ -84,47 +101,85 @@ export interface TLUiEventMap {
 	'toggle-snap-mode': null
 	'toggle-tool-lock': null
 	'toggle-grid-mode': null
-	'toggle-dark-mode': null
 	'toggle-wrap-mode': null
 	'toggle-focus-mode': null
+	'input-mode': { value: string }
+	'toggle-invert-zoom': null
 	'toggle-debug-mode': null
+	'toggle-dynamic-size-mode': null
+	'toggle-paste-at-cursor': null
 	'toggle-lock': null
 	'toggle-reduce-motion': null
+	'toggle-keyboard-shortcuts': null
+	'enhanced-a11y-mode': null
 	'toggle-edge-scrolling': null
+	'color-scheme': { value: string }
 	'exit-pen-mode': null
+	'start-following': null
 	'stop-following': null
+	'set-color': null
+	'change-user-name': null
 	'open-cursor-chat': null
 	'zoom-tool': null
 	'unlock-all': null
+	'enlarge-shapes': null
+	'shrink-shapes': null
+	'flatten-to-image': null
+	'a11y-repeat-shape-announce': null
+	'open-url': { destinationUrl: string }
+	'open-context-menu': null
+	'adjust-shape-styles': null
+	'copy-link': null
+	'drag-tool': { id: string }
+	'image-replace': null
+	'video-replace': null
+	'open-kbd-shortcuts': null
+	'rich-text': {
+		operation:
+			| 'bold'
+			| 'italic'
+			| 'code'
+			| 'highlight'
+			| 'strike'
+			| 'link'
+			| 'link-edit'
+			| 'link-visit'
+			| 'link-remove'
+			| 'heading'
+			| 'bulletList'
+	}
+	edit: null
+	'copy-hovered-styles': null
 }
 
-type Join<T, K> = K extends null
-	? { [R in keyof T]: T[R] }
-	: { [R in keyof T]: T[R] } & { [R in keyof K]: K[R] }
+/** @public */
+export type TLUiEventData<K> = K extends null
+	? { source: TLUiEventSource }
+	: { source: TLUiEventSource } & K
 
 /** @public */
-export type TLUiEventHandler<T extends keyof TLUiEventMap = keyof TLUiEventMap> = (
+export type TLUiEventHandler = <T extends keyof TLUiEventMap>(
 	name: T,
-	data: Join<{ source: TLUiEventSource }, TLUiEventMap[T]>
+	data: TLUiEventData<TLUiEventMap[T]>
 ) => void
 
-/** @internal */
-const defaultEventHandler: TLUiEventHandler = () => void null
-
 /** @public */
-export type TLUiEventContextType = TLUiEventHandler<keyof TLUiEventMap>
+export type TLUiEventContextType = TLUiEventHandler
 
 /** @internal */
-export const EventsContext = React.createContext<TLUiEventContextType>({} as TLUiEventContextType)
+const defaultEventHandler: TLUiEventContextType = () => void null
+
+/** @internal */
+export const EventsContext = React.createContext<TLUiEventContextType | null>(null)
 
 /** @public */
-export type EventsProviderProps = {
+export interface EventsProviderProps {
 	onEvent?: TLUiEventHandler
 	children: React.ReactNode
 }
 
-/** @public */
-export function UiEventsProvider({ onEvent, children }: EventsProviderProps) {
+/** @public @react */
+export function TldrawUiEventsProvider({ onEvent, children }: EventsProviderProps) {
 	return (
 		<EventsContext.Provider value={onEvent ?? defaultEventHandler}>
 			{children}
@@ -133,7 +188,7 @@ export function UiEventsProvider({ onEvent, children }: EventsProviderProps) {
 }
 
 /** @public */
-export function useUiEvents() {
+export function useUiEvents(): TLUiEventContextType {
 	const eventHandler = React.useContext(EventsContext)
 	return eventHandler ?? defaultEventHandler
 }

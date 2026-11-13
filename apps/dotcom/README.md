@@ -1,83 +1,34 @@
-# Project overview
+# dotcom
 
-This project is a Next.js application which contains the **tldraw free** as well as the **tldraw pro** applications. We are currently using the Next.js 13 option of having both `pages` (tldraw free) and `app` (tldraw pro) directory inside the same app. We did this since the free offering is the continuation of a Next.js version 12 app and it allowed us to combine it with the new App router option from Next.js 13 for tldraw pro without having to do a full migration to App router.
+## Development
 
-We also split the supabase into two projects:
+You'll need a clerk publishable and secret key.
 
-- `tldraw-v2` for tldraw free where we mainly store the snapshots data
-- `tldraw-pro` for tldraw pro which holds all the relational data that the pro version requires
+In `sync-worker/.dev.vars`, set `CLERK_PUBLISHABLE_KEY` & `CLERK_SECRET_KEY`. In `client/.env.local`, set `VITE_CLERK_PUBLISHABLE_KEY`.
 
-On top of that we also use R2 for storing the documents data.
+The dev stack is orchestrated by [process-compose](https://github.com/F1bonacc1/process-compose). You don't need to install it — `pnpm dev-app` fetches the pinned binary on first use. Run the app from the repo root:
 
-# How to run the project
+```bash
+pnpm dev-app
+```
 
-## Tldraw pro
+This brings up the whole stack — postgres and pgbouncer (in containers), zero-cache, the workers, and the client — as host processes. The ports are fixed, so only one dotcom dev stack can run at a time. The services and their startup order are defined in [`process-compose.yaml`](process-compose.yaml).
 
-The development of tldraw pro happens against a local supabase instance. To set that up, you'll
-first need to [install & start docker](https://www.docker.com/products/docker-desktop/).
+### Working with the stack
 
-Once docker is started & you've run `yarn` to install tldraw's dependencies, the rest should be
-handled automatically. Running `yarn dev-app` will:
+By default `pnpm dev-app` opens the process-compose TUI, listing each service with its status, logs, and health.
 
-1. Start a local instance of supabase
-2. Run any database migrations
-3. Update your .env.local file with credentials for your local supabase instance
-4. Start tldraw
+- **Quit:** `F10` or `Ctrl-C`. This stops every process and runs postgres's `docker compose down` — the clean way to stop. Closing the terminal tab instead can leave the postgres container and stray workers running.
+- **Inspect a service:** select it with the arrow keys to see its logs; press `F1` for the full key bindings (start / stop / restart a selected process).
+- **Plain interleaved logs, no TUI:** `PC_DISABLE_TUI=1 pnpm dev-app` streams every service's logs to stdout (this is also how it runs in CI).
+- **Drive it from another terminal or a script** — the `process-compose` client connects to the running stack:
 
-The [supabase local development docs](https://supabase.com/docs/guides/cli/local-development) are a
-good reference. When working on tldraw, the `supabase` command is available by running `yarn
-supabase` in the `apps/app` directory e.g. `yarn supabase status`.
+  ```bash
+  pnpm dev-app:doctor                                       # status of every service
+  pnpm exec process-compose process logs zero-cache --tail 200
+  pnpm exec process-compose process restart sync-worker
+  ```
 
-When you're finished, we don't stop supabase because it takes a while each time we start and stop
-it. Run `yarn supabase stop` to stop it manually.
+- **Reset server state:** `pnpm dev-app:clean` tears down the postgres container + volume, the zero replica, and wrangler state.
 
-If you write any new database migrations, you can apply those with `yarn supabase migration up`.
-
-## Some helpers
-
-1. You can see your db schema at the `Studio URL` printed out in the step 2.
-2. If you ever need to reset your local supabase instance you can run `supabase db reset` in the root of `apps/app` project.
-3. The production version of Supabase sends out emails for certain events (email confirmation link, password reset link, etc). In local development you can find these emails at the `Inbucket URL` printed out in the step 2.
-
-## Tldraw free
-
-The development of tldraw free happens against the production supabase instance. We only store snapshots data to one of the three tables, depending on the environment. The tables are:
-
-- `snapshots` - for production
-- `snapshots_staging` - for staging
-- `snapshots_dev` - for development
-
-For local development you need to add the following env variables to `.env.local`:
-
-- `SUPABASE_URL` - use the production supabase url
-- `SUPABASE_KEY` - use the production supabase anon key
-
-Once you have the environment variables set up you can run `yarn dev-app` from the root folder of our repo to start developing.
-
-## Running database tests
-
-You need to have a psql client [installed](https://www.timescale.com/blog/how-to-install-psql-on-mac-ubuntu-debian-windows/). You can then run `yarn test-supabase` to run [db tests](https://supabase.com/docs/guides/database/extensions/pgtap).
-
-## Sending emails
-
-We are using [Resend](https://resend.com/) for sending emails. It allows us to write emails as React components. Emails live in a separate app `apps/tl-emails`.
-
-Right now we are only using Resend via Supabase, but in the future we will probably also include Resend in our application and send emails directly.
-
-The development workflow is as follows:
-
-### 1. Creating / updating an email template
-
-To start the development server for email run `yarn dev-email` from the root folder of our repo. You can then open [http://localhost:3333](http://localhost:3333) to see the result. This allows for quick local development of email templates.
-
-Any images you want to use in the email should be uploaded to supabase to the `email` bucket.
-
-Supabase provides some custom params (like the magic link url) that we can insert into our email, [check their website](https://supabase.com/dashboard/project/faafybhoymfftncjttyq/auth/templates) for more info.
-
-### 2. Generating the `html` version of the email
-
-Once you are happy with the email template you can run `yarn build-email` from the root folder of our repo. This will generate the `html` version of the email and place it in `apps/tl-emails/out` folder.
-
-### 3. Updating the template in Supabase
-
-Once you have the `html` version of the email you can copy it into the Supabase template editor. You can find the templates [here](https://supabase.com/dashboard/project/faafybhoymfftncjttyq/auth/templates).
+Browser-side state is separate. After starting the stack, visit `http://localhost:3000/dev/reset-local-state` to clear local storage, IndexedDB, caches, service workers, accessible cookies, and Clerk session state for the current origin.

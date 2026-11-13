@@ -1,9 +1,8 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useMemo } from 'react'
 import { TLUiEventSource } from '../../../context/events'
 
 /** @public */
-export type TldrawUiMenuContextType =
-	| 'panel'
+export type TLUiMenuContextType =
 	| 'menu'
 	| 'small-icons'
 	| 'context-menu'
@@ -14,27 +13,33 @@ export type TldrawUiMenuContextType =
 	| 'toolbar-overflow'
 
 const menuContext = createContext<{
-	type: TldrawUiMenuContextType
+	type: TLUiMenuContextType
 	sourceId: TLUiEventSource
-}>({ type: 'menu', sourceId: 'main-menu' })
+} | null>(null)
 
 /** @public */
 export function useTldrawUiMenuContext() {
-	return useContext(menuContext)
+	const context = useContext(menuContext)
+	if (!context) {
+		throw new Error('useTldrawUiMenuContext must be used within a TldrawUiMenuContextProvider')
+	}
+	return context
 }
 
 /** @public */
-export type TLUiMenuContextProviderProps = {
-	type: TldrawUiMenuContextType
+export interface TLUiMenuContextProviderProps {
+	type: TLUiMenuContextType
 	sourceId: TLUiEventSource
 	children: React.ReactNode
 }
 
-/** @public */
+/** @public @react */
 export function TldrawUiMenuContextProvider({
 	type,
 	sourceId,
 	children,
 }: TLUiMenuContextProviderProps) {
-	return <menuContext.Provider value={{ type, sourceId }}>{children}</menuContext.Provider>
+	// A fresh value each render would re-render every item in the menu whenever the menu renders.
+	const value = useMemo(() => ({ type, sourceId }), [type, sourceId])
+	return <menuContext.Provider value={value}>{children}</menuContext.Provider>
 }

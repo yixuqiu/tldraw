@@ -1,157 +1,183 @@
 import {
-	ANIMATION_MEDIUM_MS,
 	Editor,
-	Geometry2d,
-	Mat,
+	ExtractShapeByProps,
+	HALF_PI,
+	richTextValidator,
+	StateNode,
+	TLClickEventInfo,
+	TLEventInfo,
+	TLPointerEventInfo,
+	TLRichText,
 	TLShape,
 	TLShapeId,
 	Vec,
-	compact,
+	VecLike,
 	pointInPolygon,
-	polygonIntersectsPolyline,
-	polygonsIntersect,
+	approximately,
 } from '@tldraw/editor'
 
 /** @internal */
-export function kickoutOccludedShapes(editor: Editor, shapeIds: TLShapeId[]) {
-	// const shapes = shapeIds.map((id) => editor.getShape(id)).filter((s) => s) as TLShape[]
-	const parentsToCheck = new Set<TLShape>()
-	for (const id of shapeIds) {
-		// If the shape exists and the shape has an onDragShapesOut
-		// function, add it to the set
-		const shape = editor.getShape(id)
-		if (!shape) continue
-		if (editor.getShapeUtil(shape).onDragShapesOut) {
-			parentsToCheck.add(shape)
-		}
-		// If the shape's parent is a shape and the shape's parent
-		// has an onDragShapesOut function, add it to the set
-		const parent = editor.getShape(shape.parentId)
-		if (!parent) continue
-		if (editor.getShapeUtil(parent).onDragShapesOut) {
-			parentsToCheck.add(parent)
-		}
-	}
-
-	const parentsWithKickedOutChildren = new Map<TLShape, TLShapeId[]>()
-
-	for (const parent of parentsToCheck) {
-		const occludedChildren = getOccludedChildren(editor, parent)
-		if (occludedChildren.length) {
-			parentsWithKickedOutChildren.set(parent, occludedChildren)
-		}
-	}
-
-	// now call onDragShapesOut for each parent
-	for (const [parent, kickedOutChildrenIds] of parentsWithKickedOutChildren) {
-		const shapeUtil = editor.getShapeUtil(parent)
-		const kickedOutChildren = compact(kickedOutChildrenIds.map((id) => editor.getShape(id)))
-		shapeUtil.onDragShapesOut?.(parent, kickedOutChildren)
-	}
+export function hasRichText(
+	shape: TLShape
+): shape is ExtractShapeByProps<{ richText: TLRichText }> {
+	return 'richText' in shape.props && richTextValidator.isValid(shape.props.richText)
 }
+/**
+ * Start editing a shape that has rich text, such as text, note, geo, or arrow shapes.
+ * This will enter the editing state for the shape and optionally select all the text.
+ *
+ * @param editor - The editor instance.
+ * @param shapeOrId - The shape to start editing. This shape must have a richText property with a TLRichText value.
+ * @param options - Options: selectAll or info (TLEventInfo)
+ *
+ * @public
+ */
+export function startEditingShapeWithRichText(
+	editor: Editor,
+	shapeOrId: TLShape | TLShapeId,
+	options: { selectAll?: boolean; info?: TLEventInfo } = {}
+) {
+	const shape = typeof shapeOrId === 'string' ? editor.getShape(shapeOrId) : shapeOrId
+	if (!shape) return
 
-/** @public */
-export function getOccludedChildren(editor: Editor, parent: TLShape) {
-	const childIds = editor.getSortedChildIdsForParent(parent.id)
-	if (childIds.length === 0) return []
-	const parentPageBounds = editor.getShapePageBounds(parent)
-	if (!parentPageBounds) return []
+	if (!editor.canEditShape(shape)) return
 
-	let parentGeometry: Geometry2d | undefined
-	let parentPageTransform: Mat | undefined
-	let parentPageCorners: Vec[] | undefined
-
-	const results: TLShapeId[] = []
-
-	for (const childId of childIds) {
-		const shapePageBounds = editor.getShapePageBounds(childId)
-		if (!shapePageBounds) {
-			// Not occluded, shape doesn't exist
-			continue
-		}
-
-		if (!parentPageBounds.includes(shapePageBounds)) {
-			// Not in shape's bounds, shape is occluded
-			results.push(childId)
-			continue
-		}
-
-		// There might be a lot of children; we don't want to do this for all of them,
-		// but we also don't want to do it at all if we don't have to. ??= to the rescue!
-
-		parentGeometry ??= editor.getShapeGeometry(parent)
-		parentPageTransform ??= editor.getShapePageTransform(parent)
-		parentPageCorners ??= parentPageTransform.applyToPoints(parentGeometry.vertices)
-
-		const parentCornersInShapeSpace = editor
-			.getShapePageTransform(childId)
-			.clone()
-			.invert()
-			.applyToPoints(parentPageCorners)
-
-		// If any of the shape's vertices are inside the occluder, it's not occluded
-		const { vertices, isClosed } = editor.getShapeGeometry(childId)
-
-		if (vertices.some((v) => pointInPolygon(v, parentCornersInShapeSpace))) {
-			// not occluded, vertices are in the occluder's corners
-			continue
-		}
-
-		// If any the shape's vertices intersect the edge of the occluder, it's not occluded
-		if (isClosed) {
-			if (polygonsIntersect(parentCornersInShapeSpace, vertices)) {
-				// not occluded, vertices intersect parent's corners
-				continue
-			}
-		} else if (polygonIntersectsPolyline(parentCornersInShapeSpace, vertices)) {
-			// not occluded, vertices intersect parent's corners
-			continue
-		}
-
-		// Passed all checks, shape is occluded
-		results.push(childId)
+	if (!hasRichText(shape)) {
+		throw new Error('Shape does not have rich text')
 	}
-
-	return results
-}
-
-/** @internal */
-export function startEditingShapeWithLabel(editor: Editor, shape: TLShape, selectAll = false) {
 	// Finish this shape and start editing the next one
-	editor.select(shape)
 	editor.setEditingShape(shape)
 	editor.setCurrentTool('select.editing_shape', {
+		...options.info,
 		target: 'shape',
 		shape: shape,
 	})
-	if (selectAll) {
+	if (options.selectAll) {
 		editor.emit('select-all-text', { shapeId: shape.id })
 	}
-	zoomToShapeIfOffscreen(editor)
 }
 
-const ZOOM_TO_SHAPE_PADDING = 16
-export function zoomToShapeIfOffscreen(editor: Editor) {
-	const selectionPageBounds = editor.getSelectionPageBounds()
-	const viewportPageBounds = editor.getViewportPageBounds()
-	if (selectionPageBounds && !viewportPageBounds.contains(selectionPageBounds)) {
-		const eb = selectionPageBounds
-			.clone()
-			// Expand the bounds by the padding
-			.expandBy(ZOOM_TO_SHAPE_PADDING / editor.getZoomLevel())
-			// then expand the bounds to include the viewport bounds
-			.expand(viewportPageBounds)
-
-		// then use the difference between the centers to calculate the offset
-		const nextBounds = viewportPageBounds.clone().translate({
-			x: (eb.center.x - viewportPageBounds.center.x) * 2,
-			y: (eb.center.y - viewportPageBounds.center.y) * 2,
-		})
-		editor.zoomToBounds(nextBounds, {
-			animation: {
-				duration: ANIMATION_MEDIUM_MS,
-			},
-			inset: 0,
-		})
+/**
+ * Start editing any editable shape. Shapes with rich text go through
+ * `startEditingShapeWithRichText`; editable shapes without it (frame, video, embed) would
+ * make that helper throw, so they enter the editing state directly.
+ *
+ * @internal
+ */
+export function startEditingShape(
+	editor: Editor,
+	shape: TLShape,
+	options: { selectAll?: boolean; info?: TLEventInfo } = {}
+) {
+	if (!editor.canEditShape(shape)) return
+	if (hasRichText(shape)) {
+		startEditingShapeWithRichText(editor, shape, options)
+		return
 	}
+	editor.setEditingShape(shape)
+	editor.setCurrentTool('select.editing_shape', { ...options.info, target: 'shape', shape })
+}
+
+/**
+ * Whether a page point is inside the selection's rotated bounding box. The box returned by
+ * `getSelectionRotatedPageBounds` is expressed in the rotated frame, so a plain `containsPoint`
+ * on it is only meaningful when the selection rotation is zero.
+ *
+ * @internal
+ */
+export function isPointInRotatedSelectionBounds(editor: Editor, point: VecLike) {
+	const selectionBounds = editor.getSelectionRotatedPageBounds()
+	if (!selectionBounds) return false
+
+	const selectionRotation = editor.getSelectionRotation()
+	if (!selectionRotation) return selectionBounds.containsPoint(point)
+
+	return pointInPolygon(
+		point,
+		selectionBounds.corners.map((c) => Vec.RotWith(c, selectionBounds.point, selectionRotation))
+	)
+}
+
+/**
+ * A shift or ctrl double click is toggling shapes in and out of the selection, so it must not also
+ * act.
+ *
+ * @internal
+ */
+export function isPlainDoubleClickDown(editor: Editor, info: TLClickEventInfo) {
+	return info.phase === 'down' && !info.ctrlKey && !info.shiftKey && !editor.inputs.getShiftKey()
+}
+
+/**
+ * Defers a double click to pointer up: its 'down' phase arrives while the second press is still
+ * held, and acting on it then steals a press that is about to become a drag (#9499).
+ *
+ * The replay carries the target the press resolved on entry. The double click's own target is the
+ * raw canvas, and resolving it again at the release point misses a handle the press drifted off.
+ *
+ * Call `start` in `onEnter`, or a double click whose press became a drag replays on the next plain
+ * click. Add new users to `deferredDoubleClick.test.ts`.
+ *
+ * Only the select tool needs this: its pointing states are the only ones where a second press
+ * can become a drag, so other tools act on double clicks directly.
+ *
+ * @internal
+ */
+export class DeferredDoubleClick {
+	private press = {} as TLPointerEventInfo
+	private info: TLClickEventInfo | null = null
+
+	constructor(private readonly state: StateNode) {}
+
+	start(press: TLPointerEventInfo) {
+		this.press = press
+		this.info = null
+	}
+
+	defer(info: TLClickEventInfo) {
+		if (isPlainDoubleClickDown(this.state.editor, info)) {
+			this.info = info
+		}
+	}
+
+	/**
+	 * Returns true when it consumed the pointer up. Assumes the select tool's layout: the parent
+	 * (`select`, or `select.crop`) has an `idle` child that hit-tests double clicks on handles,
+	 * selection and shapes.
+	 */
+	replay() {
+		if (!this.info) return false
+		const { parent } = this.state
+		parent.transition('idle')
+		parent.getCurrent()?.handleEvent(withPressTarget(this.info, this.press))
+		return true
+	}
+}
+
+// Only the target carries over: entry info can also hold state options such as onInteractionEnd
+function withPressTarget(info: TLClickEventInfo, press: TLPointerEventInfo): TLClickEventInfo {
+	switch (press.target) {
+		case 'canvas':
+			return { ...info, target: 'canvas', shape: undefined }
+		case 'selection':
+			return { ...info, target: 'selection', handle: press.handle, shape: undefined }
+		case 'shape':
+			return { ...info, target: 'shape', shape: press.shape }
+		case 'handle':
+			return { ...info, target: 'handle', shape: press.shape, handle: press.handle }
+		case 'overlay':
+			return { ...info, target: 'overlay', overlay: press.overlay, shape: undefined }
+	}
+}
+
+/**
+ * Whether a rotation is a multiple of 90 degrees. An exact `rotation % HALF_PI === 0` misses
+ * page rotations accumulated through rotated parents, which land a few ulps off and silently
+ * disable right-angle-only behavior such as bounds snapping.
+ *
+ * @internal
+ */
+export function isRightAngleRotation(rotation: number) {
+	const turns = rotation / HALF_PI
+	return approximately(turns, Math.round(turns))
 }

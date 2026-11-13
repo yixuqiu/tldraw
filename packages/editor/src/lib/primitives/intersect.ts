@@ -17,7 +17,8 @@ export function intersectLineSegmentLineSegment(
 	a1: VecLike,
 	a2: VecLike,
 	b1: VecLike,
-	b2: VecLike
+	b2: VecLike,
+	precision = 1e-10
 ) {
 	const ABx = a1.x - b1.x
 	const ABy = a1.y - b1.y
@@ -29,16 +30,18 @@ export function intersectLineSegmentLineSegment(
 	const ub_t = AVx * ABy - AVy * ABx
 	const u_b = BVy * AVx - BVx * AVy
 
-	if (ua_t === 0 || ub_t === 0) return null // coincident
+	// These comparisons inline approximately(x, 0) and approximatelyLte(x, 0/1)
+	// to avoid 7+ function calls per invocation.
+	if (Math.abs(ua_t) <= precision || Math.abs(ub_t) <= precision) return null // coincident
 
-	if (u_b === 0) return null // parallel
+	if (Math.abs(u_b) <= precision) return null // parallel
 
-	if (u_b !== 0) {
-		const ua = ua_t / u_b
-		const ub = ub_t / u_b
-		if (0 <= ua && ua <= 1 && 0 <= ub && ub <= 1) {
-			return Vec.AddXY(a1, ua * AVx, ua * AVy)
-		}
+	const ua = ua_t / u_b
+	const ub = ub_t / u_b
+	// Inlined: approximately(ua, 0) && approximatelyLte(ua, 1) && same for ub
+	if (ua >= -precision && ua <= 1 + precision && ub >= -precision && ub <= 1 + precision) {
+		// Inlined: Vec.Lrp(a1, a2, ua) — i.e. a1 + ua * (a2 - a1)
+		return new Vec(a1.x + ua * AVx, a1.y + ua * AVy)
 	}
 
 	return null // no intersection
@@ -54,32 +57,35 @@ export function intersectLineSegmentLineSegment(
  * @public
  */
 export function intersectLineSegmentCircle(a1: VecLike, a2: VecLike, c: VecLike, r: number) {
-	const a = (a2.x - a1.x) * (a2.x - a1.x) + (a2.y - a1.y) * (a2.y - a1.y)
-	const b = 2 * ((a2.x - a1.x) * (a1.x - c.x) + (a2.y - a1.y) * (a1.y - c.y))
-	const cc =
-		c.x * c.x + c.y * c.y + a1.x * a1.x + a1.y * a1.y - 2 * (c.x * a1.x + c.y * a1.y) - r * r
+	// Precompute segment delta (dx, dy) and origin-to-center offset (ocx, ocy)
+	// to avoid repeated (a2.x - a1.x) and (a1.x - c.x) subexpressions.
+	const dx = a2.x - a1.x
+	const dy = a2.y - a1.y
+	const ocx = a1.x - c.x
+	const ocy = a1.y - c.y
+
+	const a = dx * dx + dy * dy
+	const b = 2 * (dx * ocx + dy * ocy)
+	const cc = ocx * ocx + ocy * ocy - r * r
 	const deter = b * b - 4 * a * cc
 
-	if (deter < 0) return null // outside
-	if (deter === 0) return null // tangent
+	if (deter <= 0) return null // outside or tangent
 
 	const e = Math.sqrt(deter)
 	const u1 = (-b + e) / (2 * a)
 	const u2 = (-b - e) / (2 * a)
 
 	if ((u1 < 0 || u1 > 1) && (u2 < 0 || u2 > 1)) {
-		return null // outside or inside
-		// if ((u1 < 0 && u2 < 0) || (u1 > 1 && u2 > 1)) {
-		// 	return null // outside
-		// } else return null // inside'
+		return null
 	}
 
 	const result: VecLike[] = []
 
-	if (0 <= u1 && u1 <= 1) result.push(Vec.Lrp(a1, a2, u1))
-	if (0 <= u2 && u2 <= 1) result.push(Vec.Lrp(a1, a2, u2))
+	// Inlined: Vec.Lrp(a1, a2, u) — i.e. a1 + u * (a2 - a1)
+	if (u1 >= 0 && u1 <= 1) result.push(new Vec(a1.x + dx * u1, a1.y + dy * u1))
+	if (u2 >= 0 && u2 <= 1) result.push(new Vec(a1.x + dx * u2, a1.y + dy * u2))
 
-	if (result.length === 0) return null // no intersection
+	if (result.length === 0) return null
 
 	return result
 }
@@ -125,6 +131,7 @@ export function intersectLineSegmentPolygon(a1: VecLike, a2: VecLike, points: Ve
 			points[i - 1],
 			points[i % points.length]
 		)
+
 		if (segmentIntersection) result.push(segmentIntersection)
 	}
 
@@ -291,6 +298,47 @@ export function intersectPolygonPolygon(
 
 	// Order all points in the result counter-clockwise.
 	return orderClockwise([...result.values()])
+}
+
+/**
+ * Find all the points where `polyA` and `polyB` intersect and returns them in an undefined order.
+ * To find the polygon that's the intersection of polyA and polyB, use `intersectPolygonPolygon`
+ * instead, which orders the points and includes internal points.
+ *
+ * @param polyA - The first polygon.
+ * @param polyB - The second polygon.
+ * @param isAClosed - Whether `polyA` is a closed polygon or a polyline.
+ * @param isBClosed - Whether `polyB` is a closed polygon or a polyline.
+ * @public
+ */
+export function intersectPolys(
+	polyA: VecLike[],
+	polyB: VecLike[],
+	isAClosed: boolean,
+	isBClosed: boolean
+): VecLike[] {
+	const result: Map<string, VecLike> = new Map()
+
+	// Add all intersection points to result
+	for (let i = 0, n = isAClosed ? polyA.length : polyA.length - 1; i < n; i++) {
+		const currentA = polyA[i]
+		const nextA = polyA[(i + 1) % polyA.length]
+
+		for (let j = 0, m = isBClosed ? polyB.length : polyB.length - 1; j < m; j++) {
+			const currentB = polyB[j]
+			const nextB = polyB[(j + 1) % polyB.length]
+			const intersection = intersectLineSegmentLineSegment(currentA, nextA, currentB, nextB)
+
+			if (intersection !== null) {
+				const id = getPointId(intersection)
+				if (!result.has(id)) {
+					result.set(id, intersection)
+				}
+			}
+		}
+	}
+
+	return [...result.values()]
 }
 
 function getPointId(point: VecLike) {

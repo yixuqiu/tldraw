@@ -1,59 +1,80 @@
-import * as _Dialog from '@radix-ui/react-dialog'
-import { useContainer } from '@tldraw/editor'
-import React, { useCallback } from 'react'
+import { useContainer, useValue } from '@tldraw/editor'
+import { Dialog as _Dialog } from 'radix-ui'
+import { memo, useCallback, useRef } from 'react'
 import { TLUiDialog, useDialogs } from '../context/dialogs'
+import { useDirection } from '../hooks/useTranslation/useTranslation'
 
-const Dialog = ({ id, component: ModalContent, onClose }: TLUiDialog) => {
+/** @internal */
+const TldrawUiDialog = ({ id, component: ModalContent, preventBackgroundClose }: TLUiDialog) => {
 	const { removeDialog } = useDialogs()
 
 	const container = useContainer()
+	const dir = useDirection()
+	const contentRef = useRef<HTMLDivElement>(null)
 
 	const handleOpenChange = useCallback(
 		(isOpen: boolean) => {
 			if (!isOpen) {
-				if (onClose) {
-					try {
-						onClose()
-					} catch (err: any) {
-						console.warn(err)
-					}
-				}
 				removeDialog(id)
 			}
 		},
-		[id, onClose, removeDialog]
+		[id, removeDialog]
 	)
 
 	return (
 		<_Dialog.Root onOpenChange={handleOpenChange} defaultOpen>
 			<_Dialog.Portal container={container}>
-				<_Dialog.Overlay
-					dir="ltr"
-					className="tlui-dialog__overlay"
-					onClick={(e) => {
-						// only close if the click is on the overlay itself, ignore bubbling clicks
-						if (e.target === e.currentTarget) handleOpenChange(false)
-					}}
-				>
-					<_Dialog.Content dir="ltr" className="tlui-dialog__content">
+				{/* Radix renders the scrim and content as siblings. The positioner sits on
+				    top of the scrim and centers the content, scrolling and padding it when
+				    it's taller than the viewport. */}
+				<_Dialog.Overlay dir={dir} className="tlui-dialog__overlay" />
+				<div dir={dir} className="tlui-dialog__positioner">
+					<_Dialog.Content
+						ref={contentRef}
+						dir={dir}
+						className="tlui-dialog__content"
+						aria-describedby={undefined}
+						onInteractOutside={(e) => {
+							// Radix's dismissable layers are layer-aware: an interaction outside the
+							// topmost layer dismisses only that layer — an open select, or a dialog
+							// stacked on top — leaving lower layers open. onInteractOutside fires for
+							// both a pointer press and a focus shift outside the dialog; opt out of both
+							// when the dialog asks to stay open on background interactions (escape still
+							// closes it).
+
+							// A touch press is checked against the layers at the following click rather
+							// than at the press itself, so a press that closes a dialog stacked on top of
+							// this one arrives here once this one is topmost, and reads as a press
+							// outside it. A press inside another dialog is never outside this one, and
+							// stays so after that dialog unmounts and takes the press's target with it.
+							const target = e.detail.originalEvent.target
+							const pressedDialog =
+								target instanceof Element ? target.closest('.tlui-dialog__content') : null
+							if (
+								preventBackgroundClose ||
+								(pressedDialog && pressedDialog !== contentRef.current)
+							) {
+								e.preventDefault()
+							}
+						}}
+					>
 						<ModalContent onClose={() => handleOpenChange(false)} />
 					</_Dialog.Content>
-				</_Dialog.Overlay>
+				</div>
 			</_Dialog.Portal>
 		</_Dialog.Root>
 	)
 }
 
-function _Dialogs() {
+/** @public @react */
+export const DefaultDialogs = memo(function DefaultDialogs() {
 	const { dialogs } = useDialogs()
-
-	return (
-		<>
-			{dialogs.map((dialog: TLUiDialog) => (
-				<Dialog key={dialog.id} {...dialog} />
-			))}
-		</>
-	)
-}
-
-export const Dialogs = React.memo(_Dialogs)
+	const dialogsArray = useValue('dialogs', () => dialogs.get(), [dialogs])
+	// Every stacked dialog stays modal (Radix's default). That's what keeps dismiss
+	// layer-aware: a background press or escape closes only the topmost layer, because
+	// Radix's focus-scope stack pauses lower dialogs rather than dismissing them. Don't
+	// make a lower dialog non-modal to work around anything — without a focus scope it
+	// dismisses on the focus shift when a nested dialog or select opens, collapsing the
+	// whole stack.
+	return dialogsArray.map((dialog) => <TldrawUiDialog key={dialog.id} {...dialog} />)
+})

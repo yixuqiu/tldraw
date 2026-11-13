@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { TLErrorFallbackComponent } from './default-components/DefaultErrorFallback'
+import type { TLErrorFallbackComponent } from './default-components/DefaultErrorFallback'
 
 /** @public */
 export interface TLErrorBoundaryProps {
@@ -8,14 +8,12 @@ export interface TLErrorBoundaryProps {
 	fallback: TLErrorFallbackComponent
 }
 
-type TLErrorBoundaryState = { error: Error | null }
-
-const initialState: TLErrorBoundaryState = { error: null }
+const initialState = { error: null }
 
 /** @public */
 export class ErrorBoundary extends React.Component<
-	React.PropsWithRef<React.PropsWithChildren<TLErrorBoundaryProps>>,
-	TLErrorBoundaryState
+	React.PropsWithChildren<TLErrorBoundaryProps>,
+	{ error: Error | null }
 > {
 	static getDerivedStateFromError(error: Error) {
 		return { error }
@@ -48,7 +46,7 @@ export function OptionalErrorBoundary({
 	fallback: TLErrorFallbackComponent
 }) {
 	if (fallback === null) {
-		return <>{children}</>
+		return children
 	}
 
 	return (

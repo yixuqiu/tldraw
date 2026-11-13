@@ -1,4 +1,5 @@
-import { TLUserPreferences, atom, createTLUser } from '@tldraw/editor'
+import { TLUserPreferences, atom, createTLCurrentUser } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { TestEditor } from './TestEditor'
 
 let editor: TestEditor
@@ -21,14 +22,14 @@ describe('TLUserPreferences', () => {
 			animationSpeed: 1,
 			color: '#000000',
 			id: '123',
-			isDarkMode: true,
+			colorScheme: 'dark',
 			isSnapMode: false,
 			locale: 'en',
 			name: 'test',
 		})
 
 		editor = new TestEditor({
-			user: createTLUser({
+			user: createTLCurrentUser({
 				setUserPreferences: (preferences) => userPreferences.set(preferences),
 				userPreferences,
 			}),
@@ -38,15 +39,15 @@ describe('TLUserPreferences', () => {
 
 		userPreferences.set({
 			...userPreferences.get(),
-			isDarkMode: false,
+			colorScheme: 'light',
 		})
 
 		expect(editor.user.getIsDarkMode()).toBe(false)
 
-		editor.user.updateUserPreferences({ isDarkMode: true })
+		editor.user.updateUserPreferences({ colorScheme: 'dark' })
 
 		expect(editor.user.getIsDarkMode()).toBe(true)
-		expect(userPreferences.get().isDarkMode).toBe(true)
+		expect(userPreferences.get().colorScheme).toBe('dark')
 	})
 
 	it('can have null values and it will use defaults', () => {
@@ -54,15 +55,15 @@ describe('TLUserPreferences', () => {
 			id: '123',
 			animationSpeed: null,
 			color: null,
-			isDarkMode: null,
+			colorScheme: 'system',
 			isSnapMode: null,
 			locale: null,
 			name: null,
 		})
-		const setUserPreferences = jest.fn((preferences) => userPreferences.set(preferences))
+		const setUserPreferences = vi.fn((preferences) => userPreferences.set(preferences))
 
 		editor = new TestEditor({
-			user: createTLUser({
+			user: createTLCurrentUser({
 				setUserPreferences,
 				userPreferences,
 			}),
@@ -72,7 +73,7 @@ describe('TLUserPreferences', () => {
 		expect(editor.user.getIsDarkMode()).toBe(false)
 		expect(editor.user.getIsSnapMode()).toBe(false)
 		expect(editor.user.getLocale()).toBe('en')
-		expect(editor.user.getName()).toBe('New User')
+		expect(editor.user.getName()).toBe('')
 	})
 
 	it('can have unspecified values and it will use defaults', () => {
@@ -80,10 +81,10 @@ describe('TLUserPreferences', () => {
 			id: '123',
 			name: 'blah',
 		})
-		const setUserPreferences = jest.fn((preferences) => userPreferences.set(preferences))
+		const setUserPreferences = vi.fn((preferences) => userPreferences.set(preferences))
 
 		editor = new TestEditor({
-			user: createTLUser({
+			user: createTLCurrentUser({
 				setUserPreferences,
 				userPreferences,
 			}),
@@ -101,10 +102,10 @@ describe('TLUserPreferences', () => {
 			id: '123',
 			name: 'blah',
 		})
-		const setUserPreferences = jest.fn((preferences) => userPreferences.set(preferences))
+		const setUserPreferences = vi.fn((preferences) => userPreferences.set(preferences))
 
 		editor = new TestEditor({
-			user: createTLUser({
+			user: createTLCurrentUser({
 				setUserPreferences,
 				userPreferences,
 			}),
@@ -115,7 +116,7 @@ describe('TLUserPreferences', () => {
 		expect(editor.user.getName()).toBe('blah')
 		editor.user.updateUserPreferences({ name: null })
 
-		expect(editor.user.getName()).toBe('New User')
+		expect(editor.user.getName()).toBe('')
 		expect(setUserPreferences).toHaveBeenCalledTimes(2)
 		expect(setUserPreferences).toHaveBeenLastCalledWith({
 			id: '123',

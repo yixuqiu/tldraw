@@ -1,11 +1,5 @@
 # tldraw-docs
 
-<div alt style="text-align: center; transform: scale(.5);">
-	<picture>
-		<img alt="tldraw" src="https://github.com/tldraw/tldraw-lite/raw/main/docs/public/card_repo.png" />
-	</picture>
-</div>
-
 Welcome to the source for the [tldraw docs site](https://tldraw.dev).
 
 This site is a [Next.js](https://nextjs.org/) app that uses [MDX](https://mdxjs.com/) for content. It contains human-written docs in the `content` folder as well as generated docs in the `api` folder.
@@ -25,8 +19,8 @@ The files are also provided in this repo.
 
 You can build the markdown and API content using the following scripts:
 
-- `yarn refresh-everything` to reset the database, generate the markdown from the API docs, and populate the database with articles from both the regular content and the generated API content
-- `yarn refresh-content` to generate just the regular content
+- `pnpm refresh-everything` to reset the database, generate the markdown from the API docs, and populate the database with articles from both the regular content and the generated API content
+- `pnpm refresh-content` to generate just the regular content
 
 # Content
 
@@ -40,7 +34,7 @@ A section looks like this:
 {
 	"id": "community",
 	"title": "Community",
-	"description": "Guides for contributing to tldraw's open source project.",
+	"description": "Community resources for tldraw.",
 	"categories": []
 }
 ```
@@ -95,20 +89,7 @@ The `order` property defines the article's order in its category. Uncategorized 
 
 ### Author
 
-The `author` must refer to an author named in the `content/authors.json` file.
-
-An author looks like this:
-
-```json
-"steveruizok": {
-	"name": "Steve Ruiz",
-	"email": "steve@tldraw.com",
-	"twitter": "steveruizok",
-	"image": "steve_ruiz.jpg"
-}
-```
-
-The image should refer to an image in `public/avatars`.
+The `author` records who wrote the article, usually as a GitHub username. It is stored in the content database as metadata but is not displayed anywhere on the site.
 
 ### Date
 
@@ -124,26 +105,50 @@ The `keywords` are used to find an article through the site's search feature.
 
 ## Auto-generated content
 
-The auto-generated docs content is created using [tsdoc](https://tsdoc.org/) and [API extractor](https://api-extractor.com/). The source is the API documentation created by `yarn build` or `yarn build-api`. The output is placed in the `gen` folder.
+The auto-generated docs content is created using [tsdoc](https://tsdoc.org/) and [API extractor](https://api-extractor.com/). The source is the API documentation created by `pnpm build` or `pnpm build-api`. The output is placed in the `gen` folder.
+
+## Release notes
+
+Release notes live in `content/releases/` and are the source of truth for SDK release documentation.
+
+### File structure
+
+- `next.mdx` - Accumulates changes for the upcoming release
+- `vX.Y.0.mdx` - Published release notes (one file per minor release)
+
+### Workflow
+
+1. As PRs merge to main, update `next.mdx` with release notes using the `update-release-notes` skill
+2. When publishing a release:
+   - Rename `next.mdx` to `vX.Y.0.mdx`
+   - Update the frontmatter `order` field
+   - Create a new `next.mdx` for the next version
+3. The release notes can then be copied to GitHub releases
+
+See `skills/update-release-notes/` for the maintenance workflow and `skills/write-release-notes/` for writing guidance.
 
 ## Developing the docs
+
+You'll need to install Git LFS to get our blog post images (which can be large). See instructions [here](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage).
 
 When developing the docs, any change to the `content` folder will cause the page to refresh. This is a little shitty but it mostly works.
 
 ## Contribution
 
-Please see our [contributing guide](https://github.com/tldraw/tldraw/blob/main/CONTRIBUTING.md). Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
+Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
 
 ## License
 
-The tldraw source code and its distributions are provided under the [tldraw license](https://github.com/tldraw/tldraw/blob/master/LICENSE.md). This license does not permit commercial use.
-
-If you wish to use this project in commercial product, you need to purchase a commercial license. matPlease contact us at [sales@tldraw.com](mailto:sales@tldraw.com) for more inforion about obtaining a commercial license.
+This project is provided under the MIT license found [here](https://github.com/tldraw/tldraw/blob/main/apps/docs/LICENSE.md). The tldraw SDK is provided under the [tldraw license](https://github.com/tldraw/tldraw/blob/main/LICENSE.md).
 
 ## Trademarks
 
-Copyright (c) 2023-present tldraw Inc. The tldraw name and logo are trademarks of tldraw. Please see our [trademark guidelines](https://github.com/tldraw/tldraw/blob/main/TRANDEMARKS.md) for info on acceptable usage.
+Copyright (c) 2024-present tldraw Inc. The tldraw name and logo are trademarks of tldraw. Please see our [trademark guidelines](https://github.com/tldraw/tldraw/blob/main/TRADEMARKS.md) for info on acceptable usage.
 
 ## Contact
 
-Find us on Twitter at [@tldraw](https://twitter.com/tldraw) or email [sales@tldraw.com](mailto://sales@tldraw.com). You can also [join our discord](https://discord.gg/rhsyWMUJxd) for quick help and support.
+Find us on Twitter/X at [@tldraw](https://twitter.com/tldraw).
+
+## Community
+
+Have questions, comments or feedback? [Join our discord](https://discord.tldraw.com/?utm_source=github&utm_medium=readme&utm_campaign=sociallink). For the latest news and release notes, visit [tldraw.dev](https://tldraw.dev).

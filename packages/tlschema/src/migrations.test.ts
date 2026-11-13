@@ -1,8 +1,11 @@
 import { createRecordType } from '@tldraw/store'
-import { getTestMigration, testSchema } from './__tests__/migrationTestUtils'
+import { getTestMigration, testSchema, wasMigratorCalled } from './__tests__/migrationTestUtils'
 import { bookmarkAssetVersions } from './assets/TLBookmarkAsset'
 import { imageAssetVersions } from './assets/TLImageAsset'
 import { videoAssetVersions } from './assets/TLVideoAsset'
+import { arrowBindingVersions } from './bindings/TLArrowBinding'
+import { b64Vecs } from './misc/b64Vecs'
+import { toRichText } from './misc/TLRichText'
 import { assetVersions } from './records/TLAsset'
 import { cameraVersions } from './records/TLCamera'
 import { documentVersions } from './records/TLDocument'
@@ -12,11 +15,14 @@ import { instancePageStateVersions } from './records/TLPageState'
 import { pointerVersions } from './records/TLPointer'
 import { instancePresenceVersions } from './records/TLPresence'
 import { TLShape, rootShapeVersions } from './records/TLShape'
+import { userVersions } from './records/TLUser'
 import { arrowShapeVersions } from './shapes/TLArrowShape'
 import { bookmarkShapeVersions } from './shapes/TLBookmarkShape'
-import { drawShapeVersions } from './shapes/TLDrawShape'
+import { DrawShapeSegment, drawShapeVersions } from './shapes/TLDrawShape'
 import { embedShapeVersions } from './shapes/TLEmbedShape'
+import { frameShapeVersions } from './shapes/TLFrameShape'
 import { geoShapeVersions } from './shapes/TLGeoShape'
+import { highlightShapeVersions } from './shapes/TLHighlightShape'
 import { imageShapeVersions } from './shapes/TLImageShape'
 import { lineShapeVersions } from './shapes/TLLineShape'
 import { noteShapeVersions } from './shapes/TLNoteShape'
@@ -98,6 +104,78 @@ describe('TLImageAsset AddIsAnimated', () => {
 	})
 })
 
+describe('TLVideoAsset AddFileSize', () => {
+	const oldAsset = {
+		id: '1',
+		type: 'video',
+		props: {
+			src: 'https://www.youtube.com/watch?v=1',
+			name: 'video',
+			width: 100,
+			height: 100,
+			mimeType: 'video/mp4',
+		},
+	}
+
+	const newAsset = {
+		id: '1',
+		type: 'video',
+		props: {
+			src: 'https://www.youtube.com/watch?v=1',
+			name: 'video',
+			width: 100,
+			height: 100,
+			mimeType: 'video/mp4',
+			fileSize: -1,
+		},
+	}
+
+	const { up, down } = getTestMigration(videoAssetVersions.AddFileSize)
+
+	test('up works as expected', () => {
+		expect(up(oldAsset)).toEqual(newAsset)
+	})
+	test('down works as expected', () => {
+		expect(down(newAsset)).toEqual(oldAsset)
+	})
+})
+
+describe('TLImageAsset AddFileSize', () => {
+	const oldAsset = {
+		id: '1',
+		type: 'image',
+		props: {
+			src: 'https://www.youtube.com/watch?v=1',
+			name: 'image',
+			width: 100,
+			height: 100,
+			mimeType: 'image/gif',
+		},
+	}
+
+	const newAsset = {
+		id: '1',
+		type: 'image',
+		props: {
+			src: 'https://www.youtube.com/watch?v=1',
+			name: 'image',
+			width: 100,
+			height: 100,
+			mimeType: 'image/gif',
+			fileSize: -1,
+		},
+	}
+
+	const { up, down } = getTestMigration(imageAssetVersions.AddFileSize)
+
+	test('up works as expected', () => {
+		expect(up(oldAsset)).toEqual(newAsset)
+	})
+	test('down works as expected', () => {
+		expect(down(newAsset)).toEqual(oldAsset)
+	})
+})
+
 const ShapeRecord = createRecordType('shape', {
 	validator: { validate: (record) => record as TLShape },
 	scope: 'document',
@@ -136,12 +214,62 @@ describe('Store removing Icon and Code shapes', () => {
 					type: 'geo',
 					parentId: 'page:any',
 					index: 'a0',
-					props: { geo: 'rectangle', w: 1, h: 1, growY: 1, text: '' },
+					props: {
+						geo: 'rectangle',
+						w: 1,
+						h: 1,
+						growY: 1,
+						richText: toRichText(''),
+					},
 				} as any),
 			].map((shape) => [shape.id, shape])
 		)
 		const fixed = up(snapshot)
 		expect(Object.entries(fixed)).toHaveLength(1)
+	})
+})
+
+describe('Fixing index keys', () => {
+	const { up, down } = getTestMigration(storeVersions.FixIndexKeys)
+	test('up works as expected', () => {
+		const snapshot = [
+			ShapeRecord.create({
+				type: 'shape',
+				id: 'shape:1',
+				parentId: 'page:any',
+				index: 'a0',
+			} as any),
+			ShapeRecord.create({
+				type: 'shape',
+				id: 'shape:2',
+				parentId: 'page:any',
+				index: 'a00',
+			} as any),
+			ShapeRecord.create({
+				type: 'shape',
+				id: 'shape:3',
+				parentId: 'page:any',
+				index: 'a111',
+			} as any),
+		]
+		const fixed = snapshot.map((shape) => up(shape))
+		expect(fixed.find((s) => s.id === 'shape:1')?.index).toBe('a0')
+		expect(fixed.find((s) => s.id === 'shape:2')?.index).not.toBe('a00')
+		expect(fixed.find((s) => s.id === 'shape:2')?.index).toMatch(/^a0[1-9A-Za-z]{3}$/)
+		expect(fixed.find((s) => s.id === 'shape:3')?.index).toBe('a111')
+	})
+
+	test('down works as expected', () => {
+		const snapshot = [
+			ShapeRecord.create({
+				type: 'shape',
+				id: 'shape:1',
+				parentId: 'page:any',
+				index: 'a00',
+			} as any),
+		]
+		const unchanged = snapshot.map((shape) => down(shape))
+		expect(unchanged.find((s) => s.id === 'shape:1')?.index).toBe('a00')
 	})
 })
 
@@ -1298,6 +1426,52 @@ describe('Make urls valid for all the shapes', () => {
 	}
 })
 
+describe('Add rich text', () => {
+	const migrations = [
+		['text shape', getTestMigration(textShapeVersions.AddRichText)],
+		['geo shape', getTestMigration(geoShapeVersions.AddRichText)],
+		['note shape', getTestMigration(noteShapeVersions.AddRichText)],
+		['arrow shape', getTestMigration(arrowShapeVersions.AddRichText)],
+	] as const
+
+	for (const [shapeName, { up }] of migrations) {
+		it(`works for ${shapeName}`, () => {
+			const shape = { props: { text: 'hello, world' } }
+			expect(up(shape)).toEqual({
+				props: { richText: toRichText('hello, world') },
+			})
+			// N.B. Explicitly no down state so that we force clients to update.
+			// expect(down(originalShape)).toEqual(shape)
+		})
+	}
+})
+
+describe('Add rich text attrs', () => {
+	const migrations = [
+		['text shape', getTestMigration(textShapeVersions.AddRichTextAttrs)],
+		['geo shape', getTestMigration(geoShapeVersions.AddRichTextAttrs)],
+		['note shape', getTestMigration(noteShapeVersions.AddRichTextAttrs)],
+		['arrow shape', getTestMigration(arrowShapeVersions.AddRichTextAttrs)],
+	] as const
+
+	for (const [shapeName, { up, down }] of migrations) {
+		it(`works for ${shapeName}`, () => {
+			const shape = { props: { richText: toRichText('hello, world') } }
+			const shapeWithAttrs = {
+				props: { richText: { ...toRichText('hello, world'), attrs: { test: 'value' } } },
+			}
+
+			// Up migration should be a noop
+			expect(up(shape)).toEqual(shape)
+			expect(up(shapeWithAttrs)).toEqual(shapeWithAttrs)
+
+			// Down migration should remove attrs
+			expect(down(shapeWithAttrs)).toEqual(shape)
+			expect(down(shape)).toEqual(shape)
+		})
+	}
+})
+
 describe('Make urls valid for all the assets', () => {
 	const migrations = [
 		['bookmark asset', getTestMigration(bookmarkAssetVersions.MakeUrlsValid)],
@@ -1312,6 +1486,32 @@ describe('Make urls valid for all the assets', () => {
 			expect(down(asset)).toEqual(asset)
 		})
 	}
+})
+
+describe('Ensure favicons are on bookmarks', () => {
+	const { up, down } = getTestMigration(bookmarkAssetVersions.AddFavicon)
+	it('up works as expected', () => {
+		expect(
+			up({
+				props: {},
+			})
+		).toEqual({
+			props: {
+				favicon: '',
+			},
+		})
+	})
+	it('down works as expected', () => {
+		expect(
+			down({
+				props: {
+					favicon: 'https://tldraw.com/favicon.ico',
+				},
+			})
+		).toEqual({
+			props: {},
+		})
+	})
 })
 
 describe('Add duplicate props to instance', () => {
@@ -1549,6 +1749,28 @@ describe('Add font size adjustment to notes', () => {
 	})
 })
 
+describe('Make font size adjustment a ratio on notes', () => {
+	const { up, down } = getTestMigration(noteShapeVersions.MakeFontSizeAdjustmentRatio)
+
+	test('up converts zero to 1 (no adjustment)', () => {
+		expect(up({ props: { fontSizeAdjustment: 0 } })).toEqual({
+			props: { fontSizeAdjustment: 1 },
+		})
+	})
+
+	test('up converts non-zero to null (needs recomputation)', () => {
+		expect(up({ props: { fontSizeAdjustment: 18 } })).toEqual({
+			props: { fontSizeAdjustment: null },
+		})
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { fontSizeAdjustment: null } })).toEqual({
+			props: { fontSizeAdjustment: 0 },
+		})
+	})
+})
+
 describe('removes can move camera', () => {
 	const { up, down } = getTestMigration(instanceVersions.RemoveCanMoveCamera)
 
@@ -1558,6 +1780,18 @@ describe('removes can move camera', () => {
 
 	test('down works as expected', () => {
 		expect(down({})).toStrictEqual({ canMoveCamera: true })
+	})
+})
+
+describe('Add camera state to instance', () => {
+	const { up, down } = getTestMigration(instanceVersions.AddCameraState)
+
+	test('up works as expected', () => {
+		expect(up({})).toStrictEqual({ cameraState: 'idle' })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ cameraState: 'idle' })).toStrictEqual({})
 	})
 })
 
@@ -1573,15 +1807,1002 @@ describe('Add text align to text shapes', () => {
 	})
 })
 
+describe('Extract bindings from arrows', () => {
+	const { up } = getTestMigration(arrowShapeVersions.ExtractBindings)
+
+	test('up works as expected', () => {
+		expect(
+			up({
+				'shape:arrow1': {
+					id: 'shape:arrow1',
+					type: 'arrow',
+					props: {
+						start: {
+							type: 'binding',
+							boundShapeId: 'shape:box1',
+							normalizedAnchor: {
+								x: 0.4383437225516159,
+								y: 0.5065334673177019,
+							},
+							isPrecise: false,
+							isExact: false,
+						},
+						end: {
+							type: 'binding',
+							boundShapeId: 'shape:box2',
+							normalizedAnchor: {
+								x: 0.5848167203201774,
+								y: 0.5766996080606552,
+							},
+							isPrecise: false,
+							isExact: false,
+						},
+					},
+					typeName: 'shape',
+				},
+				'shape:arrow2': {
+					id: 'shape:arrow2',
+					type: 'arrow',
+					props: {
+						start: {
+							type: 'binding',
+							boundShapeId: 'shape:arrow2',
+							normalizedAnchor: {
+								x: 0.4383437225516159,
+								y: 0.5065334673177019,
+							},
+							isPrecise: false,
+							isExact: false,
+						},
+						end: {
+							type: 'point',
+							x: 174.75451263561803,
+							y: -1.4725753187527948,
+						},
+					},
+					typeName: 'shape',
+				},
+				'shape:arrow3': {
+					id: 'shape:arrow3',
+					type: 'arrow',
+					props: {
+						start: {
+							type: 'point',
+							x: 68.25440152898136,
+							y: -1.0404886613512332,
+						},
+						end: {
+							type: 'binding',
+							boundShapeId: 'shape:box3',
+							normalizedAnchor: {
+								x: 0.5848167203201774,
+								y: 0.5766996080606552,
+							},
+							isPrecise: true,
+							isExact: false,
+						},
+					},
+					typeName: 'shape',
+				},
+				'shape:arrow4': {
+					id: 'shape:arrow4',
+					type: 'arrow',
+					props: {
+						start: {
+							type: 'point',
+							x: 68.25440152898136,
+							y: -1.0404886613512758,
+						},
+						end: {
+							type: 'point',
+							x: 174.75451263561803,
+							y: -1.4725753187527948,
+						},
+					},
+					typeName: 'shape',
+				},
+			})
+		).toMatchInlineSnapshot(`
+		{
+		  "binding:nanoid_1": {
+		    "fromId": "shape:arrow1",
+		    "id": "binding:nanoid_1",
+		    "meta": {},
+		    "props": {
+		      "isExact": false,
+		      "isPrecise": false,
+		      "normalizedAnchor": {
+		        "x": 0.4383437225516159,
+		        "y": 0.5065334673177019,
+		      },
+		      "terminal": "start",
+		    },
+		    "toId": "shape:box1",
+		    "type": "arrow",
+		    "typeName": "binding",
+		  },
+		  "binding:nanoid_2": {
+		    "fromId": "shape:arrow1",
+		    "id": "binding:nanoid_2",
+		    "meta": {},
+		    "props": {
+		      "isExact": false,
+		      "isPrecise": false,
+		      "normalizedAnchor": {
+		        "x": 0.5848167203201774,
+		        "y": 0.5766996080606552,
+		      },
+		      "terminal": "end",
+		    },
+		    "toId": "shape:box2",
+		    "type": "arrow",
+		    "typeName": "binding",
+		  },
+		  "binding:nanoid_3": {
+		    "fromId": "shape:arrow2",
+		    "id": "binding:nanoid_3",
+		    "meta": {},
+		    "props": {
+		      "isExact": false,
+		      "isPrecise": false,
+		      "normalizedAnchor": {
+		        "x": 0.4383437225516159,
+		        "y": 0.5065334673177019,
+		      },
+		      "terminal": "start",
+		    },
+		    "toId": "shape:arrow2",
+		    "type": "arrow",
+		    "typeName": "binding",
+		  },
+		  "binding:nanoid_4": {
+		    "fromId": "shape:arrow3",
+		    "id": "binding:nanoid_4",
+		    "meta": {},
+		    "props": {
+		      "isExact": false,
+		      "isPrecise": true,
+		      "normalizedAnchor": {
+		        "x": 0.5848167203201774,
+		        "y": 0.5766996080606552,
+		      },
+		      "terminal": "end",
+		    },
+		    "toId": "shape:box3",
+		    "type": "arrow",
+		    "typeName": "binding",
+		  },
+		  "shape:arrow1": {
+		    "id": "shape:arrow1",
+		    "props": {
+		      "end": {
+		        "x": 0,
+		        "y": 0,
+		      },
+		      "start": {
+		        "x": 0,
+		        "y": 0,
+		      },
+		    },
+		    "type": "arrow",
+		    "typeName": "shape",
+		  },
+		  "shape:arrow2": {
+		    "id": "shape:arrow2",
+		    "props": {
+		      "end": {
+		        "x": 174.75451263561803,
+		        "y": -1.4725753187527948,
+		      },
+		      "start": {
+		        "x": 0,
+		        "y": 0,
+		      },
+		    },
+		    "type": "arrow",
+		    "typeName": "shape",
+		  },
+		  "shape:arrow3": {
+		    "id": "shape:arrow3",
+		    "props": {
+		      "end": {
+		        "x": 0,
+		        "y": 0,
+		      },
+		      "start": {
+		        "x": 68.25440152898136,
+		        "y": -1.0404886613512332,
+		      },
+		    },
+		    "type": "arrow",
+		    "typeName": "shape",
+		  },
+		  "shape:arrow4": {
+		    "id": "shape:arrow4",
+		    "props": {
+		      "end": {
+		        "x": 174.75451263561803,
+		        "y": -1.4725753187527948,
+		      },
+		      "start": {
+		        "x": 68.25440152898136,
+		        "y": -1.0404886613512758,
+		      },
+		    },
+		    "type": "arrow",
+		    "typeName": "shape",
+		  },
+		}
+	`)
+	})
+})
+
+describe('Add scale to draw shape', () => {
+	const { up, down } = getTestMigration(drawShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add scale to highlight shape', () => {
+	const { up, down } = getTestMigration(highlightShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add scale to geo shape', () => {
+	const { up, down } = getTestMigration(geoShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add scale to arrow shape', () => {
+	const { up, down } = getTestMigration(arrowShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add scale to note shape', () => {
+	const { up, down } = getTestMigration(noteShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add scale to line shape', () => {
+	const { up, down } = getTestMigration(lineShapeVersions.AddScale)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { scale: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { scale: 1 } })).toEqual({ props: {} })
+	})
+})
+
+describe('Make image asset file size optional', () => {
+	const { up, down } = getTestMigration(imageAssetVersions.MakeFileSizeOptional)
+
+	test('up works as expected', () => {
+		expect(up({ props: { fileSize: -1 } })).toEqual({ props: {} })
+		expect(up({ props: { fileSize: 0 } })).toEqual({ props: { fileSize: 0 } })
+		expect(up({ props: { fileSize: 1 } })).toEqual({ props: { fileSize: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: {} })).toEqual({ props: { fileSize: -1 } })
+		expect(down({ props: { fileSize: 0 } })).toEqual({ props: { fileSize: 0 } })
+		expect(down({ props: { fileSize: 1 } })).toEqual({ props: { fileSize: 1 } })
+	})
+})
+
+describe('Add pixelRatio to image asset', () => {
+	const { up, down } = getTestMigration(imageAssetVersions.AddPixelRatio)
+
+	test('up works as expected', () => {
+		expect(up({ props: { w: 100, h: 100 } })).toEqual({ props: { w: 100, h: 100 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { w: 100, h: 100, pixelRatio: 2 } })).toEqual({
+			props: { w: 100, h: 100 },
+		})
+		expect(down({ props: { w: 100, h: 100 } })).toEqual({ props: { w: 100, h: 100 } })
+	})
+})
+
+describe('Add flipX, flipY to image shape', () => {
+	const { up, down } = getTestMigration(imageShapeVersions.AddFlipProps)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { flipX: false, flipY: false } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { flipX: false, flipY: false } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add flipX, flipY to geo shape', () => {
+	const { up, down } = getTestMigration(geoShapeVersions.AddFlipProps)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { flipX: false, flipY: false } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { flipX: false, flipY: false } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add alt text to image shape', () => {
+	const { up, down } = getTestMigration(imageShapeVersions.AddAltText)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { altText: '' } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { altText: 'yo' } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add alt text to video shape', () => {
+	const { up, down } = getTestMigration(videoShapeVersions.AddAltText)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { altText: '' } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { altText: 'yo' } })).toEqual({ props: {} })
+	})
+})
+
+describe('Make video asset file size optional', () => {
+	const { up, down } = getTestMigration(videoAssetVersions.MakeFileSizeOptional)
+
+	test('up works as expected', () => {
+		expect(up({ props: { fileSize: -1 } })).toEqual({ props: {} })
+		expect(up({ props: { fileSize: 0 } })).toEqual({ props: { fileSize: 0 } })
+		expect(up({ props: { fileSize: 1 } })).toEqual({ props: { fileSize: 1 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: {} })).toEqual({ props: { fileSize: -1 } })
+		expect(down({ props: { fileSize: 0 } })).toEqual({ props: { fileSize: 0 } })
+		expect(down({ props: { fileSize: 1 } })).toEqual({ props: { fileSize: 1 } })
+	})
+})
+
+describe('Adding label color to note shapes', () => {
+	const { up, down } = getTestMigration(noteShapeVersions.AddLabelColor)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { labelColor: 'black' } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { labelColor: 'black' } })).toEqual({ props: {} })
+	})
+})
+
+describe('TLPresence NullableCameraCursor', () => {
+	const { up, down } = getTestMigration(instancePresenceVersions.NullableCameraCursor)
+
+	test('up works as expected', () => {
+		expect(
+			up({
+				lastActivityTimestamp: 123,
+				followingUserId: null,
+				color: '#FF0000',
+				camera: { x: 1, y: 2, z: 3 },
+				cursor: { type: 'default', x: 1, y: 2, rotation: 3 },
+				screenBounds: { x: 0, y: 0, w: 1, h: 1 },
+				selectedShapeIds: [],
+				brush: null,
+				scribbles: [],
+				chatMessage: '',
+				meta: {},
+			})
+		).toEqual({
+			lastActivityTimestamp: 123,
+			followingUserId: null,
+			color: '#FF0000',
+			camera: { x: 1, y: 2, z: 3 },
+			cursor: { type: 'default', x: 1, y: 2, rotation: 3 },
+			screenBounds: { x: 0, y: 0, w: 1, h: 1 },
+			selectedShapeIds: [],
+			brush: null,
+			scribbles: [],
+			chatMessage: '',
+			meta: {},
+		})
+	})
+
+	test('down works as expected', () => {
+		expect(
+			down({
+				lastActivityTimestamp: null,
+				followingUserId: null,
+				color: '#FF0000',
+				camera: null,
+				cursor: null,
+				screenBounds: null,
+				selectedShapeIds: [],
+				brush: null,
+				scribbles: [],
+				chatMessage: '',
+				meta: {},
+			})
+		).toEqual({
+			lastActivityTimestamp: 0,
+			followingUserId: null,
+			color: '#FF0000',
+			camera: { x: 0, y: 0, z: 1 },
+			cursor: { type: 'default', x: 0, y: 0, rotation: 0 },
+			screenBounds: { x: 0, y: 0, w: 1, h: 1 },
+			selectedShapeIds: [],
+			brush: null,
+			scribbles: [],
+			chatMessage: '',
+			meta: {},
+		})
+	})
+})
+
+describe('Adding color to frame shapes', () => {
+	const { up, down } = getTestMigration(frameShapeVersions.AddColorProp)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { color: 'black' } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { color: 'black' } })).toEqual({ props: {} })
+	})
+})
+
+describe('Add elbow kind to arrow shape', () => {
+	const { up, down } = getTestMigration(arrowShapeVersions.AddElbow)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { kind: 'arc', elbowMidPoint: 0.5 } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { kind: 'arc', elbowMidPoint: 0.5, wow: true } })).toEqual({
+			props: { wow: true },
+		})
+		expect(down({ props: { kind: 'elbow', elbowMidPoint: 0.5, wow: true } })).toEqual({
+			props: { wow: true },
+		})
+	})
+})
+
+describe('Add side to arrow binding', () => {
+	const { up, down } = getTestMigration(arrowBindingVersions.AddSnap)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { snap: 'none' } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { snap: 'none' } })).toEqual({ props: {} })
+		expect(down({ props: { snap: 'edge' } })).toEqual({ props: {} })
+	})
+})
+
+describe('TLVideoAsset AddAutoplay', () => {
+	const { up, down } = getTestMigration(videoShapeVersions.AddAutoplay)
+
+	test('down works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { autoplay: true } })
+		expect(down({ props: { autoplay: true } })).toEqual({ props: {} })
+	})
+})
+
+describe('Base64 encoding for draw shape', () => {
+	const { up, down } = getTestMigration(drawShapeVersions.Base64)
+
+	test('up converts VecModel[] array directly to delta-encoded path', () => {
+		const legacySegments = [
+			{
+				type: 'free',
+				points: [
+					{ x: 0, y: 0, z: 0.5 },
+					{ x: 10, y: 10, z: 0.6 },
+				],
+			},
+		]
+		const result = up({ props: { segments: legacySegments } })
+
+		expect(result.props.scaleX).toBe(1)
+		expect(result.props.scaleY).toBe(1)
+		expect(typeof result.props.segments[0].path).toBe('string')
+		expect(result.props.segments[0].points).toBeUndefined()
+
+		const decodedPoints = b64Vecs.decodePoints(result.props.segments[0].path)
+		expect(decodedPoints.length).toBe(2)
+		expect(decodedPoints[0].x).toBeCloseTo(0, 0)
+		expect(decodedPoints[1].x).toBeCloseTo(10, 0)
+	})
+
+	test('down converts path back to VecModel[] array in points', () => {
+		const path = b64Vecs.encodePoints([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.6 },
+		])
+		const result = down({
+			props: {
+				scaleX: 1,
+				scaleY: 1,
+				segments: [{ type: 'free', path }],
+			},
+		})
+
+		expect(result.props.scaleX).toBeUndefined()
+		expect(result.props.scaleY).toBeUndefined()
+		expect(Array.isArray(result.props.segments[0].points)).toBe(true)
+		expect(result.props.segments[0].points.length).toBe(2)
+		expect(result.props.segments[0].path).toBeUndefined()
+	})
+})
+
+describe('LegacyPointsConversion migration for draw shape', () => {
+	const { up, down } = getTestMigration(drawShapeVersions.LegacyPointsConversion)
+
+	test('up converts legacy points (absolute base64) to path', () => {
+		// Data that was already migrated to v3 with the old absolute Float16 format
+		const absoluteBase64 = b64Vecs._legacyEncodePoints([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.6 },
+		])
+		const result = up({ props: { segments: [{ type: 'free', points: absoluteBase64 }] } })
+
+		expect(result.props.segments[0].path).toBeDefined()
+		expect(result.props.segments[0].points).toBeUndefined()
+
+		const decodedPoints = b64Vecs.decodePoints(result.props.segments[0].path)
+		expect(decodedPoints.length).toBe(2)
+		expect(decodedPoints[0].x).toBeCloseTo(0, 0)
+		expect(decodedPoints[1].x).toBeCloseTo(10, 0)
+	})
+
+	test('up converts legacy b64 string with multiple segments', () => {
+		// Test with multiple segments containing legacy absolute Float16 data
+		const legacyPoints1 = b64Vecs._legacyEncodePoints([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.6 },
+		])
+		const legacyPoints2 = b64Vecs._legacyEncodePoints([
+			{ x: 20, y: 20, z: 0.5 },
+			{ x: 30, y: 30, z: 0.7 },
+		])
+		const result = up({
+			props: {
+				segments: [
+					{ type: 'free', points: legacyPoints1 },
+					{ type: 'straight', points: legacyPoints2 },
+				],
+			},
+		})
+
+		expect(result.props.segments[0].path).toBeDefined()
+		expect(result.props.segments[0].points).toBeUndefined()
+		expect(result.props.segments[1].path).toBeDefined()
+		expect(result.props.segments[1].points).toBeUndefined()
+
+		const decoded1 = b64Vecs.decodePoints(result.props.segments[0].path)
+		expect(decoded1[0].x).toBeCloseTo(0, 0)
+		expect(decoded1[1].x).toBeCloseTo(10, 0)
+
+		const decoded2 = b64Vecs.decodePoints(result.props.segments[1].path)
+		expect(decoded2[0].x).toBeCloseTo(20, 0)
+		expect(decoded2[1].x).toBeCloseTo(30, 0)
+	})
+
+	test('up handles empty points gracefully', () => {
+		// Test with empty points array encoded as empty string
+		const result = up({ props: { segments: [{ type: 'free', points: '' }] } })
+
+		expect(result.props.segments[0].path).toBe('')
+		expect(result.props.segments[0].points).toBeUndefined()
+	})
+
+	test('up handles single point segment', () => {
+		const absoluteBase64 = b64Vecs._legacyEncodePoints([{ x: 100, y: 200, z: 0.75 }])
+		const result = up({ props: { segments: [{ type: 'free', points: absoluteBase64 }] } })
+
+		const decodedPoints = b64Vecs.decodePoints(result.props.segments[0].path)
+		expect(decodedPoints.length).toBe(1)
+		expect(decodedPoints[0].x).toBeCloseTo(100, 0)
+		expect(decodedPoints[0].y).toBeCloseTo(200, 0)
+		expect(decodedPoints[0].z).toBeCloseTo(0.75, 1)
+	})
+
+	test('up leaves already-converted path unchanged', () => {
+		const deltaPath = b64Vecs.encodePoints([
+			{ x: 100, y: 200, z: 0.5 },
+			{ x: 101, y: 201, z: 0.6 },
+		])
+		const result = up({ props: { segments: [{ type: 'free', path: deltaPath }] } })
+
+		// Should pass through unchanged
+		expect(result.props.segments[0].path).toBe(deltaPath)
+	})
+
+	test('down is a no-op (handled by Base64 down migration)', () => {
+		const deltaPath = b64Vecs.encodePoints([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.6 },
+		])
+		const result = down({ props: { segments: [{ type: 'free', path: deltaPath }] } })
+
+		// LegacyPointsConversion.down is a no-op; Base64.down handles the conversion
+		expect(result.props.segments[0].path).toBe(deltaPath)
+	})
+
+	test('migration converts legacy Float16 data to delta encoding format', () => {
+		// This test verifies the migration converts from legacy absolute Float16 format
+		// to the new delta encoding format. Note: precision already lost in legacy Float16
+		// cannot be recovered - this just tests the format conversion works.
+		const largeCoordPoints = [
+			{ x: 10000, y: 10000, z: 0.5 },
+			{ x: 10001, y: 10001, z: 0.5 },
+			{ x: 10002, y: 10002, z: 0.6 },
+		]
+
+		// Legacy Float16 at 10000 has step size of 8, so 10001 and 10002 collapse to 10000
+		const legacyAbsoluteB64 = b64Vecs._legacyEncodePoints(largeCoordPoints)
+		const result = up({ props: { segments: [{ type: 'free', points: legacyAbsoluteB64 }] } })
+
+		// Verify migration converted to path format
+		expect(result.props.segments[0].path).toBeDefined()
+		expect(result.props.segments[0].points).toBeUndefined()
+
+		// Verify the new format is decodable and produces valid data
+		const decoded = b64Vecs.decodePoints(result.props.segments[0].path)
+		expect(decoded).toHaveLength(3)
+
+		// Data is valid (not NaN, not Infinity)
+		expect(Number.isFinite(decoded[0].x)).toBe(true)
+		expect(Number.isFinite(decoded[1].x)).toBe(true)
+		expect(Number.isFinite(decoded[2].x)).toBe(true)
+	})
+})
+
+describe('Base64 migration handles scaleX and scaleY', () => {
+	const { up } = getTestMigration(drawShapeVersions.Base64)
+
+	test('up adds scaleX and scaleY when missing', () => {
+		const legacySegments = [
+			{
+				type: 'free',
+				points: [
+					{ x: 0, y: 0, z: 0.5 },
+					{ x: 10, y: 10, z: 0.6 },
+				],
+			},
+		]
+		const result = up({ props: { segments: legacySegments } })
+
+		expect(result.props.scaleX).toBe(1)
+		expect(result.props.scaleY).toBe(1)
+	})
+
+	test('up preserves existing scaleX and scaleY', () => {
+		const legacySegments = [
+			{
+				type: 'free',
+				points: [
+					{ x: 0, y: 0, z: 0.5 },
+					{ x: 10, y: 10, z: 0.6 },
+				],
+			},
+		]
+		const result = up({ props: { segments: legacySegments, scaleX: 1.5, scaleY: 2.0 } })
+
+		expect(result.props.scaleX).toBe(1.5)
+		expect(result.props.scaleY).toBe(2.0)
+	})
+})
+
+describe('Base64 encoding for highlight shape', () => {
+	const { up, down } = getTestMigration(highlightShapeVersions.Base64)
+
+	test('up converts VecModel[] array directly to delta-encoded path', () => {
+		const legacySegments = [
+			{
+				type: 'free',
+				points: [
+					{ x: 0, y: 0, z: 0.5 },
+					{ x: 10, y: 10, z: 0.6 },
+				],
+			},
+		]
+		const result = up({ props: { segments: legacySegments } })
+
+		expect(result.props.scaleX).toBe(1)
+		expect(result.props.scaleY).toBe(1)
+		expect(typeof result.props.segments[0].path).toBe('string')
+		expect(result.props.segments[0].points).toBeUndefined()
+	})
+
+	test('down converts path back to VecModel[] array in points', () => {
+		const path = b64Vecs.encodePoints([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.6 },
+		])
+		const result = down({
+			props: {
+				scaleX: 1,
+				scaleY: 1,
+				segments: [{ type: 'free', path }],
+			},
+		})
+
+		expect(result.props.scaleX).toBeUndefined()
+		expect(result.props.scaleY).toBeUndefined()
+		expect(Array.isArray(result.props.segments[0].points)).toBe(true)
+		expect(result.props.segments[0].path).toBeUndefined()
+	})
+})
+
+describe('LegacyPointsConversion migration for highlight shape', () => {
+	const { up, down } = getTestMigration(highlightShapeVersions.LegacyPointsConversion)
+
+	test('up converts legacy points (absolute base64) to path', () => {
+		const absoluteBase64 = b64Vecs._legacyEncodePoints([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.6 },
+		])
+		const result = up({ props: { segments: [{ type: 'free', points: absoluteBase64 }] } })
+
+		expect(result.props.segments[0].path).toBeDefined()
+		expect(result.props.segments[0].points).toBeUndefined()
+	})
+
+	test('up converts legacy b64 string with multiple segments', () => {
+		const legacyPoints1 = b64Vecs._legacyEncodePoints([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.6 },
+		])
+		const legacyPoints2 = b64Vecs._legacyEncodePoints([{ x: 20, y: 20, z: 0.5 }])
+		const result = up({
+			props: {
+				segments: [
+					{ type: 'free', points: legacyPoints1 },
+					{ type: 'free', points: legacyPoints2 },
+				],
+			},
+		})
+
+		expect(result.props.segments[0].path).toBeDefined()
+		expect(result.props.segments[0].points).toBeUndefined()
+		expect(result.props.segments[1].path).toBeDefined()
+
+		const decoded1 = b64Vecs.decodePoints(result.props.segments[0].path)
+		expect(decoded1[0].x).toBeCloseTo(0, 0)
+		expect(decoded1[1].x).toBeCloseTo(10, 0)
+	})
+
+	test('up leaves already-converted path unchanged', () => {
+		const deltaPath = b64Vecs.encodePoints([
+			{ x: 100, y: 200, z: 0.5 },
+			{ x: 101, y: 201, z: 0.6 },
+		])
+		const result = up({ props: { segments: [{ type: 'free', path: deltaPath }] } })
+
+		expect(result.props.segments[0].path).toBe(deltaPath)
+	})
+
+	test('down is a no-op (handled by Base64 down migration)', () => {
+		const deltaPath = b64Vecs.encodePoints([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.6 },
+		])
+		const result = down({ props: { segments: [{ type: 'free', path: deltaPath }] } })
+
+		// LegacyPointsConversion.down is a no-op; Base64.down handles the conversion
+		expect(result.props.segments[0].path).toBe(deltaPath)
+	})
+})
+
+describe('Adding textFirstEditedBy to note shape', () => {
+	const { up, down } = getTestMigration(noteShapeVersions.AddFirstEditedBy)
+
+	test('up works as expected', () => {
+		expect(up({ props: {} })).toEqual({ props: { textFirstEditedBy: null } })
+	})
+
+	test('down works as expected', () => {
+		expect(down({ props: { textFirstEditedBy: null } })).toEqual({ props: {} })
+	})
+})
+
+describe('Renaming textFirstEditedBy to textLastEditedBy on note shape', () => {
+	const { up, down } = getTestMigration(noteShapeVersions.RenameFirstEditedByToLast)
+
+	test('up renames the prop, preserving its value', () => {
+		expect(up({ props: { textFirstEditedBy: 'user:1' } })).toEqual({
+			props: { textLastEditedBy: 'user:1' },
+		})
+		expect(up({ props: { textFirstEditedBy: null } })).toEqual({
+			props: { textLastEditedBy: null },
+		})
+	})
+
+	test('down renames the prop back, preserving its value', () => {
+		expect(down({ props: { textLastEditedBy: 'user:1' } })).toEqual({
+			props: { textFirstEditedBy: 'user:1' },
+		})
+		expect(down({ props: { textLastEditedBy: null } })).toEqual({
+			props: { textFirstEditedBy: null },
+		})
+	})
+})
+
+describe('TLUser initial migration', () => {
+	const { up } = getTestMigration(userVersions.Initial)
+
+	test('up is a no-op', () => {
+		const record = { id: 'user:123', name: 'Test', color: '#000', imageUrl: '', meta: {} }
+		expect(up(record)).toEqual(record)
+	})
+})
+
+describe('OmitNonPressureZ migration for draw shape', () => {
+	const { up, down } = getTestMigration(drawShapeVersions.OmitNonPressureZ)
+
+	test('up is a no-op for 3D segments (absent dim reads as 3D)', () => {
+		const path = b64Vecs.encodePoints([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.5 },
+		])
+		const result = up({ props: { segments: [{ type: 'free', path }] } })
+		expect(result.props.segments[0]).toEqual({ type: 'free', path })
+	})
+
+	test('up leaves a 2D segment untouched', () => {
+		const path = b64Vecs.encodePoints2D([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.5 },
+		])
+		const result = up({ props: { segments: [{ type: 'free', path, dim: 2 }] } })
+		expect(result.props.segments[0]).toEqual({ type: 'free', path, dim: 2 })
+	})
+
+	test('down re-encodes a 2D segment to 3D and strips dim', () => {
+		const points = [
+			{ x: 5, y: 6, z: 0.5 },
+			{ x: 12, y: 9, z: 0.5 },
+			{ x: 20, y: 4, z: 0.5 },
+		]
+		const result = down({
+			props: { segments: [{ type: 'free', path: b64Vecs.encodePoints2D(points), dim: 2 }] },
+		})
+
+		expect(result.props.segments[0].dim).toBeUndefined()
+		const decoded = b64Vecs.decodePoints(result.props.segments[0].path)
+		expect(decoded.length).toBe(3)
+		expect(decoded[2].x).toBeCloseTo(20, 0)
+		expect(decoded[0].z).toBe(0.5)
+	})
+
+	test('down leaves a 3D segment (no dim) unchanged', () => {
+		const path = b64Vecs.encodePoints([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.6 },
+		])
+		const result = down({ props: { segments: [{ type: 'free', path }] } })
+		expect(result.props.segments[0]).toEqual({ type: 'free', path })
+	})
+
+	test('down strips an explicit dim: 3 without re-encoding the (already 3D) path', () => {
+		const path = b64Vecs.encodePoints([
+			{ x: 1, y: 2, z: 0.6 },
+			{ x: 3, y: 4, z: 0.7 },
+		])
+		const result = down({ props: { segments: [{ type: 'free', path, dim: 3 }] } })
+		expect(result.props.segments[0].dim).toBeUndefined()
+		expect(result.props.segments[0].path).toBe(path) // already 3D — field dropped, bytes untouched
+	})
+
+	test('down handles mixed 2D and 3D segments', () => {
+		const path3D = b64Vecs.encodePoints([
+			{ x: 1, y: 2, z: 0.6 },
+			{ x: 3, y: 4, z: 0.7 },
+		])
+		const path2D = b64Vecs.encodePoints2D([
+			{ x: 5, y: 6, z: 0.5 },
+			{ x: 7, y: 8, z: 0.5 },
+		])
+		const result = down({
+			props: {
+				segments: [
+					{ type: 'free', path: path3D },
+					{ type: 'straight', path: path2D, dim: 2 },
+				],
+			},
+		})
+		expect(result.props.segments[0]).toEqual({ type: 'free', path: path3D })
+		expect(result.props.segments[1].dim).toBeUndefined()
+		expect(b64Vecs.decodePoints(result.props.segments[1].path).length).toBe(2)
+	})
+})
+
+describe('OmitNonPressureZ migration for highlight shape', () => {
+	const { up, down } = getTestMigration(highlightShapeVersions.OmitNonPressureZ)
+
+	test('up is a no-op', () => {
+		const path = b64Vecs.encodePoints2D([
+			{ x: 0, y: 0, z: 0.5 },
+			{ x: 10, y: 10, z: 0.5 },
+		])
+		const result = up({ props: { segments: [{ type: 'free', path, dim: 2 }] } })
+		expect(result.props.segments[0]).toEqual({ type: 'free', path, dim: 2 })
+	})
+
+	test('down re-encodes a 2D segment to 3D and strips dim', () => {
+		const path2D = b64Vecs.encodePoints2D([
+			{ x: 5, y: 6, z: 0.5 },
+			{ x: 12, y: 9, z: 0.5 },
+		])
+		const result = down({ props: { segments: [{ type: 'free', path: path2D, dim: 2 }] } })
+		expect(result.props.segments[0].dim).toBeUndefined()
+		expect(b64Vecs.decodePoints(result.props.segments[0].path).length).toBe(2)
+	})
+})
+
+describe('DrawShapeSegment dim validation', () => {
+	test('accepts dim 2, 3, or absent; rejects other values', () => {
+		expect(() => DrawShapeSegment.validate({ type: 'free', path: 'AAAA', dim: 2 })).not.toThrow()
+		expect(() => DrawShapeSegment.validate({ type: 'free', path: 'AAAA', dim: 3 })).not.toThrow()
+		expect(() => DrawShapeSegment.validate({ type: 'free', path: 'AAAA' })).not.toThrow()
+		expect(() => DrawShapeSegment.validate({ type: 'free', path: 'AAAA', dim: 0 })).toThrow()
+		expect(() => DrawShapeSegment.validate({ type: 'free', path: 'AAAA', dim: 4 })).toThrow()
+	})
+})
+
 /* ---  PUT YOUR MIGRATIONS TESTS ABOVE HERE --- */
 
 // check that all migrator fns were called at least once
 describe('all migrator fns were called at least once', () => {
 	for (const migration of testSchema.sortedMigrations) {
 		it(`migration ${migration.id}`, () => {
-			expect((migration as any).up).toHaveBeenCalled()
+			expect(wasMigratorCalled(migration.id, 'up')).toBe(true)
 			if (typeof migration.down === 'function') {
-				expect((migration as any).down).toHaveBeenCalled()
+				expect(wasMigratorCalled(migration.id, 'down')).toBe(true)
 			}
 		})
 	}

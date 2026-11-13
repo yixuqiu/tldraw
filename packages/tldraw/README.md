@@ -5,9 +5,11 @@
 	</picture>
 </div>
 
-# tldraw
+# tldraw SDK
 
-This package contains the source code for the tldraw library. Learn more at our docs site: [tldraw.dev](https://tldraw.dev).
+tldraw is an infinite canvas SDK for React developers. You can use the tldraw SDK to add a drop-in whiteboard to your project, customize its appearance, extend its functionality, or use its components and APIs to compose other canvas experiences.
+
+Learn more at our docs site: [tldraw.dev](https://tldraw.dev).
 
 ## Installation
 
@@ -15,12 +17,6 @@ Install the `tldraw` package.
 
 ```bash
 npm i tldraw
-```
-
-Then start the local development server.
-
-```bash
-npm run dev
 ```
 
 ## Usage
@@ -34,30 +30,50 @@ export default function () {
 }
 ```
 
-Visit or [docs site](https://tldraw.dev) to learn more. See our [examples folder](https://github.com/tldraw/tldraw/tree/main/apps/examples) for more examples.
+Visit [tldraw.dev](https://tldraw.dev) to learn more.
 
-## Community
+## Documentation
 
-Have questions, comments or feedback? [Join our discord](https://discord.gg/rhsyWMUJxd) or [start a discussion](https://github.com/tldraw/tldraw/discussions/new).
+Documentation for the most recent release can be found on [tldraw.dev/docs](https://tldraw.dev/docs), including [reference docs](https://tldraw.dev/reference/editor/Editor). Our release notes can be found [here](https://tldraw.dev/releases).
 
-## Distributions
+For more agent-friendly docs, see our [LLMs.txt](https://tldraw.dev/llms.txt).
 
-You can find tldraw on npm [here](https://www.npmjs.com/package/tldraw?activeTab=versions).
+From 5.1.x onward, this package also includes a `DOCS.md` file with the appropriate docs-site content and a generated `RELEASE_NOTES.md` file with versioned release notes. If you or your coding agent need release notes for your installed version specifically, check these files alongside the source in your `node_modules` folder.
 
-## Contribution
+## Who's using tldraw
 
-Please see our [contributing guide](https://github.com/tldraw/tldraw/blob/main/CONTRIBUTING.md). Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
+The tldraw SDK powers canvas experiences in products from [Google](https://about.google), [Shopify](https://www.shopify.com), [BlackRock](https://www.blackrock.com), [Autodesk](https://blogs.autodesk.com/forma/2024/06/20/forma-board-collaborative-tool-for-architects/), [ClickUp](https://tldraw.dev/blog/clickup), [Replit](https://docs.replit.com/replitai/canvas), [Google Stitch](https://stitch.withgoogle.com), [Luma](https://lumalabs.ai/dream-machine), [Runway](https://runwayml.com), [Padlet](https://tldraw.dev/blog/padlet), [Mobbin](https://tldraw.dev/blog/mobbin), [Jam](https://tldraw.dev/blog/jam), [Craft](https://support.craft.do/en/write-and-edit/whiteboards), [Honeycomb](https://www.honeycomb.io/platform/canvas), [SchoolAI](https://schoolai.com/products/powerups), [Brisk](https://www.briskteaching.com/post/boost-whiteboard), and many more. See our [showcase](https://tldraw.dev/showcase) for case studies.
+
+## Package development
+
+To start the local development server:
+
+```bash
+npm run dev
+```
+
+This will run our [examples app](https://github.com/tldraw/tldraw/tree/main/apps/examples) locally at http://localhost:5420. Changes to packages will be reflected live on the examples app.
 
 ## License
 
-The tldraw source code and its distributions are provided under the [tldraw license](https://github.com/tldraw/tldraw/blob/main/LICENSE.md). This license does not permit commercial use.
-
-If you wish to use this project in commercial product, you need to purchase a commercial license. Please contact us at [sales@tldraw.com](mailto:sales@tldraw.com) for more inforion about obtaining a commercial license.
+This project is part of the tldraw SDK. It is provided under the [tldraw SDK license](https://github.com/tldraw/tldraw/blob/main/LICENSE.md).
 
 ## Trademarks
 
 Copyright (c) 2024-present tldraw Inc. The tldraw name and logo are trademarks of tldraw. Please see our [trademark guidelines](https://github.com/tldraw/tldraw/blob/main/TRADEMARKS.md) for info on acceptable usage.
 
+## Distributions
+
+You can find tldraw on npm [here](https://www.npmjs.com/package/@tldraw/tldraw?activeTab=versions).
+
+## Contribution
+
+Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
+
+## Community
+
+Have questions, comments or feedback? [Join our discord](https://discord.tldraw.com/?utm_source=github&utm_medium=readme&utm_campaign=sociallink). For the latest news and release notes, visit [tldraw.dev](https://tldraw.dev).
+
 ## Contact
 
-Find us on Twitter at [@tldraw](https://twitter.com/tldraw) or email [sales@tldraw.com](mailto://sales@tldraw.com). You can also [join our discord](https://discord.gg/rhsyWMUJxd) for quick help and support.
+Find us on Twitter/X at [@tldraw](https://twitter.com/tldraw).

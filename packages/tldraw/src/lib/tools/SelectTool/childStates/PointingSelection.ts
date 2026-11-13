@@ -1,49 +1,38 @@
-import {
-	StateNode,
-	TLClickEvent,
-	TLEventHandlers,
-	TLGroupShape,
-	TLPointerEventInfo,
-} from '@tldraw/editor'
+import { StateNode, TLClickEventInfo, TLPointerEventInfo } from '@tldraw/editor'
 import { selectOnCanvasPointerUp } from '../../selection-logic/selectOnCanvasPointerUp'
+import { isPlainDoubleClickDown } from '../selectHelpers'
 
 export class PointingSelection extends StateNode {
 	static override id = 'pointing_selection'
 
-	info = {} as TLPointerEventInfo & {
-		target: 'selection'
-	}
-
-	override onEnter = (info: TLPointerEventInfo & { target: 'selection' }) => {
-		this.info = info
-	}
-
-	override onPointerUp: TLEventHandlers['onPointerUp'] = (info) => {
-		selectOnCanvasPointerUp(this.editor)
+	override onPointerUp(info: TLPointerEventInfo) {
+		selectOnCanvasPointerUp(this.editor, info)
 		this.parent.transition('idle', info)
 	}
 
-	override onPointerMove: TLEventHandlers['onPointerMove'] = (info) => {
-		if (this.editor.inputs.isDragging) {
+	override onPointerMove(info: TLPointerEventInfo) {
+		if (this.editor.inputs.getIsDragging()) {
 			this.startTranslating(info)
 		}
 	}
 
-	override onLongPress: TLEventHandlers['onLongPress'] = (info) => {
+	override onLongPress(info: TLPointerEventInfo) {
 		this.startTranslating(info)
 	}
 
 	private startTranslating(info: TLPointerEventInfo) {
-		if (this.editor.getInstanceState().isReadonly) return
+		if (this.editor.getIsReadonly()) return
 		this.parent.transition('translating', info)
 	}
 
-	override onDoubleClick?: TLClickEvent | undefined = (info) => {
+	override onDoubleClick(info: TLClickEventInfo) {
+		if (!isPlainDoubleClickDown(this.editor, info)) return
+
 		const hoveredShape = this.editor.getHoveredShape()
 		const hitShape =
-			hoveredShape && !this.editor.isShapeOfType<TLGroupShape>(hoveredShape, 'group')
+			hoveredShape && !this.editor.isShapeOfType(hoveredShape, 'group')
 				? hoveredShape
-				: this.editor.getShapeAtPoint(this.editor.inputs.currentPagePoint, {
+				: this.editor.getShapeAtPoint(this.editor.inputs.getCurrentPagePoint(), {
 						hitInside: true,
 						margin: 0,
 						renderingOnly: true,
@@ -52,7 +41,7 @@ export class PointingSelection extends StateNode {
 		if (hitShape) {
 			// todo: extract the double click shape logic from idle so that we can share it here
 			this.parent.transition('idle')
-			this.parent.onDoubleClick?.({
+			this.parent.getCurrent()?.handleEvent({
 				...info,
 				target: 'shape',
 				shape: this.editor.getShape(hitShape)!,
@@ -61,15 +50,15 @@ export class PointingSelection extends StateNode {
 		}
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onCancel() {
 		this.cancel()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onComplete() {
 		this.cancel()
 	}
 
-	override onInterrupt = () => {
+	override onInterrupt() {
 		this.cancel()
 	}
 

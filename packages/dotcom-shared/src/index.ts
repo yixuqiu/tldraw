@@ -1,16 +1,14 @@
-export {
-	READ_ONLY_LEGACY_PREFIX,
-	READ_ONLY_PREFIX,
-	ROOM_OPEN_MODE,
-	ROOM_PREFIX,
-	RoomOpenModeToPath,
-	SNAPSHOT_PREFIX,
-	type RoomOpenMode,
-} from './routes'
-export type {
-	CreateRoomRequestBody,
-	CreateSnapshotRequestBody,
-	CreateSnapshotResponseBody,
-	GetReadonlySlugResponseBody,
-	Snapshot,
-} from './types'
+/* eslint-disable tldraw/no-export-star */
+export * from './canvasOpsJsonSchema'
+export * from './capabilities'
+export * from './commentMentions'
+export * from './constants'
+export * from './mcpPageRead'
+export * from './roles'
+export * from './shapeClusters'
+export * from './mutators'
+export * from './queries'
+export * from './routes'
+export * from './thumbnailScreenshot'
+export * from './tlaSchema'
+export * from './types'

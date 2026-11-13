@@ -1,44 +1,103 @@
-import { StateNode, TLEventHandlers, TLFrameShape, TLShape, TLTextShape } from '@tldraw/editor'
+import {
+	activeElementShouldCaptureKeys,
+	StateNode,
+	TLCancelEventInfo,
+	TLCompleteEventInfo,
+	tlenv,
+	TLEventInfo,
+	TLPointerEventInfo,
+	TLShape,
+} from '@tldraw/editor'
 import { getTextLabels } from '../../../utils/shapes/shapes'
+import { renderPlaintextFromRichText } from '../../../utils/text/richText'
 import { getHitShapeOnCanvasPointerDown } from '../../selection-logic/getHitShapeOnCanvasPointerDown'
-import { updateHoveredShapeId } from '../../selection-logic/updateHoveredShapeId'
+import {
+	cancelUpdateHoveredShapeId,
+	updateHoveredShapeId,
+} from '../../selection-logic/updateHoveredShapeId'
+
+interface EditingShapeInfo {
+	isCreatingTextWhileToolLocked?: boolean
+}
 
 export class EditingShape extends StateNode {
 	static override id = 'editing_shape'
 
-	hitShapeForPointerUp: TLShape | null = null
+	hitLabelOnShapeForPointerUp: TLShape | null = null
+	private info = {} as EditingShapeInfo
+	private didPointerDownOnEditingShape = false
 
-	override onEnter = () => {
+	private isTextInputFocused(): boolean {
+		const container = this.editor.getContainer()
+		const doc = this.editor.getContainerDocument()
+		return container.contains(doc.activeElement) && activeElementShouldCaptureKeys(false, doc)
+	}
+
+	override onEnter(info: EditingShapeInfo) {
 		const editingShape = this.editor.getEditingShape()
 		if (!editingShape) throw Error('Entered editing state without an editing shape')
-		this.hitShapeForPointerUp = null
+		this.hitLabelOnShapeForPointerUp = null
+		this.didPointerDownOnEditingShape = false
+
+		this.info = info
+
+		if (info.isCreatingTextWhileToolLocked) {
+			this.parent.setCurrentToolIdMask('text')
+		}
+
+		this.editor.setCursor({ type: 'default', rotation: 0 })
 		updateHoveredShapeId(this.editor)
 		this.editor.select(editingShape)
 	}
 
-	override onExit = () => {
-		const { editingShapeId } = this.editor.getCurrentPageState()
-		if (!editingShapeId) return
-
-		// Clear the editing shape
+	override onExit() {
 		this.editor.setEditingShape(null)
-
-		const shape = this.editor.getShape(editingShapeId)!
-		const util = this.editor.getShapeUtil(shape)
-
-		// Check for changes on editing end
-		util.onEditEnd?.(shape)
+		cancelUpdateHoveredShapeId(this.editor)
+		if (this.info.isCreatingTextWhileToolLocked) {
+			this.parent.setCurrentToolIdMask(undefined)
+		}
 	}
 
-	override onPointerMove: TLEventHandlers['onPointerMove'] = (info) => {
+	// Switching tools from onExit would re-route the state chart in the middle of the transition
+	// that is exiting this state (the select tool's idle gets entered under an inactive select
+	// tool and clobbers the text tool's cursor), so the tool-lock return happens here instead.
+	private leave(info: TLEventInfo) {
+		if (this.info.isCreatingTextWhileToolLocked) {
+			this.editor.setCurrentTool('text', {})
+		} else {
+			this.parent.transition('idle', info)
+		}
+	}
+
+	override onPointerMove(info: TLPointerEventInfo) {
 		// In the case where on pointer down we hit a shape's label, we need to check if the user is dragging.
 		// and if they are, we need to transition to translating instead.
-		if (this.hitShapeForPointerUp && this.editor.inputs.isDragging) {
-			if (this.editor.getInstanceState().isReadonly) return
-			this.editor.select(this.hitShapeForPointerUp)
+		if (this.hitLabelOnShapeForPointerUp && this.editor.inputs.getIsDragging()) {
+			if (this.editor.getIsReadonly()) return
+			if (this.hitLabelOnShapeForPointerUp.isLocked) return
+
+			this.editor.select(this.hitLabelOnShapeForPointerUp)
 			this.parent.transition('translating', info)
-			this.hitShapeForPointerUp = null
+			this.hitLabelOnShapeForPointerUp = null
 			return
+		}
+
+		// Check if dragging from editing shape with blurred input
+		if (this.didPointerDownOnEditingShape && this.editor.inputs.getIsDragging()) {
+			if (this.editor.getIsReadonly()) return
+
+			const editingShape = this.editor.getEditingShape()
+			if (!editingShape || editingShape.isLocked) return
+
+			if (!this.isTextInputFocused()) {
+				// Input blurred during drag - exit edit mode and start translating
+				this.editor.select(editingShape)
+				this.parent.transition('translating', info)
+				this.didPointerDownOnEditingShape = false
+				return
+			}
+			// Input still focused - user is selecting text, stay in edit mode
+			this.didPointerDownOnEditingShape = false
 		}
 
 		switch (info.target) {
@@ -50,10 +109,16 @@ export class EditingShape extends StateNode {
 		}
 	}
 
-	override onPointerDown: TLEventHandlers['onPointerDown'] = (info) => {
-		this.hitShapeForPointerUp = null
+	override onPointerDown(info: TLPointerEventInfo) {
+		this.hitLabelOnShapeForPointerUp = null
+		this.didPointerDownOnEditingShape = false
 
 		switch (info.target) {
+			// N.B. This bit of logic has a bit of history to it.
+			// There was a PR that got rid of this logic: https://github.com/tldraw/tldraw/pull/4237
+			// But here we bring it back to help support the new rich text world.
+			// The original issue which is visible in the video attachments in the PR now seem
+			// to have been resolved anyway via some other layer.
 			case 'canvas': {
 				const hitShape = getHitShapeOnCanvasPointerDown(this.editor, true /* hitLabels */)
 				if (hitShape) {
@@ -75,17 +140,17 @@ export class EditingShape extends StateNode {
 				}
 
 				// for shapes with labels, check to see if the click was inside of the shape's label
-				const geometry = this.editor.getShapeUtil(selectingShape).getGeometry(selectingShape)
+				const geometry = this.editor.getShapeGeometry(selectingShape)
 				const textLabels = getTextLabels(geometry)
 				const textLabel = textLabels.length === 1 ? textLabels[0] : undefined
 				// N.B. One nuance here is that we want empty text fields to be removed from the canvas when the user clicks away from them.
 				const isEmptyTextShape =
-					this.editor.isShapeOfType<TLTextShape>(editingShape, 'text') &&
-					editingShape.props.text.trim() === ''
+					this.editor.isShapeOfType(editingShape, 'text') &&
+					renderPlaintextFromRichText(this.editor, editingShape.props.richText).trim() === ''
 				if (textLabel && !isEmptyTextShape) {
 					const pointInShapeSpace = this.editor.getPointInShapeSpace(
 						selectingShape,
-						this.editor.inputs.currentPagePoint
+						this.editor.inputs.getCurrentPagePoint()
 					)
 					if (
 						textLabel.bounds.containsPoint(pointInShapeSpace, 0) &&
@@ -93,21 +158,23 @@ export class EditingShape extends StateNode {
 					) {
 						// it's a hit to the label!
 						if (selectingShape.id === editingShape.id) {
-							// If we clicked on the editing geo / arrow shape's label, do nothing
+							// Track click on editing shape for drag detection
+							this.didPointerDownOnEditingShape = true
 							return
 						} else {
-							this.hitShapeForPointerUp = selectingShape
+							this.hitLabelOnShapeForPointerUp = selectingShape
 
-							this.editor.mark('editing on pointer up')
+							this.editor.markHistoryStoppingPoint('editing on pointer up')
 							this.editor.select(selectingShape.id)
 							return
 						}
 					}
 				} else {
 					if (selectingShape.id === editingShape.id) {
-						// If we clicked on a frame, while editing its heading, cancel editing
-						if (this.editor.isShapeOfType<TLFrameShape>(selectingShape, 'frame')) {
+						// If we clicked on a frame-like shape while editing its heading, cancel editing
+						if (this.editor.isShapeFrameLike(selectingShape)) {
 							this.editor.setEditingShape(null)
+							this.parent.transition('idle', info)
 						}
 						// If we clicked on the editing shape (which isn't a shape with a label), do nothing
 					} else {
@@ -122,21 +189,33 @@ export class EditingShape extends StateNode {
 		}
 
 		// still here? Cancel editing and transition back to select idle
-		this.parent.transition('idle', info)
+		this.leave(info)
 		// then feed the pointer down event back into the state chart as if it happened in that state
 		this.editor.root.handleEvent(info)
 	}
 
-	override onPointerUp: TLEventHandlers['onPointerUp'] = (info) => {
+	override onPointerUp(info: TLPointerEventInfo) {
+		if (this.didPointerDownOnEditingShape) {
+			this.didPointerDownOnEditingShape = false
+			if (!this.isTextInputFocused()) {
+				// We clicked on the text label, which blured the input.
+				// We want to stay in edit mode and select all the text.
+				this.editor.getRichTextEditor()?.commands.focus('all')
+				return
+			}
+		}
+
 		// If we're not dragging, and it's a hit to the label, begin editing the shape.
-		const hitShape = this.hitShapeForPointerUp
+		const hitShape = this.hitLabelOnShapeForPointerUp
 		if (!hitShape) return
-		this.hitShapeForPointerUp = null
+		this.hitLabelOnShapeForPointerUp = null
 
 		// Stay in edit mode to maintain flow of editing.
 		const util = this.editor.getShapeUtil(hitShape)
-		if (this.editor.getInstanceState().isReadonly) {
-			if (!util.canEditInReadOnly(hitShape)) {
+		if (hitShape.isLocked) return
+
+		if (this.editor.getIsReadonly()) {
+			if (!util.canEditInReadonly(hitShape)) {
 				this.parent.transition('pointing_shape', info)
 				return
 			}
@@ -144,15 +223,26 @@ export class EditingShape extends StateNode {
 
 		this.editor.select(hitShape.id)
 
+		const currentEditingShape = this.editor.getEditingShape()
+		const isEditToEditAction = currentEditingShape && currentEditingShape.id !== hitShape.id
 		this.editor.setEditingShape(hitShape.id)
+
+		const isMobile = tlenv.isIos || tlenv.isAndroid
+		if (!isMobile || !isEditToEditAction) {
+			this.editor.emit('place-caret', { shapeId: hitShape.id, point: info.point })
+		} else if (isMobile && isEditToEditAction) {
+			this.editor.emit('select-all-text', { shapeId: hitShape.id })
+		}
 		updateHoveredShapeId(this.editor)
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = (info) => {
-		this.parent.transition('idle', info)
+	override onComplete(info: TLCompleteEventInfo) {
+		this.editor.getContainer().focus()
+		this.leave(info)
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = (info) => {
-		this.parent.transition('idle', info)
+	override onCancel(info: TLCancelEventInfo) {
+		this.editor.getContainer().focus()
+		this.leave(info)
 	}
 }

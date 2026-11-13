@@ -1,46 +1,67 @@
 import { ComponentType } from 'react'
 
-export type Example = {
+export interface Example {
 	title: string
-	description: string
-	details: string
 	path: string
 	codeUrl: string
-	hide: boolean
 	category: Category
 	priority: number
-	componentFile: string
-	loadComponent: () => Promise<ComponentType>
+	keywords: string[]
+	multiplayer: boolean
+	loadComponent(): Promise<ComponentType<{ roomId?: string }>>
+	loadContent(): Promise<{ description: string; details: string }>
 }
 
-type Category =
-	| 'basic'
-	| 'editor-api'
-	| 'ui'
-	| 'collaboration'
-	| 'data/assets'
-	| 'shapes/tools'
-	| 'use-cases'
+const categories = [
+	['getting-started', 'Getting started'],
+	['configuration', 'Configuration'],
+	['editor-api', 'Editor API'],
+	['ui', 'UI & theming'],
+	['layout', 'Page layout'],
+	['events', 'Events & effects'],
+	['shapes/tools', 'Shapes & tools'],
+	['users', 'Users'],
+	['collaboration', 'Collaboration'],
+	['data/assets', 'Data & assets'],
+	['use-cases', 'Use cases'],
+] as const
+
+type Category = (typeof categories)[number][0]
+
+interface ExampleMetaModule {
+	meta: Omit<Example, 'loadComponent' | 'loadContent'>
+	loadComponent(): Promise<ComponentType<{ roomId?: string }>>
+	loadContent(): Promise<{ description: string; details: string }>
+}
+
+const allExamples = Object.values(
+	import.meta.glob('./examples/**/README.md', { eager: true })
+) as ExampleMetaModule[]
+
+const categorySet = new Set(categories.map(([category]) => category))
+
+const sortedExamples = allExamples
+	.map((module) => ({
+		...module.meta,
+		loadComponent: module.loadComponent,
+		loadContent: module.loadContent,
+	}))
+	.map((example) => {
+		if (!categorySet.has(example.category)) {
+			throw new Error(`Unknown category "${example.category}" for example "${example.title}"`)
+		}
+		return example
+	})
 
 const getExamplesForCategory = (category: Category) =>
-	(Object.values(import.meta.glob('./examples/*/README.md', { eager: true })) as Example[])
+	sortedExamples
 		.filter((e) => e.category === category)
 		.sort((a, b) => {
 			if (a.priority === b.priority) return a.title.localeCompare(b.title)
 			return a.priority - b.priority
 		})
 
-const categories: Record<Category, string> = {
-	basic: 'Getting started',
-	ui: 'UI & theming',
-	'shapes/tools': 'Shapes & tools',
-	'data/assets': 'Data & assets',
-	'editor-api': 'Editor API',
-	collaboration: 'Collaboration',
-	'use-cases': 'Use cases',
-}
-
-export const examples = Object.entries(categories).map(([category, title]) => ({
+export const examples = categories.map(([category, title]) => ({
 	id: title,
 	value: getExamplesForCategory(category as Category),
 }))

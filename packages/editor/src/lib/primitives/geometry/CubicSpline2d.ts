@@ -1,25 +1,25 @@
-import { Vec } from '../Vec'
+import { Vec, VecLike } from '../Vec'
 import { CubicBezier2d } from './CubicBezier2d'
 import { Geometry2d, Geometry2dOptions } from './Geometry2d'
 
 /** @public */
 export class CubicSpline2d extends Geometry2d {
-	points: Vec[]
+	private _points: Vec[]
 
 	constructor(config: Omit<Geometry2dOptions, 'isClosed' | 'isFilled'> & { points: Vec[] }) {
 		super({ ...config, isClosed: false, isFilled: false })
 		const { points } = config
 
-		this.points = points
+		this._points = points
 	}
 
-	_segments?: CubicBezier2d[]
+	private _segments?: CubicBezier2d[]
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get segments() {
 		if (!this._segments) {
 			this._segments = []
-			const { points } = this
+			const { _points: points } = this
 
 			const len = points.length
 			const last = len - 2
@@ -46,25 +46,19 @@ export class CubicSpline2d extends Geometry2d {
 		return this._segments
 	}
 
-	_length?: number
-
-	// eslint-disable-next-line no-restricted-syntax
-	get length() {
-		if (!this._length) {
-			this._length = this.segments.reduce((acc, segment) => acc + segment.length, 0)
-		}
-		return this._length
+	override getLength() {
+		return this.segments.reduce((acc, segment) => acc + segment.length, 0)
 	}
 
 	getVertices() {
 		const vertices = this.segments.reduce((acc, segment) => {
 			return acc.concat(segment.vertices)
 		}, [] as Vec[])
-		vertices.push(this.points[this.points.length - 1])
+		vertices.push(this._points[this._points.length - 1])
 		return vertices
 	}
 
-	nearestPoint(A: Vec): Vec {
+	nearestPoint(A: VecLike): Vec {
 		let nearest: Vec | undefined
 		let dist = Infinity
 		let d: number
@@ -81,7 +75,29 @@ export class CubicSpline2d extends Geometry2d {
 		return nearest
 	}
 
-	hitTestLineSegment(A: Vec, B: Vec): boolean {
+	override distanceToPoint(point: VecLike, _hitInside = false): number {
+		const { segments } = this
+		let minDist = Infinity
+		for (let i = 0; i < segments.length; i++) {
+			const d = segments[i].distanceToPoint(point)
+			if (d < minDist) minDist = d
+		}
+		return minDist
+	}
+
+	hitTestLineSegment(A: VecLike, B: VecLike): boolean {
 		return this.segments.some((segment) => segment.hitTestLineSegment(A, B))
+	}
+
+	getSvgPathData() {
+		let d = this.segments.reduce((d, segment, i) => {
+			return d + segment.getSvgPathData(i === 0)
+		}, '')
+
+		if (this.isClosed) {
+			d += 'Z'
+		}
+
+		return d
 	}
 }

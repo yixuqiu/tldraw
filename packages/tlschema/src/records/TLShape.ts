@@ -1,18 +1,14 @@
 import {
-	Migration,
-	MigrationId,
-	MigrationSequence,
 	RecordId,
 	UnknownRecord,
 	createMigrationIds,
-	createMigrationSequence,
 	createRecordMigrationSequence,
 	createRecordType,
 } from '@tldraw/store'
-import { assert, mapObjectMapValues } from '@tldraw/utils'
+import { mapObjectMapValues, uniqueId } from '@tldraw/utils'
 import { T } from '@tldraw/validate'
-import { nanoid } from 'nanoid'
-import { SchemaShapeInfo } from '../createTLSchema'
+import { SchemaPropsInfo } from '../createTLSchema'
+import { TLPropsMigrations } from '../recordsWithProps'
 import { TLArrowShape } from '../shapes/TLArrowShape'
 import { TLBaseShape, createShapeValidator } from '../shapes/TLBaseShape'
 import { TLBookmarkShape } from '../shapes/TLBookmarkShape'
@@ -33,7 +29,21 @@ import { TLPageId } from './TLPage'
 /**
  * The default set of shapes that are available in the editor.
  *
- * @public */
+ * This union type represents all the built-in shape types supported by tldraw,
+ * including arrows, bookmarks, drawings, embeds, frames, geometry shapes,
+ * groups, images, lines, notes, text, videos, and highlights.
+ *
+ * @example
+ * ```ts
+ * // Check if a shape is a default shape type
+ * function isDefaultShape(shape: TLShape): shape is TLDefaultShape {
+ *   const defaultTypes = ['arrow', 'bookmark', 'draw', 'embed', 'frame', 'geo', 'group', 'image', 'line', 'note', 'text', 'video', 'highlight']
+ *   return defaultTypes.includes(shape.type)
+ * }
+ * ```
+ *
+ * @public
+ */
 export type TLDefaultShape =
 	| TLArrowShape
 	| TLBookmarkShape
@@ -53,17 +63,117 @@ export type TLDefaultShape =
  * A type for a shape that is available in the editor but whose type is
  * unknown—either one of the editor's default shapes or else a custom shape.
  *
- * @public */
-export type TLUnknownShape = TLBaseShape<string, object>
-
-/**
- * The set of all shapes that are available in the editor, including unknown shapes.
+ * This is useful when working with shapes generically without knowing their specific type.
+ * The shape type is a string and props are a generic object.
+ *
+ * @example
+ * ```ts
+ * // Handle any shape regardless of its specific type
+ * function processUnknownShape(shape: TLUnknownShape) {
+ *   console.log(`Processing shape of type: ${shape.type}`)
+ *   console.log(`Position: (${shape.x}, ${shape.y})`)
+ * }
+ * ```
  *
  * @public
  */
-export type TLShape = TLDefaultShape | TLUnknownShape
+export type TLUnknownShape = TLBaseShape<string, object>
 
 /** @public */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface TLGlobalShapePropsMap {}
+
+/** @public */
+// prettier-ignore
+export type TLIndexedShapes = {
+	// We iterate over a union of augmented keys and default shape types.
+	// This allows us to include (or conditionally exclude or override) the default shapes in one go.
+	//
+	// In the `as` clause we are filtering out disabled shapes.
+	[K in keyof TLGlobalShapePropsMap | TLDefaultShape['type'] as K extends TLDefaultShape['type']
+		? // core shapes are always available and cannot be overridden so we just include them
+			K extends 'group'
+			? K
+			: K extends keyof TLGlobalShapePropsMap
+				? // if it extends a nullish value the user has disabled this shape type so we filter it out with never
+					TLGlobalShapePropsMap[K] extends null | undefined
+					? never
+					: K
+				: K
+		: K]: K extends 'group'
+		? // core shapes are always available and cannot be overridden so we just include them
+			Extract<TLDefaultShape, { type: K }>
+		: K extends TLDefaultShape['type']
+			? // if it's a default shape type we need to check if it's been overridden
+				K extends keyof TLGlobalShapePropsMap
+				? // if it has been overriden then use the custom shape definition
+					TLBaseShape<K, TLGlobalShapePropsMap[K]>
+				: // if it has not been overriden then reuse existing type aliases for better type display
+					Extract<TLDefaultShape, { type: K }>
+			: // use the custom shape definition
+				TLBaseShape<K, TLGlobalShapePropsMap[K & keyof TLGlobalShapePropsMap]>
+}
+
+/**
+ * The set of all shapes that are available in the editor.
+ *
+ * This is the primary shape type used throughout tldraw. It includes both the
+ * built-in default shapes and any custom shapes that might be added.
+ *
+ * You can use this type without a type argument to work with any shape, or pass
+ * a specific shape type string (e.g., `'geo'`, `'arrow'`, `'text'`) to narrow
+ * down to that specific shape type.
+ *
+ * @example
+ * ```ts
+ * // Work with any shape in the editor
+ * function moveShape(shape: TLShape, deltaX: number, deltaY: number): TLShape {
+ *   return {
+ *     ...shape,
+ *     x: shape.x + deltaX,
+ *     y: shape.y + deltaY
+ *   }
+ * }
+ *
+ * // Narrow to a specific shape type by passing the type as a generic argument
+ * function getArrowLabel(shape: TLShape<'arrow'>): string {
+ *   return shape.props.text // TypeScript knows this is a TLArrowShape
+ * }
+ * ```
+ *
+ * @public
+ */
+export type TLShape<K extends keyof TLIndexedShapes = keyof TLIndexedShapes> = TLIndexedShapes[K]
+
+/**
+ * A partial version of a shape, useful for updates and patches.
+ *
+ * This type represents a shape where all properties except `id` and `type` are optional.
+ * It's commonly used when updating existing shapes or creating shape patches.
+ *
+ * @example
+ * ```ts
+ * // Update a shape's position
+ * const shapeUpdate: TLShapePartial = {
+ *   id: 'shape:123',
+ *   type: 'geo',
+ *   x: 100,
+ *   y: 200
+ * }
+ *
+ * // Update shape properties
+ * const propsUpdate: TLShapePartial<TLGeoShape> = {
+ *   id: 'shape:123',
+ *   type: 'geo',
+ *   props: {
+ *     w: 150,
+ *     h: 100
+ *   }
+ * }
+ * ```
+ *
+ * @public
+ */
 export type TLShapePartial<T extends TLShape = TLShape> = T extends T
 	? {
 			id: TLShapeId
@@ -73,34 +183,124 @@ export type TLShapePartial<T extends TLShape = TLShape> = T extends T
 		} & Partial<Omit<T, 'type' | 'id' | 'props' | 'meta'>>
 	: never
 
-/** @public */
-export type TLShapeId = RecordId<TLUnknownShape>
-
-// evil type shit that will get deleted in the next PR
-type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (k: infer I) => void
-	? I
+/**
+ * A partial version of a shape, useful for creating shapes.
+ *
+ * This type represents a shape where all properties except `type` are optional.
+ * It's commonly used when creating shapes.
+ *
+ * @example
+ * ```ts
+ * // Create a shape
+ * const shapeCreate: TLCreateShapePartial = {
+ *   type: 'geo',
+ *   x: 100,
+ *   y: 200
+ * }
+ *
+ * // Create shape properties
+ * const propsCreate: TLCreateShapePartial<TLGeoShape> = {
+ *   type: 'geo',
+ *   props: {
+ *     w: 150,
+ *     h: 100
+ *   }
+ * }
+ * ```
+ *
+ * @public
+ */
+export type TLCreateShapePartial<T extends TLShape = TLShape> = T extends T
+	? {
+			type: T['type']
+			props?: Partial<T['props']>
+			meta?: Partial<T['meta']>
+		} & Partial<Omit<T, 'type' | 'props' | 'meta'>>
 	: never
 
-type Identity<T> = { [K in keyof T]: T[K] }
+/**
+ * Extract a shape type by its props.
+ *
+ * This utility type takes a props object type and returns the corresponding shape type
+ * from the TLShape union whose props match the given type.
+ *
+ * @example
+ * ```ts
+ * type MyShape = ExtractShapeByProps<{ w: number; h: number }>
+ * // MyShape is now the type of shape(s) that have props with w and h as numbers
+ * ```
+ *
+ * @public
+ */
+export type ExtractShapeByProps<P> = Extract<TLShape, { props: P }>
 
-/** @public */
-export type TLShapeProps = Identity<UnionToIntersection<TLDefaultShape['props']>>
+/**
+ * A unique identifier for a shape record.
+ *
+ * Shape IDs are branded strings that start with "shape:" followed by a unique identifier.
+ * This type-safe approach prevents mixing up different types of record IDs.
+ *
+ * @example
+ * ```ts
+ * const shapeId: TLShapeId = createShapeId() // "shape:abc123"
+ * const customId: TLShapeId = createShapeId('my-custom-id') // "shape:my-custom-id"
+ * ```
+ *
+ * @public
+ */
+export type TLShapeId = RecordId<TLShape>
 
-/** @public */
-export type TLShapeProp = keyof TLShapeProps
-
-/** @public */
+/**
+ * The ID of a shape's parent, which can be either a page or another shape.
+ *
+ * Shapes can be parented to pages (for top-level shapes) or to other shapes
+ * (for shapes inside frames or groups).
+ *
+ * @example
+ * ```ts
+ * // Shape parented to a page
+ * const pageParentId: TLParentId = 'page:main'
+ *
+ * // Shape parented to another shape (e.g., inside a frame)
+ * const shapeParentId: TLParentId = 'shape:frame123'
+ * ```
+ *
+ * @public
+ */
 export type TLParentId = TLPageId | TLShapeId
 
-/** @public */
+/**
+ * Migration version IDs for the root shape schema.
+ *
+ * These track the evolution of the base shape structure over time, ensuring
+ * that shapes created in older versions can be migrated to newer formats.
+ *
+ * @example
+ * ```ts
+ * // Check if a migration needs to be applied
+ * if (shapeVersion < rootShapeVersions.AddIsLocked) {
+ *   // Apply isLocked migration
+ * }
+ * ```
+ *
+ * @public
+ */
 export const rootShapeVersions = createMigrationIds('com.tldraw.shape', {
 	AddIsLocked: 1,
 	HoistOpacity: 2,
 	AddMeta: 3,
 	AddWhite: 4,
-} as const)
+})
 
-/** @public */
+/**
+ * Migration sequence for the root shape record type.
+ *
+ * This sequence defines how shape records should be transformed when migrating
+ * between different schema versions. Each migration handles a specific version
+ * upgrade, ensuring data compatibility across tldraw versions.
+ *
+ * @public
+ */
 export const rootShapeMigrations = createRecordMigrationSequence({
 	sequenceId: 'com.tldraw.shape',
 	recordType: 'shape',
@@ -155,24 +355,115 @@ export const rootShapeMigrations = createRecordMigrationSequence({
 	],
 })
 
-/** @public */
+/**
+ * Type guard to check if a record is a shape.
+ *
+ * @param record - The record to check
+ * @returns True if the record is a shape, false otherwise
+ *
+ * @example
+ * ```ts
+ * const record = store.get('shape:abc123')
+ * if (isShape(record)) {
+ *   console.log(`Shape type: ${record.type}`)
+ *   console.log(`Position: (${record.x}, ${record.y})`)
+ * }
+ * ```
+ *
+ * @public
+ */
 export function isShape(record?: UnknownRecord): record is TLShape {
 	if (!record) return false
 	return record.typeName === 'shape'
 }
 
-/** @public */
+/**
+ * Type guard to check if a string is a valid shape ID.
+ *
+ * @param id - The string to check
+ * @returns True if the string is a valid shape ID, false otherwise
+ *
+ * @example
+ * ```ts
+ * const id = 'shape:abc123'
+ * if (isShapeId(id)) {
+ *   const shape = store.get(id) // TypeScript knows id is TLShapeId
+ * }
+ *
+ * // Check user input
+ * function selectShape(id: string) {
+ *   if (isShapeId(id)) {
+ *     editor.selectShape(id)
+ *   } else {
+ *     console.error('Invalid shape ID format')
+ *   }
+ * }
+ * ```
+ *
+ * @public
+ */
 export function isShapeId(id?: string): id is TLShapeId {
 	if (!id) return false
 	return id.startsWith('shape:')
 }
 
-/** @public */
+/**
+ * Creates a new shape ID.
+ *
+ * @param id - Optional custom ID suffix. If not provided, a unique ID will be generated
+ * @returns A new shape ID with the "shape:" prefix
+ *
+ * @example
+ * ```ts
+ * // Create a shape with auto-generated ID
+ * const shapeId = createShapeId() // "shape:abc123"
+ *
+ * // Create a shape with custom ID
+ * const customShapeId = createShapeId('my-rectangle') // "shape:my-rectangle"
+ *
+ * // Use in shape creation
+ * const newShape: TLGeoShape = {
+ *   id: createShapeId(),
+ *   type: 'geo',
+ *   x: 100,
+ *   y: 200,
+ *   // ... other properties
+ * }
+ * ```
+ *
+ * @public
+ */
 export function createShapeId(id?: string): TLShapeId {
-	return `shape:${id ?? nanoid()}` as TLShapeId
+	return `shape:${id ?? uniqueId()}` as TLShapeId
 }
 
-/** @internal */
+/**
+ * Extracts style properties from a shape's props definition and maps them to their property keys.
+ *
+ * This function analyzes shape property validators to identify which ones are style properties
+ * and creates a mapping from StyleProp instances to their corresponding property keys.
+ * It also validates that each style property is only used once per shape.
+ *
+ * @param props - Record of property validators for a shape type
+ * @returns Map from StyleProp instances to their property keys
+ * @throws Error if a style property is used more than once in the same shape
+ *
+ * @example
+ * ```ts
+ * const geoShapeProps = {
+ *   color: DefaultColorStyle,
+ *   fill: DefaultFillStyle,
+ *   width: T.number,
+ *   height: T.number
+ * }
+ *
+ * const styleMap = getShapePropKeysByStyle(geoShapeProps)
+ * // styleMap.get(DefaultColorStyle) === 'color'
+ * // styleMap.get(DefaultFillStyle) === 'fill'
+ * ```
+ *
+ * @internal
+ */
 export function getShapePropKeysByStyle(props: Record<string, T.Validatable<any>>) {
 	const propKeysByStyle = new Map<StyleProp<unknown>, string>()
 	for (const [key, prop] of Object.entries(props)) {
@@ -188,142 +479,92 @@ export function getShapePropKeysByStyle(props: Record<string, T.Validatable<any>
 	return propKeysByStyle
 }
 
-export const NO_DOWN_MIGRATION = 'none' as const
-// If a down migration was deployed more than a couple of months ago it should be safe to retire it.
-// We only really need them to smooth over the transition between versions, and some folks do keep
-// browser tabs open for months without refreshing, but at a certain point that kind of behavior is
-// on them. Plus anyway recently chrome has started to actually kill tabs that are open for too long rather
-// than just suspending them, so if other browsers follow suit maybe it's less of a concern.
-export const RETIRED_DOWN_MIGRATION = 'retired' as const
-
 /**
- * @public
- */
-export type TLShapePropsMigrations = {
-	sequence: Array<
-		| { readonly dependsOn: readonly MigrationId[] }
-		| {
-				readonly id: MigrationId
-				readonly dependsOn?: MigrationId[]
-				readonly up: (props: any) => any
-				readonly down?:
-					| typeof NO_DOWN_MIGRATION
-					| typeof RETIRED_DOWN_MIGRATION
-					| ((props: any) => any)
-		  }
-	>
-}
-
-/**
+ * Creates a migration sequence for shape properties.
+ *
+ * This is a pass-through function that maintains the same structure as the input.
+ * It's used for consistency and to provide a clear API for defining shape property migrations.
+ *
+ * @param migrations - The migration sequence to create
+ * @returns The same migration sequence (pass-through)
+ *
+ * @example
+ * ```ts
+ * const myShapeMigrations = createShapePropsMigrationSequence({
+ *   sequence: [
+ *     {
+ *       id: 'com.myapp.shape.custom/1.0.0',
+ *       up: (props) => ({ ...props, newProperty: 'default' }),
+ *       down: ({ newProperty, ...props }) => props
+ *     }
+ *   ]
+ * })
+ * ```
+ *
  * @public
  */
 export function createShapePropsMigrationSequence(
-	migrations: TLShapePropsMigrations
-): TLShapePropsMigrations {
+	migrations: TLPropsMigrations
+): TLPropsMigrations {
 	return migrations
 }
 
 /**
+ * Creates properly formatted migration IDs for shape properties.
+ *
+ * Generates standardized migration IDs following the convention:
+ * `com.tldraw.shape.{shapeType}/{version}`
+ *
+ * @param shapeType - The type of shape these migrations apply to
+ * @param ids - Record mapping migration names to version numbers
+ * @returns Record with the same keys but formatted migration ID values
+ *
+ * @example
+ * ```ts
+ * const myShapeVersions = createShapePropsMigrationIds('custom', {
+ *   AddColor: 1,
+ *   AddSize: 2,
+ *   RefactorProps: 3
+ * })
+ * // Result: {
+ * //   AddColor: 'com.tldraw.shape.custom/1',
+ * //   AddSize: 'com.tldraw.shape.custom/2',
+ * //   RefactorProps: 'com.tldraw.shape.custom/3'
+ * // }
+ * ```
+ *
  * @public
  */
-export function createShapePropsMigrationIds<S extends string, T extends Record<string, number>>(
-	shapeType: S,
-	ids: T
-): { [k in keyof T]: `com.tldraw.shape.${S}/${T[k]}` } {
+export function createShapePropsMigrationIds<
+	const S extends string,
+	const T extends Record<string, number>,
+>(shapeType: S, ids: T): { [k in keyof T]: `com.tldraw.shape.${S}/${T[k]}` } {
 	return mapObjectMapValues(ids, (_k, v) => `com.tldraw.shape.${shapeType}/${v}`) as any
 }
 
-export function processShapeMigrations(shapes: Record<string, SchemaShapeInfo>) {
-	const result: MigrationSequence[] = []
-
-	for (const [shapeType, { migrations }] of Object.entries(shapes)) {
-		const sequenceId = `com.tldraw.shape.${shapeType}`
-		if (!migrations) {
-			// provide empty migrations sequence to allow for future migrations
-			result.push(
-				createMigrationSequence({
-					sequenceId,
-					retroactive: false,
-					sequence: [],
-				})
-			)
-		} else if ('sequenceId' in migrations) {
-			assert(
-				sequenceId === migrations.sequenceId,
-				`sequenceId mismatch for ${shapeType} shape migrations. Expected '${sequenceId}', got '${migrations.sequenceId}'`
-			)
-			result.push(migrations)
-		} else if ('sequence' in migrations) {
-			result.push(
-				createMigrationSequence({
-					sequenceId,
-					retroactive: false,
-					sequence: migrations.sequence.map((m) =>
-						'id' in m
-							? {
-									id: m.id,
-									scope: 'record',
-									filter: (r) => r.typeName === 'shape' && (r as TLShape).type === shapeType,
-									dependsOn: m.dependsOn,
-									up: (record: any) => {
-										const result = m.up(record.props)
-										if (result) {
-											record.props = result
-										}
-									},
-									down:
-										typeof m.down === 'function'
-											? (record: any) => {
-													const result = (m.down as (props: any) => any)(record.props)
-													if (result) {
-														record.props = result
-													}
-												}
-											: undefined,
-								}
-							: m
-					),
-				})
-			)
-		} else {
-			// legacy migrations, will be removed in the future
-			result.push(
-				createMigrationSequence({
-					sequenceId,
-					retroactive: false,
-					sequence: Object.keys(migrations.migrators)
-						.map((k) => Number(k))
-						.sort((a: number, b: number) => a - b)
-						.map(
-							(version): Migration => ({
-								id: `${sequenceId}/${version}`,
-								scope: 'record',
-								filter: (r) => r.typeName === 'shape' && (r as TLShape).type === shapeType,
-								up: (record: any) => {
-									const result = migrations.migrators[version].up(record)
-									if (result) {
-										return result
-									}
-								},
-								down: (record: any) => {
-									const result = migrations.migrators[version].down(record)
-									if (result) {
-										return result
-									}
-								},
-							})
-						),
-				})
-			)
-		}
-	}
-
-	return result
-}
-
-/** @internal */
-export function createShapeRecordType(shapes: Record<string, SchemaShapeInfo>) {
-	return createRecordType<TLShape>('shape', {
+/**
+ * Creates the record type definition for shapes.
+ *
+ * This function generates a complete record type for shapes that includes validation
+ * for all registered shape types. It combines the base shape properties with
+ * type-specific properties and creates a union validator that can handle any
+ * registered shape type.
+ *
+ * @param shapes - Record of shape type names to their schema configuration
+ * @returns A complete RecordType for shapes with proper validation and default properties
+ *
+ * @example
+ * ```ts
+ * const shapeRecordType = createShapeRecordType({
+ *   geo: { props: geoShapeProps, migrations: geoMigrations },
+ *   arrow: { props: arrowShapeProps, migrations: arrowMigrations }
+ * })
+ * ```
+ *
+ * @internal
+ */
+export function createShapeRecordType(shapes: Record<string, SchemaPropsInfo>) {
+	return createRecordType('shape', {
 		scope: 'document',
 		validator: T.model(
 			'shape',

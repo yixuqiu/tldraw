@@ -1,36 +1,48 @@
+// oxlint-disable typescript/no-empty-object-type
 import {
-	CubicSpline2d,
 	Group2d,
 	HandleSnapGeometry,
-	Polyline2d,
 	SVGContainer,
 	ShapeUtil,
+	SvgExportContext,
 	TLHandle,
+	TLHandleDragInfo,
 	TLLineShape,
-	TLOnHandleDragHandler,
-	TLOnResizeHandler,
+	TLLineShapePoint,
+	TLResizeInfo,
 	Vec,
-	WeakMapCache,
+	WeakCache,
+	ZERO_INDEX_KEY,
+	assert,
+	getColorValue,
+	getIndexAbove,
 	getIndexBetween,
 	getIndices,
+	lerp,
 	lineShapeMigrations,
 	lineShapeProps,
 	mapObjectMapValues,
+	maybeSnapToGrid,
 	sortByIndex,
+	useColorMode,
 } from '@tldraw/editor'
-
-import { ShapeFill, useDefaultColorTheme } from '../shared/ShapeFill'
 import { STROKE_SIZES } from '../shared/default-shape-constants'
-import { getPerfectDashProps } from '../shared/getPerfectDashProps'
-import { getDrawLinePathData } from '../shared/polygon-helpers'
-import { getLineDrawPath, getLineIndicatorPath } from './components/getLinePath'
-import {
-	getSvgPathForBezierCurve,
-	getSvgPathForEdge,
-	getSvgPathForLineGeometry,
-} from './components/svg'
+import { ShapeOptionsWithDisplayValues, getDisplayValues } from '../shared/getDisplayValues'
+import { PathBuilder, PathBuilderGeometry2d } from '../shared/PathBuilder'
 
-const handlesCache = new WeakMapCache<TLLineShape['props'], TLHandle[]>()
+const handlesCache = new WeakCache<TLLineShape['props'], TLHandle[]>()
+
+/** @public */
+export interface LineShapeUtilDisplayValues {
+	strokeColor: string
+	strokeWidth: number
+}
+
+/** @public */
+export interface LineShapeOptions extends ShapeOptionsWithDisplayValues<
+	TLLineShape,
+	LineShapeUtilDisplayValues
+> {}
 
 /** @public */
 export class LineShapeUtil extends ShapeUtil<TLLineShape> {
@@ -38,10 +50,34 @@ export class LineShapeUtil extends ShapeUtil<TLLineShape> {
 	static override props = lineShapeProps
 	static override migrations = lineShapeMigrations
 
-	override hideResizeHandles = () => true
-	override hideRotateHandle = () => true
-	override hideSelectionBoundsFg = () => true
-	override hideSelectionBoundsBg = () => true
+	override options: LineShapeOptions = {
+		getDefaultDisplayValues(_editor, shape, theme, colorMode): LineShapeUtilDisplayValues {
+			const { color, size } = shape.props
+			return {
+				strokeColor: getColorValue(theme.colors[colorMode], color, 'solid'),
+				strokeWidth: theme.strokeWidth * STROKE_SIZES[size],
+			}
+		},
+		getCustomDisplayValues(): Partial<LineShapeUtilDisplayValues> {
+			return {}
+		},
+	}
+
+	override hideResizeHandles(shape: TLLineShape) {
+		return true
+	}
+	override hideRotateHandle(shape: TLLineShape) {
+		return true
+	}
+	override hideSelectionBoundsFg(shape: TLLineShape) {
+		return true
+	}
+	override hideSelectionBoundsBg(shape: TLLineShape) {
+		return true
+	}
+	override hideInMinimap() {
+		return true
+	}
 
 	override getDefaultProps(): TLLineShape['props'] {
 		const [start, end] = getIndices(2)
@@ -54,30 +90,36 @@ export class LineShapeUtil extends ShapeUtil<TLLineShape> {
 				[start]: { id: start, index: start, x: 0, y: 0 },
 				[end]: { id: end, index: end, x: 0.1, y: 0.1 },
 			},
+			scale: 1,
 		}
 	}
 
 	getGeometry(shape: TLLineShape) {
 		// todo: should we have min size?
-		return getGeometryForLineShape(shape)
+		const geometry = getPathForLineShape(shape).toGeometry()
+		assert(geometry instanceof PathBuilderGeometry2d)
+		return geometry
 	}
 
 	override getHandles(shape: TLLineShape) {
 		return handlesCache.get(shape.props, () => {
-			const spline = getGeometryForLineShape(shape)
+			const spline = this.getGeometry(shape)
 
 			const points = linePointsToArray(shape)
 			const results: TLHandle[] = points.map((point) => ({
 				...point,
-				id: point.index,
+				// A vertex handle's id is the point's stable id (its map key), not its
+				// index. The index is only ever used for ordering (sortByIndex) and for
+				// computing the create-handle positions below.
+				id: point.id,
 				type: 'vertex',
 				canSnap: true,
 			}))
 
 			for (let i = 0; i < points.length - 1; i++) {
 				const index = getIndexBetween(points[i].index, points[i + 1].index)
-				const segment = spline.segments[i]
-				const point = segment.midPoint()
+				const segment = spline.getSegments()[i]
+				const point = segment.interpolateAlongEdge(0.5)
 				results.push({
 					id: index,
 					type: 'create',
@@ -94,7 +136,11 @@ export class LineShapeUtil extends ShapeUtil<TLLineShape> {
 
 	//   Events
 
-	override onResize: TLOnResizeHandler<TLLineShape> = (shape, info) => {
+	override canFlip() {
+		return true
+	}
+
+	override onResize(shape: TLLineShape, info: TLResizeInfo<TLLineShape>) {
 		const { scaleX, scaleY } = info
 
 		return {
@@ -109,54 +155,113 @@ export class LineShapeUtil extends ShapeUtil<TLLineShape> {
 		}
 	}
 
-	override onHandleDrag: TLOnHandleDragHandler<TLLineShape> = (shape, { handle }) => {
-		// we should only ever be dragging vertex handles
-		if (handle.type !== 'vertex') return
+	override onBeforeCreate(next: TLLineShape): void | TLLineShape {
+		const {
+			props: { points },
+		} = next
+		const pointKeys = Object.keys(points)
 
+		if (pointKeys.length < 2) {
+			return
+		}
+
+		const firstPoint = points[pointKeys[0]]
+		const allSame = pointKeys.every((key) => {
+			const point = points[key]
+			return point.x === firstPoint.x && point.y === firstPoint.y
+		})
+		if (allSame) {
+			// Copy rather than mutate: createShapes spreads the partial's props shallowly, so
+			// `points` is the caller's object — on duplicate, the frozen source record's.
+			const lastKey = pointKeys[pointKeys.length - 1]
+			return {
+				...next,
+				props: {
+					...next.props,
+					points: {
+						...points,
+						[lastKey]: {
+							...points[lastKey],
+							x: points[lastKey].x + 0.1,
+							y: points[lastKey].y + 0.1,
+						},
+					},
+				},
+			}
+		}
+		return
+	}
+
+	override onHandleDrag(shape: TLLineShape, { handle }: TLHandleDragInfo<TLLineShape>) {
+		const newPoint = maybeSnapToGrid(new Vec(handle.x, handle.y), this.editor)
+		// handle.id is the point's key (== its id), so we update the point in place.
 		return {
 			...shape,
 			props: {
 				...shape.props,
 				points: {
 					...shape.props.points,
-					[handle.id]: { id: handle.id, index: handle.index, x: handle.x, y: handle.y },
+					[handle.id]: { id: handle.id, index: handle.index, x: newPoint.x, y: newPoint.y },
 				},
 			},
 		}
 	}
 
+	override onHandleDragStart(shape: TLLineShape, { handle }: TLHandleDragInfo<TLLineShape>) {
+		// For line shapes, if we're dragging a "create" handle, then
+		// create a new vertex handle at that point; and make this handle
+		// the handle that we're dragging.
+		if (handle.type === 'create') {
+			return {
+				...shape,
+				props: {
+					...shape.props,
+					points: {
+						...shape.props.points,
+						[handle.index]: { id: handle.index, index: handle.index, x: handle.x, y: handle.y },
+					},
+				},
+			}
+		}
+		return
+	}
+
 	component(shape: TLLineShape) {
+		// eslint-disable-next-line react-hooks/rules-of-hooks
+		const colorMode = useColorMode()
+		const dv = getDisplayValues(this, shape, colorMode)
 		return (
-			<SVGContainer id={shape.id}>
-				<LineShapeSvg shape={shape} />
+			<SVGContainer style={{ minWidth: 50, minHeight: 50 }}>
+				<LineShapeSvg shape={shape} strokeColor={dv.strokeColor} strokeWidth={dv.strokeWidth} />
 			</SVGContainer>
 		)
 	}
 
-	indicator(shape: TLLineShape) {
-		const strokeWidth = STROKE_SIZES[shape.props.size]
-		const spline = getGeometryForLineShape(shape)
+	override getIndicatorPath(shape: TLLineShape): Path2D {
+		const strokeWidth = getDisplayValues(this, shape).strokeWidth * shape.props.scale
+		const path = getPathForLineShape(shape)
 		const { dash } = shape.props
 
-		let path: string
-
-		if (shape.props.spline === 'line') {
-			const outline = spline.points
-			if (dash === 'solid' || dash === 'dotted' || dash === 'dashed') {
-				path = 'M' + outline[0] + 'L' + outline.slice(1)
-			} else {
-				const [innerPathData] = getDrawLinePathData(shape.id, outline, strokeWidth)
-				path = innerPathData
-			}
-		} else {
-			path = getLineIndicatorPath(shape, spline, strokeWidth)
-		}
-
-		return <path d={path} />
+		return path.toPath2D({
+			style: dash === 'draw' ? 'draw' : 'solid',
+			strokeWidth: 1,
+			passes: 1,
+			randomSeed: shape.id,
+			offset: 0,
+			roundness: strokeWidth * 2,
+		})
 	}
 
-	override toSvg(shape: TLLineShape) {
-		return <LineShapeSvg shape={shape} />
+	override toSvg(shape: TLLineShape, ctx: SvgExportContext) {
+		const dv = getDisplayValues(this, shape, ctx.colorMode)
+		return (
+			<LineShapeSvg
+				shouldScale
+				shape={shape}
+				strokeColor={dv.strokeColor}
+				strokeWidth={dv.strokeWidth}
+			/>
+		)
 	}
 
 	override getHandleSnapGeometry(shape: TLLineShape): HandleSnapGeometry {
@@ -180,162 +285,144 @@ export class LineShapeUtil extends ShapeUtil<TLLineShape> {
 					.findIndex((h) => h.id === handle.id)!
 
 				// Get all the outline segments from the shape that don't include the handle
-				const segments = getGeometryForLineShape(shape).segments.filter(
-					(_, i) => i !== index - 1 && i !== index
-				)
+				const segments = this.getGeometry(shape)
+					.getSegments()
+					.filter((_, i) => i !== index - 1 && i !== index)
 
 				if (!segments.length) return null
 				return new Group2d({ children: segments })
 			},
 		}
 	}
+	override getInterpolatedProps(
+		startShape: TLLineShape,
+		endShape: TLLineShape,
+		t: number
+	): TLLineShape['props'] {
+		const startPoints = linePointsToArray(startShape)
+		const endPoints = linePointsToArray(endShape)
+
+		const pointsToUseStart: TLLineShapePoint[] = []
+		const pointsToUseEnd: TLLineShapePoint[] = []
+
+		let index = ZERO_INDEX_KEY
+
+		if (startPoints.length > endPoints.length) {
+			// we'll need to expand points
+			for (let i = 0; i < startPoints.length; i++) {
+				pointsToUseStart[i] = { ...startPoints[i] }
+				if (endPoints[i] === undefined) {
+					pointsToUseEnd[i] = { ...endPoints[endPoints.length - 1], id: index }
+				} else {
+					pointsToUseEnd[i] = { ...endPoints[i], id: index }
+				}
+				index = getIndexAbove(index)
+			}
+		} else if (endPoints.length > startPoints.length) {
+			// we'll need to converge points. Clones of the last start point would share its index
+			// and get dropped by linePointsToArray, so hand out fresh indices to every start point.
+			for (let i = 0; i < endPoints.length; i++) {
+				pointsToUseEnd[i] = { ...endPoints[i] }
+				if (startPoints[i] === undefined) {
+					pointsToUseStart[i] = {
+						...startPoints[startPoints.length - 1],
+						id: index,
+						index,
+					}
+				} else {
+					pointsToUseStart[i] = { ...startPoints[i], id: index, index }
+				}
+				index = getIndexAbove(index)
+			}
+		} else {
+			// noop, easy
+			for (let i = 0; i < endPoints.length; i++) {
+				pointsToUseStart[i] = startPoints[i]
+				pointsToUseEnd[i] = endPoints[i]
+			}
+		}
+
+		return {
+			...(t > 0.5 ? endShape.props : startShape.props),
+			points: Object.fromEntries(
+				pointsToUseStart.map((point, i) => {
+					const endPoint = pointsToUseEnd[i]
+					return [
+						point.id,
+						{
+							...point,
+							x: lerp(point.x, endPoint.x, t),
+							y: lerp(point.y, endPoint.y, t),
+						},
+					]
+				})
+			),
+			scale: lerp(startShape.props.scale, endShape.props.scale, t),
+		}
+	}
 }
 
 function linePointsToArray(shape: TLLineShape) {
-	return Object.values(shape.props.points).sort(sortByIndex)
+	const sorted = Object.values(shape.props.points).sort(sortByIndex)
+	// Tolerate malformed data where two points share an index: keep only the first
+	// point at each index, so getHandles' getIndexBetween never sees equal adjacent
+	// indices (which would throw "a2 >= a2"). A no-op for well-formed lines.
+	return sorted.filter((point, i) => i === 0 || point.index !== sorted[i - 1].index)
 }
 
-/** @public */
-export function getGeometryForLineShape(shape: TLLineShape): CubicSpline2d | Polyline2d {
-	const points = linePointsToArray(shape).map(Vec.From)
+const pathCache = new WeakCache<TLLineShape, PathBuilder>()
+function getPathForLineShape(shape: TLLineShape): PathBuilder {
+	return pathCache.get(shape, () => {
+		const points = linePointsToArray(shape).map(Vec.From)
 
-	switch (shape.props.spline) {
-		case 'cubic': {
-			return new CubicSpline2d({ points })
+		// A line needs two points to have a path. onBeforeCreate lets 0/1-point lines through
+		// (they can also arrive via updateShape or a file), and without this every geometry
+		// lookup on the page would throw — getShapeAtPoint included.
+		if (points.length === 0) points.push(new Vec(0, 0))
+		if (points.length === 1) points.push(points[0].clone().addXY(0.1, 0.1))
+
+		switch (shape.props.spline) {
+			case 'cubic': {
+				return PathBuilder.cubicSplineThroughPoints(points, { endOffsets: 0 })
+			}
+			case 'line': {
+				return PathBuilder.lineThroughPoints(points, { endOffsets: 0 })
+			}
 		}
-		case 'line': {
-			return new Polyline2d({ points })
-		}
-	}
+	})
 }
 
-function LineShapeSvg({ shape }: { shape: TLLineShape }) {
-	const theme = useDefaultColorTheme()
-	const spline = getGeometryForLineShape(shape)
-	const strokeWidth = STROKE_SIZES[shape.props.size]
+function LineShapeSvg({
+	shape,
+	shouldScale = false,
+	forceSolid = false,
+	strokeColor,
+	strokeWidth: baseStrokeWidth,
+}: {
+	shape: TLLineShape
+	shouldScale?: boolean
+	forceSolid?: boolean
+	strokeColor: string
+	strokeWidth: number
+}) {
+	const path = getPathForLineShape(shape)
+	const { dash } = shape.props
 
-	const { dash, color } = shape.props
+	const scaleFactor = 1 / shape.props.scale
 
-	// Line style lines
-	if (shape.props.spline === 'line') {
-		if (dash === 'solid') {
-			const outline = spline.points
-			const pathData = 'M' + outline[0] + 'L' + outline.slice(1)
+	const scale = shouldScale ? scaleFactor : 1
 
-			return (
-				<>
-					<ShapeFill d={pathData} fill={'none'} color={color} theme={theme} />
-					<path d={pathData} stroke={theme[color].solid} strokeWidth={strokeWidth} fill="none" />
-				</>
-			)
-		}
+	const strokeWidth = baseStrokeWidth * shape.props.scale
 
-		if (dash === 'dashed' || dash === 'dotted') {
-			const outline = spline.points
-			const pathData = 'M' + outline[0] + 'L' + outline.slice(1)
-
-			return (
-				<>
-					<ShapeFill d={pathData} fill={'none'} color={color} theme={theme} />
-					<g stroke={theme[color].solid} strokeWidth={strokeWidth}>
-						{spline.segments.map((segment, i) => {
-							const { strokeDasharray, strokeDashoffset } = getPerfectDashProps(
-								segment.length,
-								strokeWidth,
-								{
-									style: dash,
-									start: i > 0 ? 'outset' : 'none',
-									end: i < spline.segments.length - 1 ? 'outset' : 'none',
-								}
-							)
-
-							return (
-								<path
-									key={i}
-									strokeDasharray={strokeDasharray}
-									strokeDashoffset={strokeDashoffset}
-									d={getSvgPathForEdge(segment as any, true)}
-									fill="none"
-								/>
-							)
-						})}
-					</g>
-				</>
-			)
-		}
-
-		if (dash === 'draw') {
-			const outline = spline.points
-			const [innerPathData, outerPathData] = getDrawLinePathData(shape.id, outline, strokeWidth)
-
-			return (
-				<>
-					<ShapeFill d={innerPathData} fill={'none'} color={color} theme={theme} />
-					<path
-						d={outerPathData}
-						stroke={theme[color].solid}
-						strokeWidth={strokeWidth}
-						fill="none"
-					/>
-				</>
-			)
-		}
-	}
-	// Cubic style spline
-	if (shape.props.spline === 'cubic') {
-		const splinePath = getSvgPathForLineGeometry(spline)
-		if (dash === 'solid') {
-			return (
-				<>
-					<ShapeFill d={splinePath} fill={'none'} color={color} theme={theme} />
-					<path strokeWidth={strokeWidth} stroke={theme[color].solid} fill="none" d={splinePath} />
-				</>
-			)
-		}
-
-		if (dash === 'dashed' || dash === 'dotted') {
-			return (
-				<>
-					<ShapeFill d={splinePath} fill={'none'} color={color} theme={theme} />
-					<g stroke={theme[color].solid} strokeWidth={strokeWidth}>
-						{spline.segments.map((segment, i) => {
-							const { strokeDasharray, strokeDashoffset } = getPerfectDashProps(
-								segment.length,
-								strokeWidth,
-								{
-									style: dash,
-									start: i > 0 ? 'outset' : 'none',
-									end: i < spline.segments.length - 1 ? 'outset' : 'none',
-								}
-							)
-
-							return (
-								<path
-									key={i}
-									strokeDasharray={strokeDasharray}
-									strokeDashoffset={strokeDashoffset}
-									d={getSvgPathForBezierCurve(segment as any, true)}
-									fill="none"
-								/>
-							)
-						})}
-					</g>
-				</>
-			)
-		}
-
-		if (dash === 'draw') {
-			return (
-				<>
-					<ShapeFill d={splinePath} fill={'none'} color={color} theme={theme} />
-					<path
-						d={getLineDrawPath(shape, spline, strokeWidth)}
-						strokeWidth={1}
-						stroke={theme[color].solid}
-						fill={theme[color].solid}
-					/>
-				</>
-			)
-		}
-	}
+	return path.toSvg({
+		style: dash,
+		strokeWidth,
+		forceSolid,
+		randomSeed: shape.id,
+		props: {
+			transform: `scale(${scale})`,
+			stroke: strokeColor,
+			fill: 'none',
+		},
+	})
 }

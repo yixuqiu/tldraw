@@ -1,7 +1,8 @@
 import { createShapeId } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { TestEditor } from '../TestEditor'
 
-jest.useFakeTimers()
+vi.useFakeTimers()
 
 let editor: TestEditor
 
@@ -51,19 +52,74 @@ describe('distributeShapes command', () => {
 	describe('when less than three shapes are selected', () => {
 		it('does nothing', () => {
 			editor.setSelectedShapes([ids.boxA, ids.boxB])
-			const fn = jest.fn()
+			const fn = vi.fn()
 			editor.store.listen(fn)
 			editor.stackShapes(editor.getSelectedShapeIds(), 'horizontal', 0)
-			jest.advanceTimersByTime(1000)
+			vi.advanceTimersByTime(1000)
 			expect(fn).not.toHaveBeenCalled()
 		})
 	})
 
 	describe('when stacking horizontally', () => {
+		it('stacks the shapes based on the editors adjacentShapeMargin', () => {
+			// Create a new editor with custom adjacentShapeMargin option
+			const customEditor = new TestEditor({ options: { adjacentShapeMargin: 1 } })
+			customEditor.createShapes([
+				{
+					id: ids.boxA,
+					type: 'geo',
+					x: 0,
+					y: 0,
+				},
+				{
+					id: ids.boxB,
+					type: 'geo',
+					x: 100,
+					y: 100,
+				},
+				{
+					id: ids.boxC,
+					type: 'geo',
+					x: 400,
+					y: 400,
+				},
+				{
+					id: ids.boxD,
+					type: 'geo',
+					x: 700,
+					y: 700,
+				},
+			])
+			customEditor.setSelectedShapes([ids.boxA, ids.boxB, ids.boxC, ids.boxD])
+			customEditor.stackShapes(customEditor.getSelectedShapeIds(), 'horizontal')
+			vi.advanceTimersByTime(1000)
+			// 200 distance gap between c and d
+			customEditor.expectShapeToMatch({
+				id: ids.boxA,
+				x: 0,
+				y: 0,
+			})
+			customEditor.expectShapeToMatch({
+				id: ids.boxB,
+				x: 101,
+				y: 100,
+			})
+			customEditor.expectShapeToMatch({
+				id: ids.boxC,
+				x: 202,
+				y: 400,
+			})
+			customEditor.expectShapeToMatch({
+				id: ids.boxD,
+				x: 303,
+				y: 700,
+			})
+		})
+
 		it('stacks the shapes based on a given value', () => {
 			editor.setSelectedShapes([ids.boxA, ids.boxB, ids.boxC, ids.boxD])
 			editor.stackShapes(editor.getSelectedShapeIds(), 'horizontal', 10)
-			jest.advanceTimersByTime(1000)
+			vi.advanceTimersByTime(1000)
 			// 200 distance gap between c and d
 			editor.expectShapeToMatch({
 				id: ids.boxA,
@@ -87,10 +143,64 @@ describe('distributeShapes command', () => {
 			})
 		})
 
+		it('keeps an arrow and its bound shapes together regardless of input order', () => {
+			const arrowId = createShapeId('arrow')
+			editor.updateShapes([
+				{ id: ids.boxB, type: 'geo', x: 300, y: 0 },
+				{ id: ids.boxC, type: 'geo', x: 600, y: 0 },
+			])
+			editor.createShape({ id: arrowId, type: 'arrow', x: 50, y: 50 })
+			editor.createBindings([
+				{
+					fromId: arrowId,
+					toId: ids.boxA,
+					type: 'arrow',
+					props: {
+						terminal: 'start',
+						normalizedAnchor: { x: 0.5, y: 0.5 },
+						isExact: false,
+						isPrecise: false,
+					},
+				},
+				{
+					fromId: arrowId,
+					toId: ids.boxB,
+					type: 'arrow',
+					props: {
+						terminal: 'end',
+						normalizedAnchor: { x: 0.5, y: 0.5 },
+						isExact: false,
+						isPrecise: false,
+					},
+				},
+			])
+			// the arrow comes first: seeding its cluster from bindings *to* it alone would leave
+			// it (and then A and B) in clusters of their own and pull B up against A
+			editor.stackShapes([arrowId, ids.boxA, ids.boxB, ids.boxC], 'horizontal', 10)
+			vi.advanceTimersByTime(1000)
+			editor.expectShapeToMatch(
+				{ id: ids.boxA, x: 0 },
+				{ id: ids.boxB, x: 300 },
+				{ id: ids.boxC, x: 410 }
+			)
+		})
+
+		it('stacks in spatial order, not selection order, when a gap is given', () => {
+			// boxC sits between boxA and boxB on the page but comes after both in the input
+			editor.updateShapes([{ id: ids.boxC, type: 'geo', x: 50, y: 0 }])
+			editor.stackShapes([ids.boxA, ids.boxB, ids.boxC], 'horizontal', 10)
+			vi.advanceTimersByTime(1000)
+			editor.expectShapeToMatch(
+				{ id: ids.boxA, x: 0 },
+				{ id: ids.boxC, x: 110 },
+				{ id: ids.boxB, x: 220 }
+			)
+		})
+
 		it('stacks the shapes based on the most common gap', () => {
 			editor.setSelectedShapes([ids.boxA, ids.boxB, ids.boxC, ids.boxD])
 			editor.stackShapes(editor.getSelectedShapeIds(), 'horizontal', 0)
-			jest.advanceTimersByTime(1000)
+			vi.advanceTimersByTime(1000)
 			// 200 distance gap between c and d
 			editor.expectShapeToMatch({
 				id: ids.boxA,
@@ -118,7 +228,7 @@ describe('distributeShapes command', () => {
 			editor.updateShapes([{ id: ids.boxD, type: 'geo', x: 540, y: 700 }])
 			editor.setSelectedShapes([ids.boxA, ids.boxB, ids.boxC, ids.boxD])
 			editor.stackShapes(editor.getSelectedShapeIds(), 'horizontal', 0)
-			jest.advanceTimersByTime(1000)
+			vi.advanceTimersByTime(1000)
 			editor.expectShapeToMatch({
 				id: ids.boxA,
 				x: 0,
@@ -146,7 +256,7 @@ describe('distributeShapes command', () => {
 		it('stacks the shapes based on a given value', () => {
 			editor.setSelectedShapes([ids.boxA, ids.boxB, ids.boxC, ids.boxD])
 			editor.stackShapes(editor.getSelectedShapeIds(), 'vertical', 10)
-			jest.advanceTimersByTime(1000)
+			vi.advanceTimersByTime(1000)
 			// 200 distance gap between c and d
 			editor.expectShapeToMatch({
 				id: ids.boxA,
@@ -173,7 +283,7 @@ describe('distributeShapes command', () => {
 		it('stacks the shapes based on the most common gap', () => {
 			editor.setSelectedShapes([ids.boxA, ids.boxB, ids.boxC, ids.boxD])
 			editor.stackShapes(editor.getSelectedShapeIds(), 'vertical', 0)
-			jest.advanceTimersByTime(1000)
+			vi.advanceTimersByTime(1000)
 			// 200 distance gap between c and d
 			editor.expectShapeToMatch({
 				id: ids.boxA,
@@ -201,7 +311,7 @@ describe('distributeShapes command', () => {
 			editor.updateShapes([{ id: ids.boxD, type: 'geo', x: 700, y: 540 }])
 			editor.setSelectedShapes([ids.boxA, ids.boxB, ids.boxC, ids.boxD])
 			editor.stackShapes(editor.getSelectedShapeIds(), 'vertical', 0)
-			jest.advanceTimersByTime(1000)
+			vi.advanceTimersByTime(1000)
 			editor.expectShapeToMatch({
 				id: ids.boxA,
 				x: 0,

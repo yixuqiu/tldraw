@@ -1,43 +1,58 @@
-import * as _Dialog from '@radix-ui/react-dialog'
+import { defineMessages } from '@tldraw/editor'
 import classNames from 'classnames'
-import { ReactNode } from 'react'
+import { Dialog as _Dialog } from 'radix-ui'
+import { CSSProperties, ReactNode } from 'react'
+import { useDirection, useTranslation } from '../../hooks/useTranslation/useTranslation'
 import { TldrawUiButton } from './Button/TldrawUiButton'
 import { TldrawUiButtonIcon } from './Button/TldrawUiButtonIcon'
 
+const messages = defineMessages({
+	uiClose: { id: 'ui.close', defaultMessage: 'Close' },
+})
+
 /** @public */
-export type TLUiDialogHeaderProps = {
+export interface TLUiDialogHeaderProps {
 	className?: string
 	children: ReactNode
 }
 
-/** @public */
+/** @public @react */
 export function TldrawUiDialogHeader({ className, children }: TLUiDialogHeaderProps) {
 	return <div className={classNames('tlui-dialog__header', className)}>{children}</div>
 }
 
 /** @public */
-export type TLUiDialogTitleProps = {
+export interface TLUiDialogTitleProps {
 	className?: string
 	children: ReactNode
+	style?: CSSProperties
 }
 
-/** @public */
-export function TldrawUiDialogTitle({ className, children }: TLUiDialogTitleProps) {
+/** @public @react */
+export function TldrawUiDialogTitle({ className, children, style }: TLUiDialogTitleProps) {
+	const dir = useDirection()
 	return (
-		<_Dialog.DialogTitle dir="ltr" className={classNames('tlui-dialog__header__title', className)}>
+		<_Dialog.Title
+			dir={dir}
+			className={classNames('tlui-dialog__header__title', className)}
+			style={style}
+		>
 			{children}
-		</_Dialog.DialogTitle>
+		</_Dialog.Title>
 	)
 }
 
-/** @public */
+/** @public @react */
 export function TldrawUiDialogCloseButton() {
+	const msg = useTranslation()
+	const dir = useDirection()
+
 	return (
 		<div className="tlui-dialog__header__close">
-			<_Dialog.DialogClose data-testid="dialog.close" dir="ltr" asChild>
+			<_Dialog.DialogClose data-testid="dialog.close" dir={dir} asChild>
 				<TldrawUiButton
 					type="icon"
-					aria-label="Close"
+					aria-label={msg(messages.uiClose)}
 					onTouchEnd={(e) => (e.target as HTMLButtonElement).click()}
 				>
 					<TldrawUiButtonIcon small icon="cross-2" />
@@ -48,28 +63,28 @@ export function TldrawUiDialogCloseButton() {
 }
 
 /** @public */
-export type TLUiDialogBodyProps = {
+export interface TLUiDialogBodyProps {
 	className?: string
 	children: ReactNode
-	style?: React.CSSProperties
+	style?: CSSProperties
 }
 
-/** @public */
+/** @public @react */
 export function TldrawUiDialogBody({ className, children, style }: TLUiDialogBodyProps) {
 	return (
-		<div className={classNames('tlui-dialog__body', className)} style={style}>
+		<div className={classNames('tlui-dialog__body', className)} style={style} tabIndex={0}>
 			{children}
 		</div>
 	)
 }
 
 /** @public */
-export type TLUiDialogFooterProps = {
+export interface TLUiDialogFooterProps {
 	className?: string
-	children: ReactNode
+	children?: ReactNode
 }
 
-/** @public */
+/** @public @react */
 export function TldrawUiDialogFooter({ className, children }: TLUiDialogFooterProps) {
 	return <div className={classNames('tlui-dialog__footer', className)}>{children}</div>
 }

@@ -3,8 +3,20 @@ name: Checks
 on:
   pull_request:
   merge_group:
+  # The merge queue already checked this tree. Main still runs the full jobs when a cache key
+  # changes, because only main-saved caches are visible to other PRs.
   push:
     branches: [main]
+    paths:
+      - 'pnpm-lock.yaml'
+      - 'turbo.json'
+      - '.github/workflows/checks.yml'
+      - '.github/actions/**'
+
+# Cancel superseded PR runs. Other events get a per-run group: a shared one drops queued merge_group/push runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CI: 1
@@ -14,66 +26,112 @@ defaults:
   run:
     shell: bash
 
+permissions:
+  contents: read
+  # update-pr-template reads the repo's label list (octo.issues.listLabelsForRepo).
+  issues: read
+
 jobs:
   test:
     name: 'Tests & checks'
     timeout-minutes: 15
-    runs-on: ubuntu-latest-16-cores-open # TODO: this should probably run on multiple OSes
+    runs-on: ubuntu-latest-16-cores-arm-open # TODO: this should probably run on multiple OSes
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
 
-      - name: Check version constraints
-        run: yarn constraints
+      - name: Check packages
+        run: pnpm check-packages
 
-      - name: Check for duplicate dependencies
-        run: yarn dedupe --check
+      - name: Check circular dependencies
+        run: pnpm check-circular-deps
 
-      # Not the most sophisticated way to check for warnings, but I don't think
-      # Yarn can be convinced to exit with a non-zero exit code on warnings
-      # see also https://unix.stackexchange.com/a/433713 for the explanation of the parameters
-      - name: Check for installation warnings
-        run: 'yarn | grep -vzq "with warnings"'
-
-      - name: Check tsconfigs
-        run: yarn check-tsconfigs
+      - name: Restore build tool caches
+        uses: ./.github/actions/build-cache
+        with:
+          name: test-tools
+          save: true
 
       - name: Typecheck
-        run: yarn build-types
+        run: pnpm typecheck
 
-      - name: Check scripts
-        run: yarn check-scripts
+      - name: Check bundle sizes
+        run: pnpm exec turbo run check-bundle-size
 
       - name: Check PR template
-        run: yarn update-pr-template --check
-
-      - name: Lint
-        run: yarn lint
+        run: pnpm update-pr-template --check
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Check API declarations and docs work as intended
-        run: yarn api-check
+        run: pnpm api-check
+
+      - name: Lint
+        run: pnpm lint
+
+      # Both English catalogues are generated from the messages declared in their source, so a
+      # hand-edit to either side has to fail rather than reach translators as text nobody sees.
+      - name: Check localizations
+        run: pnpm i18n-extract --check
+
+      # Cached modules keep absolute paths into vitest's pnpm store dir, which changes whenever
+      # vitest's peer set does. Restoring across that fails every import with
+      # ERR_MODULE_NOT_FOUND, so fallbacks only match the same store dir.
+      - name: Resolve vitest store dir
+        id: vitest-store
+        run: echo "hash=$(readlink -f node_modules/vitest | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      # vitest's fsModuleCache (~54MB gzipped). Keyed on pnpm-lock.yaml so one entry is reused
+      # across commits instead of saving a new copy on every run. No restore-keys fallback: the
+      # cached modules hold resolved node_modules/.pnpm paths, so an entry built from another
+      # lockfile can point at dependency versions this install doesn't have.
+      - name: Restore vitest module cache
+        uses: actions/cache@v5
+        with:
+          path: node_modules/.vitest-cache
+          key: vitest-cache-${{ runner.os }}-${{ steps.vitest-store.outputs.hash }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Test
-        run: yarn test-ci
+        run: pnpm test-ci
 
   build:
     name: 'Build all projects'
     timeout-minutes: 15
-    runs-on: ubuntu-latest-16-cores-open
+    runs-on: ubuntu-latest-16-cores-arm-open
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup
 
-      - name: Build all projects
+      - name: Restore build tool caches
+        uses: ./.github/actions/build-cache
+        with:
+          name: build-tools
+          save: true
+
+      - name: Build packages
         # the sed pipe makes sure that github annotations come through without
         # turbo's prefix
-        run: "yarn build | sed -E 's/^.*? ::/::/'"
+        run: "pnpm build-package | sed -E 's/^.*? ::/::/'"
 
-      - name: Pack public packages
-        run: "yarn lazy pack-tarball | sed -E 's/^.*? ::/::/'"
+  # Perf is the only e2e workflow left on main and skips pushes outside its paths, so seed the
+  # x64 Playwright browsers cache here too.
+  warm-playwright-cache:
+    name: 'Warm Playwright cache'
+    if: github.event_name == 'push'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup
+
+      - name: Set up Playwright
+        uses: ./.github/actions/setup-playwright

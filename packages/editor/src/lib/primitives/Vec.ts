@@ -1,6 +1,16 @@
 import { VecModel } from '@tldraw/tlschema'
 import { EASINGS } from './easings'
 
+const { easeInQuad, easeInOutQuad } = EASINGS
+
+function clamp(n: number, min: number, max?: number): number {
+	return Math.max(min, typeof max !== 'undefined' ? Math.min(n, max) : n)
+}
+
+function toFixed(v: number) {
+	return Math.round(v * 1e2) / 1e2
+}
+
 /** @public */
 export type VecLike = Vec | VecModel
 
@@ -12,7 +22,7 @@ export class Vec {
 		public z = 1
 	) {}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get pressure() {
 		return this.z
 	}
@@ -154,9 +164,9 @@ export class Vec {
 	}
 
 	cross(V: VecLike) {
-		this.x = this.y * V.z! - this.z * V.y
-		this.y = this.z * V.x - this.x * V.z!
-		// this.z = this.x * V.y - this.y * V.x
+		const { x, y, z } = this
+		this.x = y * V.z! - z * V.y
+		this.y = z * V.x - x * V.z!
 		return this
 	}
 
@@ -188,11 +198,15 @@ export class Vec {
 	}
 
 	uni() {
-		return Vec.Uni(this)
+		const l = this.len()
+		if (l === 0) return this
+		this.x /= l
+		this.y /= l
+		return this
 	}
 
 	tan(V: VecLike): Vec {
-		return Vec.Tan(this, V)
+		return this.sub(V).uni()
 	}
 
 	dist(V: VecLike): number {
@@ -235,15 +249,10 @@ export class Vec {
 		return Vec.EqualsXY(this, x, y)
 	}
 
-	norm() {
-		const l = this.len()
-		this.x = l === 0 ? 0 : this.x / l
-		this.y = l === 0 ? 0 : this.y / l
-		return this
-	}
-
 	toFixed() {
-		return Vec.ToFixed(this)
+		this.x = toFixed(this.x)
+		this.y = toFixed(this.y)
+		return this
 	}
 
 	toString() {
@@ -318,6 +327,11 @@ export class Vec {
 		return ((A.y - B.y) ** 2 + (A.x - B.x) ** 2) ** 0.5
 	}
 
+	// Get the Manhattan distance between two points.
+	static ManhattanDist(A: VecLike, B: VecLike): number {
+		return Math.abs(A.x - B.x) + Math.abs(A.y - B.y)
+	}
+
 	// Get whether a distance between two points is less than a number. This is faster to calulate than using `Vec.Dist(a, b) < n`.
 	static DistMin(A: VecLike, B: VecLike, n: number): boolean {
 		return (A.x - B.x) * (A.x - B.x) + (A.y - B.y) * (A.y - B.y) < n ** 2
@@ -369,7 +383,8 @@ export class Vec {
 	 * Get the unit vector of A.
 	 */
 	static Uni(A: VecLike) {
-		return Vec.Div(A, Vec.Len(A))
+		const l = Vec.Len(A)
+		return new Vec(l === 0 ? 0 : A.x / l, l === 0 ? 0 : A.y / l)
 	}
 
 	static Tan(A: VecLike, B: VecLike): Vec {
@@ -418,32 +433,58 @@ export class Vec {
 	 * @param P - A point not on the line to test.
 	 */
 	static NearestPointOnLineThroughPoint(A: VecLike, u: VecLike, P: VecLike): Vec {
-		return Vec.Mul(u, Vec.Sub(P, A).pry(u)).add(A)
+		// Inlined: t = Vec.Sub(P, A).pry(u), return Vec.Mul(u, t).add(A)
+		const t = (P.x - A.x) * u.x + (P.y - A.y) * u.y
+		return new Vec(A.x + u.x * t, A.y + u.y * t)
 	}
 
 	static NearestPointOnLineSegment(A: VecLike, B: VecLike, P: VecLike, clamp = true): Vec {
-		if (Vec.Equals(A, P)) return Vec.From(P)
-		if (Vec.Equals(B, P)) return Vec.From(P)
+		// Parametric projection of P onto segment AB.
+		// Inlined: d = Vec.Sub(B, A); t = Vec.Sub(P, A).pry(d) / d.len(); return Vec.Lrp(A, B, t)
+		const dx = B.x - A.x
+		const dy = B.y - A.y
+		const d2 = dx * dx + dy * dy
 
-		const u = Vec.Tan(B, A)
-		const C = Vec.Add(A, Vec.Mul(u, Vec.Sub(P, A).pry(u)))
+		if (d2 === 0) return Vec.From(A)
+
+		let t = ((P.x - A.x) * dx + (P.y - A.y) * dy) / d2
 
 		if (clamp) {
-			if (C.x < Math.min(A.x, B.x)) return Vec.Cast(A.x < B.x ? A : B)
-			if (C.x > Math.max(A.x, B.x)) return Vec.Cast(A.x > B.x ? A : B)
-			if (C.y < Math.min(A.y, B.y)) return Vec.Cast(A.y < B.y ? A : B)
-			if (C.y > Math.max(A.y, B.y)) return Vec.Cast(A.y > B.y ? A : B)
+			if (t < 0) t = 0
+			else if (t > 1) t = 1
 		}
 
-		return C
+		return new Vec(A.x + t * dx, A.y + t * dy)
 	}
 
 	static DistanceToLineThroughPoint(A: VecLike, u: VecLike, P: VecLike): number {
-		return Vec.Dist(P, Vec.NearestPointOnLineThroughPoint(A, u, P))
+		// Inlined: Vec.Dist(P, Vec.NearestPointOnLineThroughPoint(A, u, P))
+		// Uses |cross(P-A, u)| which equals the perpendicular distance when u is a unit vector.
+		const dx = P.x - A.x
+		const dy = P.y - A.y
+		return Math.abs(dx * u.y - dy * u.x)
 	}
 
 	static DistanceToLineSegment(A: VecLike, B: VecLike, P: VecLike, clamp = true): number {
-		return Vec.Dist(P, Vec.NearestPointOnLineSegment(A, B, P, clamp))
+		// Inlined: Vec.Dist(P, Vec.NearestPointOnLineSegment(A, B, P, clamp))
+		// Computes the nearest point via parametric t-projection then returns the scalar distance,
+		// avoiding the intermediate Vec allocation that NearestPointOnLineSegment would create.
+		const dx = B.x - A.x
+		const dy = B.y - A.y
+		const d2 = dx * dx + dy * dy
+
+		if (d2 === 0) return Vec.Dist(A, P)
+
+		let t = ((P.x - A.x) * dx + (P.y - A.y) * dy) / d2
+
+		if (clamp) {
+			if (t < 0) t = 0
+			else if (t > 1) t = 1
+		}
+
+		const nx = A.x + t * dx - P.x
+		const ny = A.y + t * dy - P.y
+		return Math.sqrt(nx * nx + ny * ny)
 	}
 
 	static Snap(A: VecLike, step = 1) {
@@ -456,7 +497,7 @@ export class Vec {
 	}
 
 	static Slope(A: VecLike, B: VecLike): number {
-		if (A.x === B.y) return NaN
+		if (A.x === B.x) return NaN
 		return (A.y - B.y) / (A.x - B.x)
 	}
 
@@ -464,8 +505,27 @@ export class Vec {
 		return isNaN(A.x) || isNaN(A.y)
 	}
 
+	static IsFinite(A: VecLike): boolean {
+		return Number.isFinite(A.x) && Number.isFinite(A.y)
+	}
+
+	/**
+	 * Get the angle from position A to position B.
+	 */
 	static Angle(A: VecLike, B: VecLike): number {
 		return Math.atan2(B.y - A.y, B.x - A.x)
+	}
+
+	/**
+	 * Get the angle between vector A and vector B. This will return the smallest angle between the
+	 * two vectors, between -π and π. The sign indicates direction of angle.
+	 */
+	static AngleBetween(A: VecLike, B: VecLike): number {
+		// p = dot(A, B); n = |A| * |B| (uses x*x instead of Math.pow(x, 2))
+		const p = A.x * B.x + A.y * B.y
+		const n = Math.sqrt((A.x * A.x + A.y * A.y) * (B.x * B.x + B.y * B.y))
+		const sign = A.x * B.y - A.y * B.x < 0 ? -1 : 1
+		return sign * Math.acos(clamp(p / n, -1, 1))
 	}
 
 	/**
@@ -476,7 +536,8 @@ export class Vec {
 	 * @returns The interpolated point.
 	 */
 	static Lrp(A: VecLike, B: VecLike, t: number): Vec {
-		return Vec.Sub(B, A).mul(t).add(A)
+		// Inlined: Vec.Sub(B, A).mul(t).add(A) — note: only interpolates x/y, not z.
+		return new Vec(A.x + (B.x - A.x) * t, A.y + (B.y - A.y) * t)
 	}
 
 	static Med(A: VecLike, B: VecLike): Vec {
@@ -504,8 +565,20 @@ export class Vec {
 		return Vec.Sub(A, origin).mul(scale).add(origin)
 	}
 
-	static ToFixed(A: VecLike, n = 2) {
-		return new Vec(+A.x.toFixed(n), +A.y.toFixed(n), +A.z!.toFixed(n))
+	static ToFixed(A: VecLike) {
+		return new Vec(toFixed(A.x), toFixed(A.y))
+	}
+
+	static ToInt(A: VecLike) {
+		return new Vec(
+			parseInt(A.x.toFixed(0)),
+			parseInt(A.y.toFixed(0)),
+			parseInt((A.z ?? 0).toFixed(0))
+		)
+	}
+
+	static ToCss(A: VecLike) {
+		return `${A.x},${A.y}`
 	}
 
 	static Nudge(A: VecLike, B: VecLike, distance: number) {
@@ -562,14 +635,15 @@ export class Vec {
 	 * @param A - The first point.
 	 * @param B - The second point.
 	 * @param steps - The number of points to return.
+	 * @param ease - The easing to use.
 	 */
-	static PointsBetween(A: VecModel, B: VecModel, steps = 6): Vec[] {
+	static PointsBetween(A: VecModel, B: VecModel, steps = 6, ease = easeInQuad): Vec[] {
 		const results: Vec[] = []
 
 		for (let i = 0; i < steps; i++) {
-			const t = EASINGS.easeInQuad(i / (steps - 1))
+			const t = ease(i / (steps - 1))
 			const point = Vec.Lrp(A, B, t)
-			point.z = Math.min(1, 0.5 + Math.abs(0.5 - ease(t)) * 0.65)
+			point.z = Math.min(1, 0.5 + Math.abs(0.5 - easeInOutQuad(t)) * 0.65)
 			results.push(point)
 		}
 
@@ -580,5 +654,3 @@ export class Vec {
 		return new Vec(Math.round(A.x / gridSize) * gridSize, Math.round(A.y / gridSize) * gridSize)
 	}
 }
-
-const ease = (t: number) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t)

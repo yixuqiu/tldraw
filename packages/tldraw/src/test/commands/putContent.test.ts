@@ -1,4 +1,4 @@
-import { TLContent, structuredClone } from '@tldraw/editor'
+import { AssetRecordType, TLContent, createShapeId, structuredClone } from '@tldraw/editor'
 import { TestEditor } from '../TestEditor'
 
 let editor: TestEditor
@@ -25,6 +25,7 @@ describe('Migrations', () => {
 
 	it('Throws error if any shape is invalid due to wrong type', () => {
 		const withInvalidShapeType = structuredClone(clipboardContent)
+		// @ts-expect-error
 		withInvalidShapeType.shapes[0].type = 'invalid'
 		expect(() => editor.putContentOntoCurrentPage(withInvalidShapeType)).toThrow()
 	})
@@ -35,5 +36,156 @@ describe('Migrations', () => {
 		// @ts-expect-error
 		withInvalidShapeModel.shapes[0].x = 'invalid'
 		expect(() => editor.putContentOntoCurrentPage(withInvalidShapeModel)).toThrow()
+	})
+})
+
+describe('Input content', () => {
+	it('is not mutated when it carries data url assets', () => {
+		const assetId = AssetRecordType.createId('imageAsset')
+		const imageId = createShapeId('image')
+		const src = 'data:image/png;base64,AAAA'
+		editor.createAssets([
+			{
+				type: 'image',
+				id: assetId,
+				typeName: 'asset',
+				props: { w: 100, h: 100, name: '', isAnimated: false, mimeType: 'image/png', src },
+				meta: {},
+			},
+		])
+		editor.createShape({
+			id: imageId,
+			type: 'image',
+			x: 0,
+			y: 0,
+			props: { w: 100, h: 100, assetId },
+		})
+		// the content holds the live records when no migration applies, so putting it into another
+		// editor must not write through to this editor's asset
+		const content = editor.getContentFromCurrentPage([imageId])!
+		const other = new TestEditor()
+		other.putContentOntoCurrentPage(content)
+
+		expect(content.assets[0].props.src).toBe(src)
+		expect(content.rootShapeIds).toEqual([imageId])
+		expect(editor.getAsset(assetId)!.props.src).toBe(src)
+		other.dispose()
+	})
+})
+
+describe('Post-positioning reparent into frame', () => {
+	it('reparents shapes into a frame when they land inside it without an explicit point', () => {
+		const frameId = createShapeId('frame')
+		const childId = createShapeId('child')
+
+		// Create a frame centered at the viewport center
+		const viewportCenter = editor.getViewportPageBounds().center
+		const frameW = 400
+		const frameH = 400
+		editor.createShapes([
+			{
+				id: frameId,
+				type: 'frame',
+				x: viewportCenter.x - frameW / 2,
+				y: viewportCenter.y - frameH / 2,
+				props: { w: frameW, h: frameH },
+			},
+			{
+				id: childId,
+				type: 'geo',
+				x: -500,
+				y: -500,
+				props: { w: 10, h: 10 },
+			},
+		])
+
+		editor.select(childId)
+		editor.copy()
+		editor.deleteShapes([childId])
+		editor.selectNone()
+
+		// Paste without a point — shapes should land at viewport center, inside the frame
+		editor.putContentOntoCurrentPage(editor.getClipboard()!, { select: true })
+
+		const [pastedId] = editor.getSelectedShapeIds()
+		expect(editor.getShape(pastedId)?.parentId).toBe(frameId)
+	})
+})
+
+describe('Paste parent selection with explicit point', () => {
+	it('falls back to the page when the cursor is outside the original parent', () => {
+		const frameId = createShapeId('frame')
+		const childId = createShapeId('child')
+
+		editor.createShapes([
+			{
+				id: frameId,
+				type: 'frame',
+				x: 0,
+				y: 0,
+				props: { w: 200, h: 200 },
+			},
+			{
+				id: childId,
+				type: 'geo',
+				parentId: frameId,
+				x: 40,
+				y: 40,
+				props: { w: 60, h: 60 },
+			},
+		])
+
+		editor.select(childId)
+		editor.copy()
+
+		editor.putContentOntoCurrentPage(editor.getClipboard()!, {
+			point: { x: 500, y: 500 },
+			select: true,
+		})
+
+		const [pastedId] = editor.getSelectedShapeIds()
+		expect(editor.getShape(pastedId)?.parentId).toBe(editor.getCurrentPageId())
+	})
+
+	it('uses the parent under the cursor when it can accept the pasted shapes', () => {
+		const frameAId = createShapeId('frameA')
+		const frameBId = createShapeId('frameB')
+		const childId = createShapeId('child')
+
+		editor.createShapes([
+			{
+				id: frameAId,
+				type: 'frame',
+				x: 0,
+				y: 0,
+				props: { w: 200, h: 200 },
+			},
+			{
+				id: frameBId,
+				type: 'frame',
+				x: 400,
+				y: 0,
+				props: { w: 200, h: 200 },
+			},
+			{
+				id: childId,
+				type: 'geo',
+				parentId: frameAId,
+				x: 40,
+				y: 40,
+				props: { w: 60, h: 60 },
+			},
+		])
+
+		editor.select(childId)
+		editor.copy()
+
+		editor.putContentOntoCurrentPage(editor.getClipboard()!, {
+			point: { x: 450, y: 50 },
+			select: true,
+		})
+
+		const [pastedId] = editor.getSelectedShapeIds()
+		expect(editor.getShape(pastedId)?.parentId).toBe(frameBId)
 	})
 })

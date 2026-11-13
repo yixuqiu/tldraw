@@ -1,18 +1,17 @@
 import {
-	Mat,
 	StateNode,
-	TLEventHandlers,
-	TLInterruptEvent,
 	TLLineShape,
 	TLShapeId,
 	Vec,
 	createShapeId,
 	getIndexAbove,
 	last,
+	maybeSnapToGrid,
 	sortByIndex,
 	structuredClone,
 } from '@tldraw/editor'
 
+// Minimum distance, in screen pixels, between two shift-clicked handles before we merge them
 const MINIMUM_DISTANCE_BETWEEN_SHIFT_CLICKED_HANDLES = 2
 
 export class Pointing extends StateNode {
@@ -22,19 +21,20 @@ export class Pointing extends StateNode {
 
 	markId: string | undefined
 
-	override onEnter = (info: { shapeId?: TLShapeId }) => {
+	override onEnter(info: { shapeId?: TLShapeId }) {
 		const { inputs } = this.editor
-		const { currentPagePoint } = inputs
+		const currentPagePoint = inputs.getCurrentPagePoint()
 
 		this.markId = undefined
 
 		// Previously created line shape that we might be extending
 		const shape = info.shapeId && this.editor.getShape<TLLineShape>(info.shapeId)
 
-		if (shape && inputs.shiftKey) {
+		// The shape id carried through idle survives a page change; extending it from
+		// another page would silently add a point to content the user can't see (#10400)
+		if (shape && inputs.getShiftKey() && this.editor.isShapeInPage(shape)) {
 			// Extending a previous shape
-			this.markId = `creating:${shape.id}`
-			this.editor.mark(this.markId)
+			this.markId = this.editor.markHistoryStoppingPoint(`creating_line:${shape.id}`)
 			this.shape = shape
 
 			const handles = this.editor.getShapeHandles(this.shape)
@@ -44,17 +44,20 @@ export class Pointing extends StateNode {
 			const endHandle = vertexHandles[vertexHandles.length - 1]
 			const prevEndHandle = vertexHandles[vertexHandles.length - 2]
 
-			const shapePagePoint = Mat.applyToPoint(
-				this.editor.getShapeParentTransform(this.shape)!,
-				new Vec(this.shape.x, this.shape.y)
-			)
-
-			const nextPoint = Vec.Sub(currentPagePoint, shapePagePoint).addXY(0.1, 0.1)
+			// nudge the point slightly to avoid zero-length lines
+			const nudgedPoint = this.editor
+				.getPointInShapeSpace(this.shape, currentPagePoint)
+				.addXY(0.1, 0.1)
+			const nextPoint = maybeSnapToGrid(nudgedPoint, this.editor)
 			const points = structuredClone(this.shape.props.points)
 
+			// compare in screen space
+			const minDistance =
+				MINIMUM_DISTANCE_BETWEEN_SHIFT_CLICKED_HANDLES / this.editor.getZoomLevel()
+
 			if (
-				Vec.DistMin(endHandle, prevEndHandle, MINIMUM_DISTANCE_BETWEEN_SHIFT_CLICKED_HANDLES) ||
-				Vec.DistMin(nextPoint, endHandle, MINIMUM_DISTANCE_BETWEEN_SHIFT_CLICKED_HANDLES)
+				Vec.DistMin(endHandle, prevEndHandle, minDistance) ||
+				Vec.DistMin(nextPoint, endHandle, minDistance)
 			) {
 				// Don't add a new point if the distance between the last two points is too small
 				points[endHandle.id] = {
@@ -86,27 +89,36 @@ export class Pointing extends StateNode {
 		} else {
 			const id = createShapeId()
 
-			this.markId = `creating:${id}`
-			this.editor.mark(this.markId)
+			this.markId = this.editor.markHistoryStoppingPoint(`creating_line:${id}`)
 
-			this.editor.createShapes<TLLineShape>([
+			const newPoint = maybeSnapToGrid(currentPagePoint, this.editor)
+
+			this.editor.createShapes([
 				{
 					id,
 					type: 'line',
-					x: currentPagePoint.x,
-					y: currentPagePoint.y,
+					x: newPoint.x,
+					y: newPoint.y,
+					props: {
+						scale: this.editor.getResizeScaleFactor(),
+					},
 				},
 			])
+
+			if (!this.editor.getShape(id)) {
+				this.cancel()
+				return
+			}
 
 			this.editor.select(id)
 			this.shape = this.editor.getShape(id)!
 		}
 	}
 
-	override onPointerMove: TLEventHandlers['onPointerMove'] = () => {
+	override onPointerMove() {
 		if (!this.shape) return
 
-		if (this.editor.inputs.isDragging) {
+		if (this.editor.inputs.getIsDragging()) {
 			const handles = this.editor.getShapeHandles(this.shape)
 			if (!handles) {
 				if (this.markId) this.editor.bailToMark(this.markId)
@@ -116,6 +128,7 @@ export class Pointing extends StateNode {
 			this.editor.setCurrentTool('select.dragging_handle', {
 				shape: this.shape,
 				isCreating: true,
+				creatingMarkId: this.markId,
 				// remove the offset that we added to the handle when we created it
 				handle: { ...lastHandle, x: lastHandle.x - 0.1, y: lastHandle.y - 0.1 },
 				onInteractionEnd: 'line',
@@ -123,19 +136,24 @@ export class Pointing extends StateNode {
 		}
 	}
 
-	override onPointerUp: TLEventHandlers['onPointerUp'] = () => {
+	override onPointerUp() {
 		this.complete()
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onLongPress() {
+		// On a touch (coarse pointer) long-press, cancel the pending shape so it leaves nothing behind.
+		if (this.editor.getInstanceState().isCoarsePointer) this.cancel()
+	}
+
+	override onCancel() {
 		this.cancel()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onComplete() {
 		this.complete()
 	}
 
-	override onInterrupt: TLInterruptEvent = () => {
+	override onInterrupt() {
 		this.parent.transition('idle')
 		if (this.markId) this.editor.bailToMark(this.markId)
 		this.editor.snaps.clearIndicators()

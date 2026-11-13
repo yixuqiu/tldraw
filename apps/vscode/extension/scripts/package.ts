@@ -16,14 +16,15 @@ async function main() {
 
 	fs.mkdirSync('./temp')
 
+	const preRelease = process.argv.includes('--pre-release')
 	try {
 		exec(
-			`cp -r ../editor/dist editor; vsce package; mv ${pkg.name}-${pkg.version}.vsix ${'./temp'}`,
+			`cp -r ../editor/dist editor; vsce package${preRelease ? ' --pre-release' : ''}; mv ${pkg.name}-${pkg.version}.vsix ${'./temp'}`,
 			(error, stdout, stderr) => {
 				if (error) {
 					throw new Error(error.message)
 				}
-				if (stderr && stderr.search('warning') !== 0) {
+				if (stderr && !/^(warning|\(node:)/.test(stderr)) {
 					throw new Error(stderr)
 				}
 			}

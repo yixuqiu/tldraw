@@ -1,5 +1,6 @@
-import { Editor, uniqueId } from '@tldraw/editor'
-import { ReactNode, createContext, useCallback, useContext, useState } from 'react'
+import { Atom, Editor, uniqueId, useAtom } from '@tldraw/editor'
+import { Toast as _Toast } from 'radix-ui'
+import { ReactNode, createContext, useContext, useMemo } from 'react'
 import { TLUiIconType } from '../icon-types'
 
 /** @public */
@@ -9,6 +10,7 @@ export type AlertSeverity = 'success' | 'info' | 'warning' | 'error'
 export interface TLUiToast {
 	id: string
 	icon?: TLUiIconType
+	iconLabel?: string
 	severity?: AlertSeverity
 	title?: string
 	description?: string
@@ -21,49 +23,58 @@ export interface TLUiToast {
 export interface TLUiToastAction {
 	type: 'primary' | 'danger' | 'normal'
 	label: string
-	onClick: () => void
+	onClick(): void
 }
 
 /** @public */
-export type TLUiToastsContextType = {
-	addToast: (toast: Omit<TLUiToast, 'id'> & { id?: string }) => string
-	removeToast: (id: TLUiToast['id']) => string
-	clearToasts: () => void
-	toasts: TLUiToast[]
+export interface TLUiToastsContextType {
+	addToast(toast: Omit<TLUiToast, 'id'> & { id?: string }): string
+	removeToast(id: TLUiToast['id']): string
+	clearToasts(): void
+	toasts: Atom<TLUiToast[]>
 }
 
 /** @internal */
-export const ToastsContext = createContext({} as TLUiToastsContextType)
+export const ToastsContext = createContext<TLUiToastsContextType | null>(null)
 
-/** @internal */
-export type ToastsProviderProps = {
-	overrides?: (editor: Editor) => TLUiToastsContextType
+/** @public */
+export interface TLUiToastsProviderProps {
+	overrides?(editor: Editor): TLUiToastsContextType
 	children: ReactNode
 }
 
-/** @internal */
-export function ToastsProvider({ children }: ToastsProviderProps) {
-	const [toasts, setToasts] = useState<TLUiToast[]>([])
+/** @public @react */
+export function TldrawUiToastsProvider({ children }: TLUiToastsProviderProps) {
+	const toasts = useAtom<TLUiToast[]>('toasts', [])
+	const ctx = useContext(ToastsContext)
 
-	const addToast = useCallback((toast: Omit<TLUiToast, 'id'> & { id?: string }) => {
-		const id = toast.id ?? uniqueId()
-		setToasts((d) => [...d.filter((m) => m.id !== toast.id), { ...toast, id }])
-		return id
-	}, [])
+	const current = useMemo(() => {
+		return {
+			toasts,
+			addToast(toast: Omit<TLUiToast, 'id'> & { id?: string }) {
+				const id = toast.id ?? uniqueId()
+				toasts.update((d) => [...d.filter((m) => m.id !== toast.id), { ...toast, id }])
+				return id
+			},
+			removeToast(id: string) {
+				toasts.update((d) => d.filter((m) => m.id !== id))
+				return id
+			},
+			clearToasts() {
+				toasts.set([])
+			},
+		}
+	}, [toasts])
 
-	const removeToast = useCallback((id: string) => {
-		setToasts((d) => d.filter((m) => m.id !== id))
-		return id
-	}, [])
-
-	const clearToasts = useCallback(() => {
-		setToasts(() => [])
-	}, [])
+	// if the user has already provided a context higher up, reuse that one
+	if (ctx) {
+		return <>{children}</>
+	}
 
 	return (
-		<ToastsContext.Provider value={{ toasts, addToast, removeToast, clearToasts }}>
-			{children}
-		</ToastsContext.Provider>
+		<_Toast.Provider>
+			<ToastsContext.Provider value={current}>{children}</ToastsContext.Provider>
+		</_Toast.Provider>
 	)
 }
 

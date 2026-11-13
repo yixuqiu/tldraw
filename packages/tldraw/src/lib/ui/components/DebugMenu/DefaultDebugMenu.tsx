@@ -1,22 +1,37 @@
-import { ReactNode } from 'react'
+import { useEditor } from '@tldraw/editor'
+import { ReactNode, useEffect } from 'react'
 import { TldrawUiButton } from '../primitives/Button/TldrawUiButton'
 import { TldrawUiButtonIcon } from '../primitives/Button/TldrawUiButtonIcon'
+import { TldrawUiMenuContextProvider } from '../primitives/menus/TldrawUiMenuContext'
 import {
 	TldrawUiDropdownMenuContent,
 	TldrawUiDropdownMenuRoot,
 	TldrawUiDropdownMenuTrigger,
 } from '../primitives/TldrawUiDropdownMenu'
-import { TldrawUiMenuContextProvider } from '../primitives/menus/TldrawUiMenuContext'
 import { DefaultDebugMenuContent } from './DefaultDebugMenuContent'
 
 /** @public */
-export type TLUiDebugMenuProps = {
+export interface TLUiDebugMenuProps {
 	children?: ReactNode
 }
 
-/** @public */
+/** @public @react */
 export function DefaultDebugMenu({ children }: TLUiDebugMenuProps) {
+	const editor = useEditor()
 	const content = children ?? <DefaultDebugMenuContent />
+
+	// While the debug menu is mounted, expose the editor on `window.editor` for
+	// console-driven debugging. We remove it on unmount so the editor isn't
+	// retained when debug mode is turned off.
+	useEffect(() => {
+		const win = window as any
+		win.editor = editor
+		return () => {
+			if (win.editor === editor) {
+				delete win.editor
+			}
+		}
+	}, [editor])
 
 	return (
 		<TldrawUiDropdownMenuRoot id="debug">

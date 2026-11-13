@@ -1,4 +1,12 @@
-import { TLShape, createShapeId } from '@tldraw/editor'
+import {
+	BaseFrameLikeShapeUtil,
+	RecordProps,
+	T,
+	TLBaseShape,
+	TLShape,
+	createShapeId,
+	toRichText,
+} from '@tldraw/editor'
 import { TestEditor } from './TestEditor'
 
 let editor: TestEditor
@@ -146,7 +154,11 @@ describe('with hitLabels=true', () => {
 	it('hits geo shape label behind overlapping hollow shape', () => {
 		// label is empty
 		expect(editor.getShapeAtPoint({ x: 350, y: 350 }, opts)?.id).toBe(ids.box3)
-		editor.updateShape({ id: ids.box2, type: 'geo', props: { text: 'hello' } })
+		editor.updateShape({
+			id: ids.box2,
+			type: 'geo',
+			props: { richText: toRichText('hello') },
+		})
 		expect(editor.getShapeAtPoint({ x: 350, y: 350 }, opts)?.id).toBe(ids.box2)
 	})
 })
@@ -164,5 +176,113 @@ describe('with filter', () => {
 
 	it('misses filtered out', () => {
 		expect(editor.getShapeAtPoint({ x: 310, y: 310 }, opts)?.id).toBe(undefined)
+	})
+})
+
+describe('frames', () => {
+	it('hits frame label', () => {
+		editor
+			.selectAll()
+			.deleteShapes(editor.getSelectedShapes())
+			.createShape({
+				type: 'frame',
+				x: 100,
+				y: 100,
+			})
+			.pointerMove(-100, -100)
+
+		const frame = editor.getLastCreatedShape()
+
+		expect(editor.getHoveredShapeId()).toBe(null)
+
+		editor.pointerMove(100, 90)
+
+		expect(editor.getHoveredShapeId()).toBe(frame.id)
+
+		editor.pointerDown().pointerUp()
+
+		expect(editor.getOnlySelectedShape()).toBe(frame)
+		expect(editor.getEditingShape()).toBe(undefined)
+	})
+
+	it('edits frame label', () => {
+		editor.selectAll().deleteShapes(editor.getSelectedShapes()).createShape({
+			type: 'frame',
+			x: 100,
+			y: 100,
+		})
+
+		const frame = editor.getLastCreatedShape()
+
+		editor.pointerMove(100, 90).doubleClick()
+
+		expect(editor.getOnlySelectedShape()).toBe(frame)
+		expect(editor.getEditingShape()).toBe(frame)
+	})
+})
+
+// Not registered in TLGlobalShapePropsMap; see getSvgString.test.ts.
+const PLAIN_FRAME_TYPE = 'plain-frame'
+type PlainFrameShape = TLBaseShape<typeof PLAIN_FRAME_TYPE, { w: number; h: number }>
+
+describe('frame-like shapes with a plain geometry', () => {
+	// inherits BaseBoxShapeUtil's Rectangle2d geometry, which has no label children
+	class PlainFrameUtil extends BaseFrameLikeShapeUtil<any> {
+		static override type = PLAIN_FRAME_TYPE
+		static override props: RecordProps<PlainFrameShape> = { w: T.number, h: T.number }
+		getDefaultProps() {
+			return { w: 200, h: 200 }
+		}
+		component() {
+			return null
+		}
+		getIndicatorPath(): undefined {
+			return undefined
+		}
+	}
+
+	it('can be hit tested', () => {
+		editor = new TestEditor({ shapeUtils: [PlainFrameUtil] })
+		editor.createShape({
+			id: ids.frame1,
+			type: PLAIN_FRAME_TYPE,
+			x: 100,
+			y: 100,
+			props: { w: 200, h: 200 },
+		} as any)
+		expect(() => editor.getShapeAtPoint({ x: 150, y: 150 })).not.toThrow()
+		// just outside the edge, within the margin
+		expect(editor.getShapeAtPoint({ x: 98, y: 150 }, { margin: 4 })?.id).toBe(ids.frame1)
+	})
+})
+
+describe('shapes bigger than the viewport', () => {
+	beforeEach(() => {
+		editor.selectAll().deleteShapes(editor.getSelectedShapes())
+	})
+
+	it('hits the edge of a hollow shape whose bounds contain the viewport', () => {
+		editor.createShape({
+			id: ids.box1,
+			type: 'geo',
+			x: -1000,
+			y: -1000,
+			props: { w: 5000, h: 5000 },
+		})
+		// on the left edge
+		expect(editor.getShapeAtPoint({ x: -1000, y: 500 })?.id).toBe(ids.box1)
+		// but its empty interior must still miss, since the pointer is "inside" it everywhere
+		expect(editor.getShapeAtPoint({ x: 500, y: 500 })?.id).toBe(undefined)
+	})
+
+	it('hits the body of an arrow whose bounds contain the viewport', () => {
+		editor.createShape({
+			id: ids.box1,
+			type: 'arrow',
+			x: -1000,
+			y: -1000,
+			props: { start: { x: 0, y: 0 }, end: { x: 5000, y: 5000 } },
+		})
+		expect(editor.getShapeAtPoint({ x: 0, y: 0 }, { margin: 4 })?.id).toBe(ids.box1)
 	})
 })

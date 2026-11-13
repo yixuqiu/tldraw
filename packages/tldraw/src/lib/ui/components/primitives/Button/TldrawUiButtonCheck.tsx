@@ -1,9 +1,27 @@
+import { defineMessages } from '@tldraw/editor'
+import { useTranslation } from '../../../hooks/useTranslation/useTranslation'
 import { TldrawUiIcon } from '../TldrawUiIcon'
 
-/** @public */
-export type TLUiButtonCheckProps = { checked: boolean }
+const messages = defineMessages({
+	uiChecked: { id: 'ui.checked', defaultMessage: 'Checked' },
+	uiUnchecked: { id: 'ui.unchecked', defaultMessage: 'Unchecked' },
+})
 
 /** @public */
+export interface TLUiButtonCheckProps {
+	checked: boolean
+}
+
+/** @public @react */
 export function TldrawUiButtonCheck({ checked }: TLUiButtonCheckProps) {
-	return <TldrawUiIcon icon={checked ? 'check' : 'none'} className="tlui-button__icon" small />
+	const msg = useTranslation()
+	return (
+		<TldrawUiIcon
+			data-checked={!!checked}
+			label={msg(checked ? messages.uiChecked : messages.uiUnchecked)}
+			icon={checked ? 'check' : 'none'}
+			className="tlui-button__icon"
+			small
+		/>
+	)
 }

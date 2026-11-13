@@ -1,18 +1,23 @@
-import { Box, PI, TLShapeId } from '@tldraw/editor'
+import { Box, createShapeId, PI, TLShapeId } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { TestEditor } from '../TestEditor'
-import { TL } from '../test-jsx'
 
 let editor: TestEditor
 let ids: Record<string, TLShapeId>
 
-jest.useFakeTimers()
+vi.useFakeTimers()
 
 beforeEach(() => {
 	editor = new TestEditor()
-	ids = editor.createShapesFromJsx([
-		<TL.geo ref="boxA" x={0} y={0} w={100} h={100} />,
-		<TL.geo ref="boxB" x={100} y={100} w={50} h={50} />,
-		<TL.geo ref="boxC" x={400} y={400} w={100} h={100} />,
+	ids = {
+		boxA: createShapeId('boxA'),
+		boxB: createShapeId('boxB'),
+		boxC: createShapeId('boxC'),
+	}
+	editor.createShapes([
+		{ id: ids.boxA, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } },
+		{ id: ids.boxB, type: 'geo', x: 100, y: 100, props: { w: 50, h: 50 } },
+		{ id: ids.boxC, type: 'geo', x: 400, y: 400, props: { w: 100, h: 100 } },
 	])
 
 	editor.selectAll()
@@ -22,30 +27,30 @@ describe('when less than two shapes are selected', () => {
 	it('does nothing', () => {
 		editor.setSelectedShapes([ids.boxB])
 
-		const fn = jest.fn()
+		const fn = vi.fn()
 		editor.store.listen(fn)
 		editor.alignShapes(editor.getSelectedShapeIds(), 'top')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		expect(fn).not.toHaveBeenCalled()
 	})
 })
 
 describe('when multiple shapes are selected', () => {
 	it('does, undoes and redoes command', () => {
-		editor.mark('align')
-		editor.alignShapes(editor.getSelectedShapeIds(), 'top')
-		jest.advanceTimersByTime(1000)
+		editor.markHistoryStoppingPoint('align')
+		editor.alignShapes(editor.getSelectedShapeIds(), 'center')
+		vi.advanceTimersByTime(1000)
 
-		editor.expectShapeToMatch({ id: ids.boxB, y: 0 })
+		editor.expectShapeToMatch({ id: ids.boxB, x: 225, y: 225 })
 		editor.undo()
-		editor.expectShapeToMatch({ id: ids.boxB, y: 100 })
+		editor.expectShapeToMatch({ id: ids.boxB, x: 100, y: 100 })
 		editor.redo()
-		editor.expectShapeToMatch({ id: ids.boxB, y: 0 })
+		editor.expectShapeToMatch({ id: ids.boxB, x: 225, y: 225 })
 	})
 
 	it('aligns top', () => {
 		editor.alignShapes(editor.getSelectedShapeIds(), 'top')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		editor.expectShapeToMatch(
 			{ id: ids.boxA, y: 0 },
@@ -56,7 +61,7 @@ describe('when multiple shapes are selected', () => {
 
 	it('aligns right', () => {
 		editor.alignShapes(editor.getSelectedShapeIds(), 'right')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		editor.expectShapeToMatch(
 			{ id: ids.boxA, x: 400 },
@@ -67,7 +72,7 @@ describe('when multiple shapes are selected', () => {
 
 	it('aligns bottom', () => {
 		editor.alignShapes(editor.getSelectedShapeIds(), 'bottom')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		editor.expectShapeToMatch(
 			{ id: ids.boxA, y: 400 },
@@ -78,7 +83,7 @@ describe('when multiple shapes are selected', () => {
 
 	it('aligns left', () => {
 		editor.alignShapes(editor.getSelectedShapeIds(), 'left')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		editor.expectShapeToMatch(
 			{ id: ids.boxA, x: 0 },
@@ -89,7 +94,7 @@ describe('when multiple shapes are selected', () => {
 
 	it('aligns center horizontal', () => {
 		editor.alignShapes(editor.getSelectedShapeIds(), 'center-horizontal')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		editor.expectShapeToMatch(
 			{ id: ids.boxA, x: 200 },
@@ -100,7 +105,7 @@ describe('when multiple shapes are selected', () => {
 
 	it('aligns center vertical', () => {
 		editor.alignShapes(editor.getSelectedShapeIds(), 'center-vertical')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		editor.expectShapeToMatch(
 			{ id: ids.boxA, y: 200 },
@@ -109,29 +114,38 @@ describe('when multiple shapes are selected', () => {
 		)
 	})
 
+	it('aligns center on both axes', () => {
+		editor.alignShapes(editor.getSelectedShapeIds(), 'center')
+		vi.advanceTimersByTime(1000)
+
+		editor.expectShapeToMatch(
+			{ id: ids.boxA, x: 200, y: 200 },
+			{ id: ids.boxB, x: 225, y: 225 },
+			{ id: ids.boxC, x: 200, y: 200 }
+		)
+	})
+
 	it('aligns center, when shapes are rotated', () => {
 		editor.updateShapes([
 			{
 				id: ids.boxA,
 				type: 'geo',
-				rotation: PI,
+				rotation: 0.2,
 			},
 			{
 				id: ids.boxB,
 				type: 'geo',
-				rotation: PI,
+				rotation: 0.4,
 			},
 			{
 				id: ids.boxC,
 				type: 'geo',
-				rotation: PI,
+				rotation: 0.6,
 			},
 		])
 
-		editor.alignShapes(editor.getSelectedShapeIds(), 'center-vertical')
-		jest.advanceTimersByTime(1000)
-		editor.alignShapes(editor.getSelectedShapeIds(), 'center-horizontal')
-		jest.advanceTimersByTime(1000)
+		editor.alignShapes(editor.getSelectedShapeIds(), 'center')
+		vi.advanceTimersByTime(1000)
 
 		const commonBounds = Box.Common([
 			editor.getShapePageBounds(ids.boxA)!,
@@ -168,9 +182,9 @@ describe('when multiple shapes are selected', () => {
 		])
 
 		editor.alignShapes(editor.getSelectedShapeIds(), 'top')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.alignShapes(editor.getSelectedShapeIds(), 'left')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		const commonBounds = Box.Common([
 			editor.getShapePageBounds(ids.boxA)!,
@@ -208,9 +222,9 @@ describe('when multiple shapes are selected', () => {
 
 		editor.setSelectedShapes([ids.boxA, ids.boxB, ids.boxC])
 		editor.alignShapes(editor.getSelectedShapeIds(), 'bottom')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.alignShapes(editor.getSelectedShapeIds(), 'right')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		const commonBounds = Box.Common([
 			editor.getShapePageBounds(ids.boxA)!,
@@ -232,11 +246,15 @@ describe('When shapes are parented to other shapes...', () => {
 		editor = new TestEditor()
 		editor.selectAll()
 		editor.deleteShapes(editor.getSelectedShapeIds())
-		ids = editor.createShapesFromJsx([
-			<TL.geo ref="boxA" x={0} y={0} w={100} h={100}>
-				<TL.geo ref="boxB" x={100} y={100} w={50} h={50} />
-			</TL.geo>,
-			<TL.geo ref="boxC" x={400} y={400} w={100} h={100} />,
+		ids = {
+			boxA: createShapeId('boxA'),
+			boxB: createShapeId('boxB'),
+			boxC: createShapeId('boxC'),
+		}
+		editor.createShapes([
+			{ id: ids.boxA, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } },
+			{ id: ids.boxB, type: 'geo', x: 100, y: 100, parentId: ids.boxA, props: { w: 50, h: 50 } },
+			{ id: ids.boxC, type: 'geo', x: 400, y: 400, props: { w: 100, h: 100 } },
 		])
 
 		editor.selectAll()
@@ -251,9 +269,9 @@ describe('When shapes are parented to other shapes...', () => {
 		])
 
 		editor.alignShapes(editor.getSelectedShapeIds(), 'top')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.alignShapes(editor.getSelectedShapeIds(), 'left')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		const commonBoundsAfter = Box.Common([
 			editor.getShapePageBounds(ids.boxC)!,
@@ -273,9 +291,9 @@ describe('When shapes are parented to other shapes...', () => {
 		])
 
 		editor.alignShapes(editor.getSelectedShapeIds(), 'bottom')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.alignShapes(editor.getSelectedShapeIds(), 'right')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		const commonBoundsAfter = Box.Common([
 			editor.getShapePageBounds(ids.boxC)!,
@@ -339,9 +357,9 @@ describe('When shapes are parented to a rotated shape...', () => {
 		])
 
 		editor.alignShapes(editor.getSelectedShapeIds(), 'top')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.alignShapes(editor.getSelectedShapeIds(), 'left')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		const commonBoundsAfter = Box.Common([
 			editor.getShapePageBounds(ids.boxC)!,
@@ -367,9 +385,9 @@ describe('When shapes are parented to a rotated shape...', () => {
 		])
 
 		editor.alignShapes(editor.getSelectedShapeIds(), 'bottom')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.alignShapes(editor.getSelectedShapeIds(), 'right')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		const commonBoundsAfter = Box.Common([
 			editor.getShapePageBounds(ids.boxC)!,

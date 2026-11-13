@@ -1,6 +1,7 @@
 import test, { expect } from '@playwright/test'
 import { Editor } from 'tldraw'
 
+declare const editor: Editor
 declare const EDITOR_A: Editor
 declare const EDITOR_B: Editor
 declare const EDITOR_C: Editor
@@ -119,19 +120,19 @@ test.describe('Focus', () => {
 
 		await (await page.$('body'))?.click()
 
-		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-checked="true"]')).toBe(
+		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-pressed="true"]')).toBe(
 			null
 		)
-		expect(await EditorB.$('.tlui-button[data-testid="tools.draw"][aria-checked="true"]')).toBe(
+		expect(await EditorB.$('.tlui-button[data-testid="tools.draw"][aria-pressed="true"]')).toBe(
 			null
 		)
 
 		await page.keyboard.press('d')
 
-		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-checked="true"]')).not.toBe(
+		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-pressed="true"]')).not.toBe(
 			null
 		)
-		expect(await EditorB.$('.tlui-button[data-testid="tools.draw"][aria-checked="true"]')).toBe(
+		expect(await EditorB.$('.tlui-button[data-testid="tools.draw"][aria-pressed="true"]')).toBe(
 			null
 		)
 
@@ -139,10 +140,10 @@ test.describe('Focus', () => {
 		await page.waitForTimeout(100) // takes 30ms or so to focus
 		await page.keyboard.press('d')
 
-		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-checked="true"]')).not.toBe(
+		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-pressed="true"]')).not.toBe(
 			null
 		)
-		expect(await EditorB.$('.tlui-button[data-testid="tools.draw"][aria-checked="true"]')).not.toBe(
+		expect(await EditorB.$('.tlui-button[data-testid="tools.draw"][aria-pressed="true"]')).not.toBe(
 			null
 		)
 	})
@@ -157,22 +158,141 @@ test.describe('Focus', () => {
 		const drawButton = await EditorA.$('.tlui-button[data-testid="tools.draw"]')
 
 		// select button should be selected, not the draw button
-		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-checked="true"]')).toBe(
+		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-pressed="true"]')).toBe(
 			null
 		)
 
 		await drawButton?.click()
 
 		// draw button should be selected now
-		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-checked="true"]')).not.toBe(
+		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-pressed="true"]')).not.toBe(
 			null
 		)
 
 		await page.keyboard.press('v')
 
 		// select button should be selected again
-		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-checked="true"]')).toBe(
+		expect(await EditorA.$('.tlui-button[data-testid="tools.draw"][aria-pressed="true"]')).toBe(
 			null
 		)
+	})
+
+	test('still focuses text after clicking on style button', async ({ page }) => {
+		await page.goto('http://localhost:5420/end-to-end')
+		await page.waitForSelector('.tl-canvas')
+
+		const EditorA = (await page.$(`.tl-container`))!
+		expect(EditorA).toBeTruthy()
+
+		// Create a new note, text should be focused
+		await page.keyboard.press('n')
+		await (await page.$('body'))?.click()
+		await page.waitForSelector('.tl-shape')
+
+		const blueButton = await page.$('.tlui-button[data-testid="style.color.blue"]')
+		await blueButton?.click()
+
+		// Text should still be focused.
+		expect(
+			await page.evaluate(() => !!document.querySelector('.tl-shape div[contenteditable]:focus'))
+		).toBe(true)
+	})
+
+	test('edit->edit, focus stays in the text areas when going from shape-to-shape', async ({
+		page,
+	}) => {
+		await page.goto('http://localhost:5420/end-to-end')
+		await page.waitForSelector('.tl-canvas')
+
+		const EditorA = (await page.$(`.tl-container`))!
+		expect(EditorA).toBeTruthy()
+
+		// Create a new note, text should be focused
+		await page.keyboard.press('n')
+		await (await page.$('body'))?.click()
+		await page.waitForSelector('.tl-shape')
+		await page.keyboard.type('test')
+		const firstNoteId = await page.evaluate(() => editor.getEditingShapeId())
+		const firstNote = page.locator(`.tl-shape[data-shape-id="${firstNoteId}"]`)
+
+		// create new note next to it
+		await page.keyboard.press('Tab')
+		await expect(page.locator('.tl-shape')).toHaveCount(2)
+
+		// Tab pans to the new note; let the camera settle so the first note is where
+		// the locator resolves it before clicking.
+		await page.waitForFunction(() => editor.getCameraState() === 'idle')
+
+		await firstNote.click()
+
+		await page.waitForTimeout(1000)
+
+		// The first note, not the one Tab created, should be the focused one.
+		await expect(firstNote.locator('div[contenteditable]')).toBeFocused()
+	})
+
+	test('exits edit mode when dragging from text label with blurred input', async ({ page }) => {
+		await page.goto('http://localhost:5420/end-to-end')
+		await page.waitForSelector('.tl-canvas')
+
+		// Create a geo shape with text
+		await page.keyboard.press('r')
+		await page.mouse.click(200, 200)
+		await page.mouse.click(400, 400)
+
+		// Double-click to edit the shape
+		await page.mouse.dblclick(300, 300)
+		await page.waitForTimeout(100)
+
+		// Verify we're in edit mode
+		expect(
+			await page.evaluate(() => !!document.querySelector('.tl-shape [contenteditable]:focus'))
+		).toBe(true)
+
+		// Click near the text and drag (this should blur the input and exit edit mode)
+		await page.mouse.move(300, 300)
+		await page.mouse.down()
+		await page.mouse.move(350, 350)
+		await page.waitForTimeout(100)
+
+		// Verify we've exited edit mode (no focused contenteditable)
+		expect(
+			await page.evaluate(() => !!document.querySelector('.tl-shape [contenteditable]:focus'))
+		).toBe(false)
+
+		await page.mouse.up()
+	})
+
+	test('selects all text when clicking on blurred text input in editing mode', async ({ page }) => {
+		await page.goto('http://localhost:5420/end-to-end')
+		await page.waitForSelector('.tl-canvas')
+
+		// Create geo shape and enter edit mode
+		await page.keyboard.press('r')
+		await page.mouse.click(200, 200)
+		await page.mouse.click(400, 400)
+		await page.mouse.dblclick(300, 300)
+
+		// Wait for contenteditable to be focused before typing
+		await page.waitForFunction(
+			() => document.activeElement === document.querySelector('.tl-shape [contenteditable]')
+		)
+
+		// Type text
+		await page.keyboard.type('test', { delay: 10 })
+
+		// Verify initial text
+		const contenteditable = page.locator('.tl-shape [contenteditable]')
+		await expect(contenteditable).toHaveText('test')
+
+		// Blur input while staying in editing mode by clicking on the text label (but not the input itself)
+		await page.mouse.click(200, 230)
+		await page.waitForTimeout(100)
+
+		await page.waitForFunction(() => document.getSelection()?.toString() === 'test')
+
+		expect(
+			await page.evaluate(() => !!document.querySelector('.tl-shape div[contenteditable]:focus'))
+		).toBe(true)
 	})
 })

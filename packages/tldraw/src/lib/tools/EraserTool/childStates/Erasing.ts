@@ -1,39 +1,32 @@
-import {
-	HIT_TEST_MARGIN,
-	StateNode,
-	TLEventHandlers,
-	TLFrameShape,
-	TLGroupShape,
-	TLPointerEventInfo,
-	TLShapeId,
-	pointInPolygon,
-} from '@tldraw/editor'
+import { Box, StateNode, TLPointerEventInfo, TLShapeId, pointInPolygon } from '@tldraw/editor'
 
 export class Erasing extends StateNode {
 	static override id = 'erasing'
+	static override trackPerformance = true
 
 	private info = {} as TLPointerEventInfo
 	private scribbleId = 'id'
 	private markId = ''
 	private excludedShapeIds = new Set<TLShapeId>()
 
-	override onEnter = (info: TLPointerEventInfo) => {
-		this.markId = 'erase scribble begin'
-		this.editor.mark(this.markId)
+	override onEnter(info: TLPointerEventInfo) {
+		this.markId = this.editor.markHistoryStoppingPoint('erase scribble begin')
 		this.info = info
 
-		const { originPagePoint } = this.editor.inputs
+		const originPagePoint = this.editor.inputs.getOriginPagePoint()
+		const pressedShapeIds = new Set(this.editor.getErasingShapeIds())
 		this.excludedShapeIds = new Set(
 			this.editor
 				.getCurrentPageShapes()
 				.filter((shape) => {
 					//If the shape is locked, we shouldn't erase it
 					if (this.editor.isShapeOrAncestorLocked(shape)) return true
-					//If the shape is a group or frame, check we're inside it when we start erasing
-					if (
-						this.editor.isShapeOfType<TLGroupShape>(shape, 'group') ||
-						this.editor.isShapeOfType<TLFrameShape>(shape, 'frame')
-					) {
+					// A frame the press hit on its outline stays marked: a press just inside the outline
+					// is within the frame's bounds, so the containment check below would otherwise
+					// unmark it on the first move while a press just outside would erase it
+					if (this.editor.isShapeFrameLike(shape) && pressedShapeIds.has(shape.id)) return false
+					//If the shape is a group or frame-like, check we're inside it when we start erasing
+					if (this.editor.isShapeOfType(shape, 'group') || this.editor.isShapeFrameLike(shape)) {
 						const pointInShapeShape = this.editor.getPointInShapeSpace(shape, originPagePoint)
 						const geometry = this.editor.getShapeGeometry(shape)
 						return geometry.bounds.containsPoint(pointInShapeShape)
@@ -44,6 +37,15 @@ export class Erasing extends StateNode {
 				.map((shape) => shape.id)
 		)
 
+		const hitShapeIds = this.editor
+			.getShapesAtPoint(originPagePoint)
+			.filter((s) => !this.excludedShapeIds.has(s.id))
+			.map((s) => s.id)
+
+		this.editor.setErasingShapes([
+			...new Set([...this.editor.getErasingShapeIds(), ...hitShapeIds]),
+		])
+
 		const scribble = this.editor.scribbles.addScribble({
 			color: 'muted-1',
 			size: 12,
@@ -53,47 +55,59 @@ export class Erasing extends StateNode {
 		this.update()
 	}
 
-	private pushPointToScribble = () => {
-		const { x, y } = this.editor.inputs.currentPagePoint
+	private pushPointToScribble() {
+		const { x, y } = this.editor.inputs.getCurrentPagePoint()
 		this.editor.scribbles.addPoint(this.scribbleId, x, y)
 	}
 
-	override onExit = () => {
+	override onExit() {
+		this.editor.setErasingShapes([])
 		this.editor.scribbles.stop(this.scribbleId)
 	}
 
-	override onPointerMove = () => {
+	override onPointerMove() {
 		this.update()
 	}
 
-	override onPointerUp: TLEventHandlers['onPointerUp'] = () => {
-		this.complete()
+	override onPointerUp(info: TLPointerEventInfo) {
+		this.complete(info)
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onCancel() {
 		this.cancel()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onComplete() {
 		this.complete()
 	}
 
 	update() {
 		const { editor, excludedShapeIds } = this
 		const erasingShapeIds = editor.getErasingShapeIds()
-		const zoomLevel = editor.getZoomLevel()
-		const currentPageShapes = editor.getCurrentPageShapes()
-		const {
-			inputs: { currentPagePoint, previousPagePoint },
-		} = editor
+		const currentPagePoint = editor.inputs.getCurrentPagePoint()
+		const previousPagePoint = editor.inputs.getPreviousPagePoint()
 
 		this.pushPointToScribble()
 
+		// Otherwise, erasing shapes are all the shapes that were hit before plus any new shapes that are hit
 		const erasing = new Set<TLShapeId>(erasingShapeIds)
-		const minDist = HIT_TEST_MARGIN / zoomLevel
+		const minDist = this.editor.getHitTestMargin()
+
+		// Create bounds around line segment with margin
+		const lineBounds = Box.FromPoints([previousPagePoint, currentPagePoint]).expandBy(minDist)
+		const candidateIds = editor.getShapeIdsInsideBounds(lineBounds)
+
+		// Early return if no candidates - avoid expensive getCurrentPageRenderingShapesSorted()
+		if (candidateIds.size === 0) {
+			editor.setErasingShapes(Array.from(erasing))
+			return
+		}
+
+		const allShapes = editor.getCurrentPageRenderingShapesSorted()
+		const currentPageShapes = allShapes.filter((shape) => candidateIds.has(shape.id))
 
 		for (const shape of currentPageShapes) {
-			if (editor.isShapeOfType<TLGroupShape>(shape, 'group')) continue
+			if (editor.isShapeOfType(shape, 'group')) continue
 
 			// Avoid testing masked shapes, unless the pointer is inside the mask
 			const pageMask = editor.getShapeMask(shape.id)
@@ -120,8 +134,17 @@ export class Erasing extends StateNode {
 				continue
 			}
 
+			// If a shape is hit and is part of a group, erase the group
+			// If we started erasing inside a group's bounds, erase child shapes (or nested groups) inside it
 			if (geometry.hitTestLineSegment(A, B, minDist)) {
-				erasing.add(editor.getOutermostSelectableShape(shape).id)
+				const outermost = editor.getOutermostSelectableShape(shape)
+				if (excludedShapeIds.has(outermost.id)) {
+					erasing.add(
+						editor.getOutermostSelectableShape(shape, (s) => !excludedShapeIds.has(s.id)).id
+					)
+				} else {
+					erasing.add(outermost.id)
+				}
 			}
 		}
 
@@ -131,16 +154,14 @@ export class Erasing extends StateNode {
 		this.editor.setErasingShapes([...erasing].filter((id) => !excludedShapeIds.has(id)))
 	}
 
-	complete() {
+	complete(info?: TLPointerEventInfo) {
 		const { editor } = this
 		editor.deleteShapes(editor.getCurrentPageState().erasingShapeIds)
-		editor.setErasingShapes([])
-		this.parent.transition('idle')
+		this.parent.transition('idle', info)
 	}
 
 	cancel() {
 		const { editor } = this
-		editor.setErasingShapes([])
 		editor.bailToMark(this.markId)
 		this.parent.transition('idle', this.info)
 	}

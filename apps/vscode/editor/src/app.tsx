@@ -1,13 +1,18 @@
 import { getAssetUrlsByImport } from '@tldraw/assets/imports'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-	DefaultHelpMenu,
-	DefaultHelpMenuContent,
+	DefaultMainMenu,
+	DefaultSpinner,
+	EditSubmenu,
 	Editor,
 	ErrorBoundary,
+	ExportFileContentSubMenu,
+	ExtrasGroup,
+	PreferencesGroup,
 	TLComponents,
 	Tldraw,
-	TldrawUiMenuGroup,
+	ViewSubmenu,
+	hardReset,
 	setRuntimeOverrides,
 } from 'tldraw'
 import 'tldraw/tldraw.css'
@@ -18,10 +23,14 @@ import { FileOpen } from './FileOpen'
 import { FullPageMessage } from './FullPageMessage'
 import { Links } from './Links'
 import { onCreateAssetFromUrl } from './utils/bookmarks'
+import { registerExternalUrlContentHandler } from './utils/externalUrlContentHandler'
 import { vscode } from './utils/vscode'
 
 setRuntimeOverrides({
 	openWindow: (url, target) => {
+		if (url.includes('utm_campaign=watermark')) {
+			url = url.replace('utm_source=sdk', 'utm_source=extension')
+		}
 		vscode.postMessage({
 			type: 'vscode:open-window',
 			data: {
@@ -36,7 +45,7 @@ setRuntimeOverrides({
 		})
 	},
 	hardReset: async () => {
-		await (window as any).__tldraw__hardReset?.()
+		await hardReset({ shouldReload: false })
 		vscode.postMessage({
 			type: 'vscode:hard-reset',
 		})
@@ -60,7 +69,7 @@ export function WrappedTldrawEditor() {
 	)
 }
 
-export const TldrawWrapper = () => {
+export function TldrawWrapper() {
 	const [tldrawInnerProps, setTldrawInnerProps] = useState<TLDrawInnerProps | null>(null)
 
 	useEffect(() => {
@@ -90,13 +99,15 @@ export const TldrawWrapper = () => {
 	}, [setTldrawInnerProps])
 
 	return tldrawInnerProps === null ? (
-		<FullPageMessage>Loading</FullPageMessage>
+		<FullPageMessage>
+			<DefaultSpinner />
+		</FullPageMessage>
 	) : (
 		<TldrawInner {...tldrawInnerProps} />
 	)
 }
 
-export type TLDrawInnerProps = {
+export interface TLDrawInnerProps {
 	assetSrc: string
 	fileContents: string
 	uri: string
@@ -104,13 +115,15 @@ export type TLDrawInnerProps = {
 }
 
 const components: TLComponents = {
-	HelpMenu: () => (
-		<DefaultHelpMenu>
-			<TldrawUiMenuGroup id="help">
-				<DefaultHelpMenuContent />
-			</TldrawUiMenuGroup>
+	MainMenu: () => (
+		<DefaultMainMenu>
+			<EditSubmenu />
+			<ViewSubmenu />
+			<ExportFileContentSubMenu />
+			<ExtrasGroup />
+			<PreferencesGroup />
 			<Links />
-		</DefaultHelpMenu>
+		</DefaultMainMenu>
 	),
 }
 function TldrawInner({ uri, assetSrc, isDarkMode, fileContents }: TLDrawInnerProps) {
@@ -118,15 +131,18 @@ function TldrawInner({ uri, assetSrc, isDarkMode, fileContents }: TLDrawInnerPro
 
 	const handleMount = useCallback((editor: Editor) => {
 		editor.registerExternalAssetHandler('url', onCreateAssetFromUrl)
+		registerExternalUrlContentHandler(editor)
 	}, [])
 
+	const licenseKey =
+		'tldraw-tldraw-2027-05-22/WyJDOEVmdnNlQyIsWyJ2c2NvZGUtd2VidmlldzpcXC9cXC8uKnRsZHJhdy1vcmdcXC50bGRyYXctdnNjb2RlIl0sNDEsIjIwMjctMDUtMjIiXQ.s/4f2jMqZhK2eAHT0LjZZ48NAcrsZ7UdWMerUzQ6q8SZtpkMmuv3JoPviFo+xkfNxD4eaGTGWgHIYyX1VCbwXg'
 	return (
 		<Tldraw
 			assetUrls={assetUrls}
 			persistenceKey={uri}
 			onMount={handleMount}
 			components={components}
-			autoFocus
+			licenseKey={licenseKey}
 		>
 			{/* <DarkModeHandler themeKind={themeKind} /> */}
 

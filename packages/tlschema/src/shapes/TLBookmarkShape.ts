@@ -1,34 +1,91 @@
 import { T } from '@tldraw/validate'
 import { assetIdValidator } from '../assets/TLBaseAsset'
-import {
-	RETIRED_DOWN_MIGRATION,
-	createShapePropsMigrationIds,
-	createShapePropsMigrationSequence,
-} from '../records/TLShape'
-import { ShapePropsType, TLBaseShape } from './TLBaseShape'
+import { TLAssetId } from '../records/TLAsset'
+import { createShapePropsMigrationIds, createShapePropsMigrationSequence } from '../records/TLShape'
+import { RecordProps } from '../recordsWithProps'
+import { TLBaseShape } from './TLBaseShape'
 
-/** @public */
-export const bookmarkShapeProps = {
+/**
+ * Properties for the bookmark shape, which displays website bookmarks as interactive cards.
+ *
+ * @public
+ */
+export interface TLBookmarkShapeProps {
+	/** Width of the bookmark shape in pixels */
+	w: number
+	/** Height of the bookmark shape in pixels */
+	h: number
+	/** Asset ID for the bookmark's preview image, or null if no image is available */
+	assetId: TLAssetId | null
+	/** The URL that this bookmark points to */
+	url: string
+}
+
+/**
+ * A bookmark shape represents a website link with optional preview content.
+ * Bookmark shapes display as cards showing the page title, description, and preview image.
+ *
+ * @public
+ * @example
+ * ```ts
+ * const bookmarkShape: TLBookmarkShape = {
+ *   id: createShapeId(),
+ *   typeName: 'shape',
+ *   type: 'bookmark',
+ *   x: 100,
+ *   y: 100,
+ *   rotation: 0,
+ *   index: 'a1',
+ *   parentId: 'page:page1',
+ *   isLocked: false,
+ *   opacity: 1,
+ *   props: {
+ *     w: 300,
+ *     h: 320,
+ *     assetId: 'asset:bookmark123',
+ *     url: 'https://www.example.com'
+ *   },
+ *   meta: {}
+ * }
+ * ```
+ */
+export type TLBookmarkShape = TLBaseShape<'bookmark', TLBookmarkShapeProps>
+
+/**
+ * Validation schema for bookmark shape properties.
+ *
+ * @public
+ * @example
+ * ```ts
+ * // Validates bookmark shape properties
+ * const isValid = bookmarkShapeProps.url.isValid('https://example.com')
+ * ```
+ */
+export const bookmarkShapeProps: RecordProps<TLBookmarkShape> = {
 	w: T.nonZeroNumber,
 	h: T.nonZeroNumber,
 	assetId: assetIdValidator.nullable(),
 	url: T.linkUrl,
 }
 
-/** @public */
-export type TLBookmarkShapeProps = ShapePropsType<typeof bookmarkShapeProps>
-
-/** @public */
-export type TLBookmarkShape = TLBaseShape<'bookmark', TLBookmarkShapeProps>
-
 const Versions = createShapePropsMigrationIds('bookmark', {
 	NullAssetId: 1,
 	MakeUrlsValid: 2,
 })
 
+/**
+ * Version identifiers for bookmark shape migrations.
+ *
+ * @public
+ */
 export { Versions as bookmarkShapeVersions }
 
-/** @public */
+/**
+ * Migration sequence for bookmark shape properties across different schema versions.
+ * Handles backwards compatibility when bookmark shape structure changes.
+ *
+ * @public
+ */
 export const bookmarkShapeMigrations = createShapePropsMigrationSequence({
 	sequence: [
 		{
@@ -38,7 +95,7 @@ export const bookmarkShapeMigrations = createShapePropsMigrationSequence({
 					props.assetId = null
 				}
 			},
-			down: RETIRED_DOWN_MIGRATION,
+			down: 'retired',
 		},
 		{
 			id: Versions.MakeUrlsValid,

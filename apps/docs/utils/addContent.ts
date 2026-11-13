@@ -1,9 +1,27 @@
-import { Article, ArticleHeadings, GeneratedContent } from '@/types/content-types'
-import GithubSlugger from 'github-slugger'
-import { Database } from 'sqlite'
-import sqlite3 from 'sqlite3'
+import console from 'console'
+import type { Database } from 'sqlite'
+import type sqlite3 from 'sqlite3'
+import type { Article, GeneratedContent } from '@/types/content-types'
+import { parseMarkdown } from './parse-markdown'
 
 export async function addContentToDb(
+	db: Database<sqlite3.Database, sqlite3.Statement>,
+	content: GeneratedContent
+) {
+	// One transaction for the whole batch: each statement is otherwise its own autocommit with
+	// an fsync, which turns the ~13k inserts of a refresh into seconds of wall time.
+	await db.exec('BEGIN')
+	try {
+		await insertContent(db, content)
+		await db.exec('COMMIT')
+	} catch (e) {
+		// Don't let a failed rollback mask the insert error
+		await db.exec('ROLLBACK').catch(() => {})
+		throw e
+	}
+}
+
+async function insertContent(
 	db: Database<sqlite3.Database, sqlite3.Statement>,
 	content: GeneratedContent
 ) {
@@ -16,7 +34,7 @@ export async function addContentToDb(
 	)
 
 	const headingsInsert = await db.prepare(
-		`INSERT INTO headings (idx, articleId, level, title, slug, isCode, path) VALUES (?, ?, ?, ?, ?, ?, ?)`
+		`INSERT INTO headings (idx, articleId, level, title, slug, path) VALUES (?, ?, ?, ?, ?, ?)`
 	)
 
 	const articleInsert = await db.prepare(
@@ -24,31 +42,41 @@ export async function addContentToDb(
       id,
       groupIndex,
       categoryIndex,
+	  priority,
       sectionIndex,
       groupId,
       categoryId,
       sectionId,
       authorId,
       title,
+	  sidebarTitle,
       description,
       hero,
+	  thumbnail,
+	  socialImage,
       status,
       date,
       sourceUrl,
 			componentCode,
+			componentCodeFilename,
 			componentCodeFiles,
       keywords,
+	  apiTags,
       content,
-			path
-    ) VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			path,
+			embed,
+			githubLink
+    ) VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	)
 
-	for (let i = 0; i < content.sections.length; i++) {
-		const section = content.sections[i]
+	for (const section of content.sections) {
 		try {
+			// `section.index` is assigned by the generators across all content sources (regular
+			// sections 0..n, examples and reference far away). addContentToDb is called once per
+			// source, so a per-call loop index would give two sections the same idx.
 			await sectionInsert.run(
 				section.id,
-				section.id === 'reference' ? 99999 : i,
+				section.index,
 				section.title,
 				section.description,
 				section.path,
@@ -84,79 +112,58 @@ export async function addContentToDb(
 				article.id,
 				article.groupIndex,
 				article.categoryIndex,
+				article.priority,
 				article.sectionIndex,
 				article.groupId,
 				article.categoryId,
 				article.sectionId,
-				article.author,
+				article.author
+					? typeof article.author === 'string'
+						? article.author
+						: article.author.join(', ')
+					: null,
 				article.title,
+				article.sidebarTitle,
 				article.description,
 				article.hero,
+				article.thumbnail,
+				article.socialImage,
 				article.status,
 				article.date,
 				article.sourceUrl,
 				article.componentCode,
+				article.componentCodeFilename,
 				article.componentCodeFiles,
 				article.keywords.join(', '),
+				article.apiTags,
 				article.content,
-				article.path
+				article.path,
+				article.embed,
+				article.githubLink
 			)
 		} catch (e: any) {
 			console.error(`ERROR: Could not add article with id '${article.id}'`)
 			throw e
 		}
 
-		await db.run(`DELETE FROM headings WHERE articleId = ?`, article.id)
-
 		await Promise.all(
-			getHeadingLinks(article.content ?? '').map((heading, i) =>
+			parseMarkdown(article.content ?? '', article.path ?? article.id).headings.map((heading, i) =>
 				headingsInsert.run(
 					i,
 					article.id,
 					heading.level,
 					heading.title,
 					heading.slug,
-					heading.isCode,
-					`${article.path}#${heading.slug}`
+					heading.slug ? `${article.path}#${heading.slug}` : article.path
 				)
 			)
 		)
 	}
-}
 
-export async function addFTS(db: Database<sqlite3.Database, sqlite3.Statement>) {
-	await db.run(`DROP TABLE IF EXISTS ftsArticles`)
-	await db.run(
-		`CREATE VIRTUAL TABLE ftsArticles USING fts5(title, content, description, keywords, id, sectionId, categoryId, tokenize="trigram")`
-	)
-	await db.run(
-		`INSERT INTO ftsArticles SELECT title, content, description, keywords, id, sectionId, categoryId FROM articles;`
-	)
-
-	await db.run(`DROP TABLE IF EXISTS ftsHeadings`)
-	await db.run(
-		`CREATE VIRTUAL TABLE ftsHeadings USING fts5(title, slug, id, articleId, tokenize="trigram")`
-	)
-	await db.run(`INSERT INTO ftsHeadings SELECT title, slug, id, articleId FROM headings;`)
-}
-
-const slugs = new GithubSlugger()
-
-const MATCH_HEADINGS = /(?:^|\n)(#{1,6})\s+(.+?)(?=\n|$)/g
-function getHeadingLinks(content: string) {
-	let match
-	const headings: ArticleHeadings = []
-	const visited = new Set<string>()
-	while ((match = MATCH_HEADINGS.exec(content)) !== null) {
-		if (visited.has(match[2])) continue
-		visited.add(match[2])
-		slugs.reset()
-		headings.push({
-			level: match[1].length,
-			title: match[2].replaceAll('`', ''),
-			slug: slugs.slug(match[2], true),
-			isCode: match[2].startsWith('`'),
-		})
-	}
-	return headings
+	await Promise.all([
+		sectionInsert.finalize(),
+		categoryInsert.finalize(),
+		headingsInsert.finalize(),
+		articleInsert.finalize(),
+	])
 }

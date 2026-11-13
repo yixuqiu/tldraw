@@ -1,4 +1,4 @@
-import { stopEventPropagation, useEditor } from '@tldraw/editor'
+import { Editor, tlenv, tltime, useMaybeEditor } from '@tldraw/editor'
 import classNames from 'classnames'
 import * as React from 'react'
 import { TLUiTranslationKey } from '../../hooks/useTranslation/TLUiTranslationKey'
@@ -12,16 +12,19 @@ export interface TLUiInputProps {
 	label?: TLUiTranslationKey | Exclude<string, TLUiTranslationKey>
 	icon?: TLUiIconType | Exclude<string, TLUiIconType>
 	iconLeft?: TLUiIconType | Exclude<string, TLUiIconType>
-	autofocus?: boolean
-	autoselect?: boolean
+	iconLabel?: TLUiTranslationKey | Exclude<string, TLUiTranslationKey>
+	autoFocus?: boolean
+	autoSelect?: boolean
 	children?: React.ReactNode
 	defaultValue?: string
+	/** Maximum number of characters the input will accept. */
+	maxLength?: number
 	placeholder?: string
-	onComplete?: (value: string) => void
-	onValueChange?: (value: string) => void
-	onCancel?: (value: string) => void
-	onBlur?: (value: string) => void
-	onFocus?: () => void
+	onComplete?(value: string): void
+	onValueChange?(value: string): void
+	onCancel?(value: string): void
+	onBlur?(value: string): void
+	onFocus?(): void
 	className?: string
 	/**
 	 * Usually on iOS when you focus an input, the browser will adjust the viewport to bring the input
@@ -33,9 +36,19 @@ export interface TLUiInputProps {
 	 */
 	shouldManuallyMaintainScrollPositionWhenFocused?: boolean
 	value?: string
+	'data-testid'?: string
+	'aria-label'?: string
 }
 
-/** @public */
+function requestFrame(editor: Editor | null, fn: () => void) {
+	if (editor) {
+		editor.timers.requestAnimationFrame(fn)
+	} else {
+		tltime.requestAnimationFrame('anon', fn)
+	}
+}
+
+/** @public @react */
 export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 	function TldrawUiInput(
 		{
@@ -43,9 +56,11 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 			label,
 			icon,
 			iconLeft,
-			autoselect = false,
-			autofocus = false,
+			iconLabel,
+			autoSelect = false,
+			autoFocus = false,
 			defaultValue,
+			maxLength,
 			placeholder,
 			onComplete,
 			onValueChange,
@@ -55,10 +70,13 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 			shouldManuallyMaintainScrollPositionWhenFocused = false,
 			children,
 			value,
+			'data-testid': dataTestId,
+			disabled,
+			'aria-label': ariaLabel,
 		},
 		ref
 	) {
-		const editor = useEditor()
+		const editor = useMaybeEditor()
 		const rInputRef = React.useRef<HTMLInputElement>(null)
 
 		// combine rInputRef and ref
@@ -66,47 +84,48 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 
 		const msg = useTranslation()
 		const rInitialValue = React.useRef<string>(defaultValue ?? '')
-		const rCurrentValue = React.useRef<string>(defaultValue ?? '')
+
+		const isComposing = React.useRef(false)
 
 		const [isFocused, setIsFocused] = React.useState(false)
 		const handleFocus = React.useCallback(
 			(e: React.FocusEvent<HTMLInputElement>) => {
 				setIsFocused(true)
-				const elm = e.currentTarget as HTMLInputElement
-				rCurrentValue.current = elm.value
-				requestAnimationFrame(() => {
-					if (autoselect) {
-						elm.select()
-					}
-				})
+				const elm = e.currentTarget
+				if (autoSelect) {
+					requestFrame(editor, () => elm.select())
+				}
 				onFocus?.()
 			},
-			[autoselect, onFocus]
+			[autoSelect, editor, onFocus]
 		)
 
 		const handleChange = React.useCallback(
 			(e: React.ChangeEvent<HTMLInputElement>) => {
-				const value = e.currentTarget.value
-				rCurrentValue.current = value
-				onValueChange?.(value)
+				onValueChange?.(e.currentTarget.value)
 			},
 			[onValueChange]
 		)
 
-		const handleKeyUp = React.useCallback(
+		// We use keydown capture, because we want to get the escape key event.
+		const handleKeyDownCapture = React.useCallback(
 			(e: React.KeyboardEvent<HTMLInputElement>) => {
 				switch (e.key) {
 					case 'Enter': {
+						// In Chrome, if the user presses the Enter key while using the IME and calls
+						// `e.currentTarget.blur()` in the event callback here, it will trigger an
+						// `onChange` with a duplicated text value.
+						if (isComposing.current) return
 						e.currentTarget.blur()
-						stopEventPropagation(e)
+						e.stopPropagation()
 						onComplete?.(e.currentTarget.value)
 						break
 					}
 					case 'Escape': {
 						e.currentTarget.value = rInitialValue.current
-						e.currentTarget.blur()
-						stopEventPropagation(e)
 						onCancel?.(e.currentTarget.value)
+						e.currentTarget.blur()
+						e.stopPropagation()
 						break
 					}
 				}
@@ -117,53 +136,70 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 		const handleBlur = React.useCallback(
 			(e: React.FocusEvent<HTMLInputElement>) => {
 				setIsFocused(false)
-				const value = e.currentTarget.value
-				onBlur?.(value)
+				onBlur?.(e.currentTarget.value)
 			},
 			[onBlur]
 		)
 
-		React.useEffect(() => {
-			if (!editor.environment.isIos) return
+		const handleCompositionStart = React.useCallback(() => (isComposing.current = true), [])
+		const handleCompositionEnd = React.useCallback(() => (isComposing.current = false), [])
 
-			const visualViewport = window.visualViewport
+		React.useEffect(() => {
+			if (!tlenv.isIos) return undefined
+
+			const win = editor?.getContainerWindow() ?? window
+			const visualViewport = win.visualViewport
 			if (isFocused && shouldManuallyMaintainScrollPositionWhenFocused && visualViewport) {
 				const onViewportChange = () => {
 					rInputRef.current?.scrollIntoView({ block: 'center' })
 				}
 				visualViewport.addEventListener('resize', onViewportChange)
 				visualViewport.addEventListener('scroll', onViewportChange)
-
-				requestAnimationFrame(() => {
-					rInputRef.current?.scrollIntoView({ block: 'center' })
-				})
+				requestFrame(editor, onViewportChange)
 
 				return () => {
 					visualViewport.removeEventListener('resize', onViewportChange)
 					visualViewport.removeEventListener('scroll', onViewportChange)
 				}
 			}
-		}, [editor, isFocused, shouldManuallyMaintainScrollPositionWhenFocused])
+
+			return undefined
+		}, [isFocused, editor, shouldManuallyMaintainScrollPositionWhenFocused])
 
 		return (
 			<div draggable={false} className="tlui-input__wrapper">
 				{children}
 				{label && <label>{msg(label)}</label>}
-				{iconLeft && <TldrawUiIcon icon={iconLeft} className="tlui-icon-left" small />}
+				{iconLeft && (
+					<TldrawUiIcon
+						label={iconLabel ? msg(iconLabel) : ''}
+						icon={iconLeft}
+						className="tlui-icon-left"
+						small
+					/>
+				)}
 				<input
 					ref={rInputRef}
 					className={classNames('tlui-input', className)}
 					type="text"
 					defaultValue={defaultValue}
-					onKeyUp={handleKeyUp}
+					maxLength={maxLength}
+					onKeyDownCapture={handleKeyDownCapture}
 					onChange={handleChange}
 					onFocus={handleFocus}
 					onBlur={handleBlur}
-					autoFocus={autofocus}
+					onCompositionStart={handleCompositionStart}
+					onCompositionEnd={handleCompositionEnd}
+					autoFocus={autoFocus}
+					aria-label={ariaLabel}
 					placeholder={placeholder}
 					value={value}
+					data-testid={dataTestId}
+					disabled={disabled}
 				/>
-				{icon && <TldrawUiIcon icon={icon} small={!!label} />}
+				{icon && (
+					<TldrawUiIcon label={iconLabel ? msg(iconLabel) : ''} icon={icon} small={!!label} />
+				)}
 			</div>
 		)
 	}

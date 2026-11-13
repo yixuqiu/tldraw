@@ -5,34 +5,39 @@ import {
 	MatModel,
 	PageRecordType,
 	StateNode,
-	TLEventHandlers,
 	TLNoteShape,
 	TLPointerEventInfo,
 	TLShape,
 	TLShapePartial,
+	TLTickEventInfo,
 	Vec,
+	bind,
 	compact,
 	isPageId,
-	moveCameraWhenCloseToEdge,
+	kickoutOccludedShapes,
 } from '@tldraw/editor'
 import {
-	NOTE_PIT_RADIUS,
-	NOTE_SIZE,
+	NOTE_ADJACENT_POSITION_SNAP_RADIUS,
 	getAvailableNoteAdjacentPositions,
 } from '../../../shapes/note/noteHelpers'
+import type { NoteShapeUtil } from '../../../shapes/note/NoteShapeUtil'
+import { getDisplayValues } from '../../../shapes/shared/getDisplayValues'
 import { DragAndDropManager } from '../DragAndDropManager'
-import { kickoutOccludedShapes } from '../selectHelpers'
+import { GestureShapeChangeTracker } from '../GestureShapeChangeTracker'
+
+export type TranslatingInfo = TLPointerEventInfo & {
+	target: 'shape'
+	isCreating?: boolean
+	creatingMarkId?: string
+	onCreate?(): void
+	onInteractionEnd?: string | (() => void)
+}
 
 export class Translating extends StateNode {
 	static override id = 'translating'
+	static override trackPerformance = true
 
-	info = {} as TLPointerEventInfo & {
-		target: 'shape'
-		isCreating?: boolean
-		onCreate?: () => void
-		didStartInPit?: boolean
-		onInteractionEnd?: string
-	}
+	info = {} as TranslatingInfo
 
 	selectionSnapshot: TranslatingSnapshot = {} as any
 
@@ -42,19 +47,14 @@ export class Translating extends StateNode {
 
 	isCloning = false
 	isCreating = false
-	onCreate: (shape: TLShape | null) => void = () => void null
+	onCreate?: (shape: TLShape | null) => void
 
 	dragAndDropManager = new DragAndDropManager(this.editor)
 
-	override onEnter = (
-		info: TLPointerEventInfo & {
-			target: 'shape'
-			isCreating?: boolean
-			onCreate?: () => void
-			onInteractionEnd?: string
-		}
-	) => {
-		const { isCreating = false, onCreate = () => void null } = info
+	private changeTracker = new GestureShapeChangeTracker(this.editor)
+
+	override onEnter(info: TranslatingInfo) {
+		const { isCreating = false, creatingMarkId, onCreate } = info
 
 		if (!this.editor.getSelectedShapeIds()?.length) {
 			this.parent.transition('idle')
@@ -62,28 +62,45 @@ export class Translating extends StateNode {
 		}
 
 		this.info = info
-		this.parent.setCurrentToolIdMask(info.onInteractionEnd)
+		if (typeof info.onInteractionEnd === 'string') {
+			this.parent.setCurrentToolIdMask(info.onInteractionEnd)
+		}
 		this.isCreating = isCreating
-		this.onCreate = onCreate
+
+		this.markId = ''
 
 		if (isCreating) {
-			this.markId = `creating:${this.editor.getOnlySelectedShape()!.id}`
+			if (creatingMarkId) {
+				this.markId = creatingMarkId
+			} else {
+				// handle legacy implicit `creating:{shapeId}` marks
+				const markId = this.editor.getMarkIdMatching(
+					`creating:${this.editor.getOnlySelectedShapeId()}`
+				)
+				if (markId) {
+					this.markId = markId
+				}
+			}
 		} else {
-			this.markId = 'translating'
-			this.editor.mark(this.markId)
+			this.markId = this.editor.markHistoryStoppingPoint('translating')
 		}
+
+		this.onCreate = onCreate
 
 		this.isCloning = false
 		this.info = info
 
 		this.editor.setCursor({ type: 'move', rotation: 0 })
+
 		this.selectionSnapshot = getTranslatingSnapshot(this.editor)
+		// Watch for changes made to the moving shapes from outside this interaction.
+		this.changeTracker.start(this.selectionSnapshot.shapeSnapshots.map((s) => s.shape.id))
 
 		// Don't clone on create; otherwise clone on altKey
 		if (!this.isCreating) {
-			if (this.editor.inputs.altKey) {
+			if (this.editor.inputs.getAltKey()) {
 				this.startCloning()
-				return
+				if (this.isCloning) return
 			}
 		}
 
@@ -92,7 +109,8 @@ export class Translating extends StateNode {
 		this.updateShapes()
 	}
 
-	override onExit = () => {
+	override onExit() {
+		this.changeTracker.stop()
 		this.parent.setCurrentToolIdMask(undefined)
 		this.selectionSnapshot = {} as any
 		this.snapshot = {} as any
@@ -101,30 +119,28 @@ export class Translating extends StateNode {
 		this.dragAndDropManager.clear()
 	}
 
-	override onTick = () => {
-		this.dragAndDropManager.updateDroppingNode(
-			this.snapshot.movingShapes,
-			this.updateParentTransforms
-		)
-		moveCameraWhenCloseToEdge(this.editor)
+	override onTick({ elapsed }: TLTickEventInfo) {
+		const { editor } = this
+		if (!editor.inputs.getIsDragging() || editor.inputs.getIsPanning()) return
+		editor.edgeScrollManager.updateEdgeScrolling(elapsed)
 	}
 
-	override onPointerMove = () => {
+	override onPointerMove() {
 		this.updateShapes()
 	}
 
-	override onKeyDown = () => {
-		if (this.editor.inputs.altKey && !this.isCloning) {
+	override onKeyDown() {
+		if (this.editor.inputs.getAltKey() && !this.isCloning) {
 			this.startCloning()
-			return
+			if (this.isCloning) return
 		}
 
 		// need to update in case user pressed a different modifier key
 		this.updateShapes()
 	}
 
-	override onKeyUp: TLEventHandlers['onKeyUp'] = () => {
-		if (!this.editor.inputs.altKey && this.isCloning) {
+	override onKeyUp() {
+		if (!this.editor.inputs.getAltKey() && this.isCloning) {
 			this.stopCloning()
 			return
 		}
@@ -133,29 +149,36 @@ export class Translating extends StateNode {
 		this.updateShapes()
 	}
 
-	override onPointerUp: TLEventHandlers['onPointerUp'] = () => {
+	override onPointerUp() {
 		this.complete()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onComplete() {
 		this.complete()
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onCancel() {
 		this.cancel()
 	}
 
 	protected startCloning() {
 		if (this.isCreating) return
+		const shapeIds = Array.from(this.editor.getSelectedShapeIds())
+
+		// If we can't create the shapes, don't even start cloning
+		if (!this.editor.canCreateShapes(shapeIds)) return
 
 		this.isCloning = true
 		this.reset()
-		this.markId = 'translating'
-		this.editor.mark(this.markId)
+		this.markId = this.editor.markHistoryStoppingPoint('translate cloning')
 
 		this.editor.duplicateShapes(Array.from(this.editor.getSelectedShapeIds()))
 
 		this.snapshot = getTranslatingSnapshot(this.editor)
+		this.changeTracker.setTrackedShapeIds(this.snapshot.shapeSnapshots.map((s) => s.shape.id))
+		// The manager ignores startDraggingShapes while it is running, so it has to be
+		// cleared or it keeps reparenting the originals instead of the clones
+		this.dragAndDropManager.clear()
 		this.handleStart()
 		this.updateShapes()
 	}
@@ -163,103 +186,167 @@ export class Translating extends StateNode {
 	protected stopCloning() {
 		this.isCloning = false
 		this.snapshot = this.selectionSnapshot
+		this.changeTracker.setTrackedShapeIds(this.snapshot.shapeSnapshots.map((s) => s.shape.id))
 		this.reset()
-		this.markId = 'translating'
-		this.editor.mark(this.markId)
+		this.markId = this.editor.markHistoryStoppingPoint('translate')
+		// Same as in startCloning: the manager is still tracking the (now deleted) clones
+		this.dragAndDropManager.clear()
 		this.updateShapes()
 	}
 
 	reset() {
 		this.editor.bailToMark(this.markId)
+		// Bailing restores the shapes to their snapshot positions, so any
+		// previously applied drag offset no longer reflects the current shapes,
+		// and the bail itself isn't an external change to react to.
+		this.snapshot.lastAppliedOffset = null
+		this.changeTracker.clear()
 	}
 
 	protected complete() {
 		this.updateShapes()
 		this.dragAndDropManager.dropShapes(this.snapshot.movingShapes)
+		this.handleEnd()
 		kickoutOccludedShapes(
 			this.editor,
 			this.snapshot.movingShapes.map((s) => s.id)
 		)
-		this.handleEnd()
 
-		if (this.editor.getInstanceState().isToolLocked && this.info.onInteractionEnd) {
-			this.editor.setCurrentTool(this.info.onInteractionEnd)
-		} else {
-			if (this.isCreating) {
-				this.onCreate?.(this.editor.getOnlySelectedShape())
+		const { onInteractionEnd } = this.info
+		if (onInteractionEnd) {
+			if (typeof onInteractionEnd === 'string') {
+				if (this.editor.getInstanceState().isToolLocked) {
+					this.editor.setCurrentTool(onInteractionEnd)
+					return
+				}
 			} else {
-				this.parent.transition('idle')
+				onInteractionEnd()
+				return
 			}
 		}
+
+		// A creating tool that passes no onCreate still needs the interaction to end
+		if (this.isCreating && this.onCreate) {
+			this.onCreate(this.editor.getOnlySelectedShape())
+			return
+		}
+
+		this.parent.transition('idle')
 	}
 
 	private cancel() {
+		// Call onTranslateCancel callback before resetting
+		const { movingShapes } = this.snapshot
+
+		movingShapes.forEach((shape) => {
+			const current = this.editor.getShape(shape.id)
+			if (current) {
+				const util = this.editor.getShapeUtil(shape)
+				util.onTranslateCancel?.(shape, current)
+			}
+		})
+
 		this.reset()
-		if (this.info.onInteractionEnd) {
-			this.editor.setCurrentTool(this.info.onInteractionEnd)
-		} else {
-			this.parent.transition('idle', this.info)
+		const { onInteractionEnd } = this.info
+		if (onInteractionEnd) {
+			if (typeof onInteractionEnd === 'string') {
+				this.editor.setCurrentTool(onInteractionEnd)
+			} else {
+				onInteractionEnd()
+			}
+			return
 		}
+		this.parent.transition('idle', this.info)
 	}
 
 	protected handleStart() {
-		const { movingShapes } = this.snapshot
+		this.changeTracker.ignoreChanges(() => {
+			const { movingShapes } = this.snapshot
 
-		const changes: TLShapePartial[] = []
+			const changes: TLShapePartial[] = []
 
-		movingShapes.forEach((shape) => {
-			const util = this.editor.getShapeUtil(shape)
-			const change = util.onTranslateStart?.(shape)
-			if (change) {
-				changes.push(change)
+			movingShapes.forEach((shape) => {
+				const util = this.editor.getShapeUtil(shape)
+				const change = util.onTranslateStart?.(shape)
+				if (change) {
+					changes.push(change)
+				}
+			})
+
+			if (changes.length > 0) {
+				this.editor.updateShapes(changes)
 			}
+
+			this.dragAndDropManager.startDraggingShapes(
+				// Get fresh shapes from the snapshot, in case onTranslateStart mutates the shape
+				compact(this.snapshot.movingShapes.map((s) => this.editor.getShape(s.id))),
+				// Start from the place where the user started dragging
+				this.editor.inputs.getOriginPagePoint(),
+				this.updateParentTransforms
+			)
+
+			this.editor.setHoveredShape(null)
 		})
-
-		if (changes.length > 0) {
-			this.editor.updateShapes(changes)
-		}
-
-		this.editor.setHoveredShape(null)
 	}
 
 	protected handleEnd() {
-		const { movingShapes } = this.snapshot
+		this.changeTracker.ignoreChanges(() => {
+			const { movingShapes } = this.snapshot
 
-		if (this.isCloning && movingShapes.length > 0) {
-			const currentAveragePagePoint = Vec.Average(
-				movingShapes.map((s) => this.editor.getShapePageTransform(s.id)!.point())
-			)
-			const offset = Vec.Sub(currentAveragePagePoint, this.selectionSnapshot.averagePagePoint)
-			if (!Vec.IsNaN(offset)) {
-				this.editor.updateInstanceState({
-					duplicateProps: {
-						shapeIds: movingShapes.map((s) => s.id),
-						offset: { x: offset.x, y: offset.y },
-					},
-				})
+			if (this.isCloning && movingShapes.length > 0) {
+				const currentAveragePagePoint = Vec.Average(
+					movingShapes.map((s) => this.editor.getShapePageTransform(s.id)!.point())
+				)
+				const offset = Vec.Sub(currentAveragePagePoint, this.selectionSnapshot.averagePagePoint)
+				if (!Vec.IsNaN(offset)) {
+					this.editor.updateInstanceState({
+						duplicateProps: {
+							shapeIds: movingShapes.map((s) => s.id),
+							offset: { x: offset.x, y: offset.y },
+						},
+					})
+				}
 			}
-		}
 
-		const changes: TLShapePartial[] = []
+			const changes: TLShapePartial[] = []
 
-		movingShapes.forEach((shape) => {
-			const current = this.editor.getShape(shape.id)!
-			const util = this.editor.getShapeUtil(shape)
-			const change = util.onTranslateEnd?.(shape, current)
-			if (change) {
-				changes.push(change)
+			movingShapes.forEach((shape) => {
+				const current = this.editor.getShape(shape.id)
+				if (!current) return
+				const util = this.editor.getShapeUtil(shape)
+				const change = util.onTranslateEnd?.(shape, current)
+				if (change) {
+					changes.push(change)
+				}
+			})
+
+			if (changes.length > 0) {
+				this.editor.updateShapes(changes)
 			}
 		})
-
-		if (changes.length > 0) {
-			this.editor.updateShapes(changes)
-		}
 	}
 
 	protected updateShapes() {
+		this.changeTracker.ignoreChanges(this.updateShapesIgnoringExternalChanges)
+	}
+
+	@bind
+	private updateShapesIgnoringExternalChanges() {
+		this.rescueShapesWithDeletedParents()
+
+		// Otherwise the stale translation snapshot would overwrite an external change.
+		if (this.changeTracker.getAndClearChanged()) {
+			this.foldExternalChangesIntoSnapshot()
+		}
+
 		const { snapshot } = this
 
-		this.dragAndDropManager.updateDroppingNode(snapshot.movingShapes, this.updateParentTransforms)
+		// We should have started already, but hey
+		this.dragAndDropManager.startDraggingShapes(
+			snapshot.movingShapes,
+			this.editor.inputs.getOriginPagePoint(),
+			this.updateParentTransforms
+		)
 
 		moveShapesToPoint({
 			editor: this.editor,
@@ -271,7 +358,9 @@ export class Translating extends StateNode {
 		const changes: TLShapePartial[] = []
 
 		movingShapes.forEach((shape) => {
-			const current = this.editor.getShape(shape.id)!
+			// Shapes can be deleted mid-drag (remote user, undo)
+			const current = this.editor.getShape(shape.id)
+			if (!current) return
 			const util = this.editor.getShapeUtil(shape)
 			const change = util.onTranslate?.(shape, current)
 			if (change) {
@@ -284,17 +373,74 @@ export class Translating extends StateNode {
 		}
 	}
 
-	protected updateParentTransforms = () => {
+	// Re-anchor each shape's snapshot origin onto its current position after an
+	// external change, so the `snapshot + offset` math in `moveShapesToPoint`
+	// continues from the changed position without jumping. We only need to fold
+	// in position: translation never writes rotation, so an external rotation is
+	// already preserved (it just moves the shape's page point, which we capture
+	// here). The rest of the snapshot (note context, snap points, bounds) is left
+	// as it was at drag start, which is a good-enough reference for the rare case
+	// where something changes the shapes mid-drag.
+	private foldExternalChangesIntoSnapshot() {
+		const { editor, snapshot } = this
+		const offset = snapshot.lastAppliedOffset ?? new Vec()
+
+		for (const shapeSnapshot of snapshot.shapeSnapshots) {
+			const pageTransform = editor.getShapePageTransform(shapeSnapshot.shape.id)
+			if (!pageTransform) continue
+			const live = pageTransform.point()
+			// After this, `pagePoint + offset === live`, so re-applying the offset
+			// keeps the shape where it is now.
+			shapeSnapshot.pagePoint.x = live.x - offset.x
+			shapeSnapshot.pagePoint.y = live.y - offset.y
+			shapeSnapshot.pageRotation = pageTransform.rotation()
+		}
+	}
+
+	// A shape's x/y are relative to its parent, so a parent that disappears mid-drag
+	// (a remote user or an undo deletes the frame we're dragging over) leaves the shape
+	// describing its position in a space that no longer exists. Nothing downstream can
+	// tell: `getShapePageTransform` falls back to the identity matrix for a missing
+	// parent, so the frame-local x/y get read as page coordinates and the shape jumps by
+	// the frame's offset. The snapshot still holds the parent's last transform, so use it
+	// to put the shape back on the page exactly where it was.
+	private rescueShapesWithDeletedParents() {
+		const { editor } = this
+
+		for (const shapeSnapshot of this.snapshot.shapeSnapshots) {
+			const shape = editor.getShape(shapeSnapshot.shape.id)
+			if (!shape || isPageId(shape.parentId) || editor.getShape(shape.parentId)) continue
+
+			// Inverse, because the snapshot stores the parent's transform already inverted
+			const parentPageTransform = shapeSnapshot.parentTransform
+				? Mat.From(Mat.Inverse(shapeSnapshot.parentTransform))
+				: Mat.Identity()
+			const pagePoint = parentPageTransform.applyToPoint(shape)
+
+			editor.reparentShapes([shape], editor.getCurrentPageId())
+			editor.updateShape({
+				id: shape.id,
+				type: shape.type,
+				x: pagePoint.x,
+				y: pagePoint.y,
+				rotation: shape.rotation + parentPageTransform.rotation(),
+			})
+			shapeSnapshot.parentTransform = null
+		}
+	}
+
+	@bind
+	protected updateParentTransforms() {
+		this.rescueShapesWithDeletedParents()
+
 		const {
 			editor,
 			snapshot: { shapeSnapshots },
 		} = this
-		const movingShapes: TLShape[] = []
 
 		shapeSnapshots.forEach((shapeSnapshot) => {
 			const shape = editor.getShape(shapeSnapshot.shape.id)
-			if (!shape) return null
-			movingShapes.push(shape)
+			if (!shape) return
 
 			const parentTransform = isPageId(shape.parentId)
 				? null
@@ -353,15 +499,14 @@ function getTranslatingSnapshot(editor: Editor) {
 	}
 
 	let noteAdjacentPositions: Vec[] | undefined
-	let noteSnapshot: MovingShapeSnapshot | undefined
+	let noteSnapshot: (MovingShapeSnapshot & { shape: TLNoteShape }) | undefined
+	let noteCenterOffset: Vec | undefined
 
-	const { originPagePoint } = editor.inputs
+	const originPagePoint = editor.inputs.getOriginPagePoint()
 
 	const allHoveredNotes = shapeSnapshots.filter(
-		(s) =>
-			editor.isShapeOfType<TLNoteShape>(s.shape, 'note') &&
-			editor.isPointInShape(s.shape, originPagePoint)
-	)
+		(s) => editor.isShapeOfType(s.shape, 'note') && editor.isPointInShape(s.shape, originPagePoint)
+	) as (MovingShapeSnapshot & { shape: TLNoteShape })[]
 
 	if (allHoveredNotes.length === 0) {
 		// noop
@@ -380,11 +525,17 @@ function getTranslatingSnapshot(editor: Editor) {
 	}
 
 	if (noteSnapshot) {
-		noteAdjacentPositions = getAvailableNoteAdjacentPositions(
-			editor,
-			noteSnapshot.pageRotation,
-			(noteSnapshot.shape as TLNoteShape).props.growY ?? 0
-		)
+		const noteUtil = editor.getShapeUtil(noteSnapshot.shape) as NoteShapeUtil
+		const dv = getDisplayValues(noteUtil, noteSnapshot.shape)
+		noteAdjacentPositions = getAvailableNoteAdjacentPositions(editor, {
+			rotation: noteSnapshot.pageRotation,
+			scale: noteSnapshot.shape.props.scale,
+			extraHeight: noteSnapshot.shape.props.growY ?? 0,
+			noteWidth: dv.noteWidth,
+			noteHeight: dv.noteHeight,
+			excludeShapeIds: selectedShapeIds,
+		})
+		noteCenterOffset = new Vec(dv.noteWidth / 2, dv.noteHeight / 2)
 	}
 
 	return {
@@ -395,6 +546,10 @@ function getTranslatingSnapshot(editor: Editor) {
 		initialSnapPoints,
 		noteAdjacentPositions,
 		noteSnapshot,
+		noteCenterOffset,
+		// The page-space offset most recently applied to the snapshot shapes by
+		// `moveShapesToPoint`, used to detect external changes to the shapes.
+		lastAppliedOffset: null as Vec | null,
 	}
 }
 
@@ -419,19 +574,23 @@ export function moveShapesToPoint({
 	const {
 		noteSnapshot,
 		noteAdjacentPositions,
+		noteCenterOffset,
 		initialPageBounds,
 		initialSnapPoints,
 		shapeSnapshots,
 		averagePagePoint,
 	} = snapshot
 
+	const shiftKey = editor.inputs.getShiftKey()
+	const accelKey = editor.inputs.getAccelKey()
+
 	const isGridMode = editor.getInstanceState().isGridMode
 
 	const gridSize = editor.getDocumentSettings().gridSize
 
-	const delta = Vec.Sub(inputs.currentPagePoint, inputs.originPagePoint)
+	const delta = Vec.Sub(inputs.getCurrentPagePoint(), inputs.getOriginPagePoint())
 
-	const flatten: 'x' | 'y' | null = editor.inputs.shiftKey
+	const flatten: 'x' | 'y' | null = shiftKey
 		? Math.abs(delta.x) < Math.abs(delta.y)
 			? 'x'
 			: 'y'
@@ -447,8 +606,9 @@ export function moveShapesToPoint({
 	editor.snaps.clearIndicators()
 
 	// If the user isn't moving super quick
-	const isSnapping = editor.user.getIsSnapMode() ? !inputs.ctrlKey : inputs.ctrlKey
-	if (isSnapping && editor.inputs.pointerVelocity.len() < 0.5) {
+	const isSnapping = editor.user.getIsSnapMode() ? !accelKey : accelKey
+	let snappedToPit = false
+	if (isSnapping && editor.inputs.getPointerVelocity().len() < 0.5) {
 		// snapping
 		const { nudge } = editor.snaps.shapeBounds.snapTranslateShapes({
 			dragDelta: delta,
@@ -460,20 +620,23 @@ export function moveShapesToPoint({
 		delta.add(nudge)
 	} else {
 		// for sticky notes, snap to grid position next to other notes
-		if (noteSnapshot && noteAdjacentPositions) {
-			let min = NOTE_PIT_RADIUS / editor.getZoomLevel() // in screen space
+		if (noteSnapshot && noteAdjacentPositions && noteCenterOffset) {
+			const { scale } = noteSnapshot.shape.props
+			const pageCenter = noteSnapshot.pagePoint
+				.clone()
+				.add(delta)
+				// use the middle of the note, disregarding extra height
+				.add(noteCenterOffset.clone().mul(scale).rot(noteSnapshot.pageRotation))
+
+			// Find the pit with the center closest to the put center
+			let min = NOTE_ADJACENT_POSITION_SNAP_RADIUS / editor.getZoomLevel() // in screen space
 			let offset = new Vec(0, 0)
-
-			const pageCenter = Vec.Add(
-				Vec.Add(noteSnapshot.pagePoint, delta),
-				new Vec(NOTE_SIZE / 2, NOTE_SIZE / 2).rot(noteSnapshot.pageRotation)
-			)
-
 			for (const pit of noteAdjacentPositions) {
 				// We've already filtered pits with the same page rotation
 				const deltaToPit = Vec.Sub(pageCenter, pit)
 				const dist = deltaToPit.len()
 				if (dist < min) {
+					snappedToPit = true
 					min = dist
 					offset = deltaToPit
 				}
@@ -485,11 +648,15 @@ export function moveShapesToPoint({
 
 	const averageSnappedPoint = Vec.Add(averagePagePoint, delta)
 
-	if (isGridMode && !inputs.ctrlKey) {
+	// we don't want to snap to the grid if we're holding the accel key, if we've already snapped into a pit, or if we're showing snapping indicators
+	const snapIndicators = editor.snaps.getIndicators()
+	if (isGridMode && !accelKey && !snappedToPit && snapIndicators.length === 0) {
 		averageSnappedPoint.snapToGrid(gridSize)
 	}
 
 	const averageSnap = Vec.Sub(averageSnappedPoint, averagePagePoint)
+
+	snapshot.lastAppliedOffset = averageSnap
 
 	editor.updateShapes(
 		compact(

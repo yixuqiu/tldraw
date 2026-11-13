@@ -1,12 +1,16 @@
 import { TLGroupShape, groupShapeMigrations, groupShapeProps } from '@tldraw/tlschema'
 import { SVGContainer } from '../../../components/SVGContainer'
+import { defineMessages, translateMessage } from '../../../config/TLI18n'
 import { Geometry2d } from '../../../primitives/geometry/Geometry2d'
 import { Group2d } from '../../../primitives/geometry/Group2d'
-import { Polygon2d } from '../../../primitives/geometry/Polygon2d'
-import { Polyline2d } from '../../../primitives/geometry/Polyline2d'
 import { Rectangle2d } from '../../../primitives/geometry/Rectangle2d'
-import { ShapeUtil, TLOnChildrenChangeHandler } from '../ShapeUtil'
+import { ShapeUtil } from '../ShapeUtil'
+import { getPerfectDashProps } from '../shared/getPerfectDashProps'
 import { DashedOutlineBox } from './DashedOutlineBox'
+
+const messages = defineMessages({
+	name: { id: 'a11y.shape-group', defaultMessage: 'Group' },
+})
 
 /** @public */
 export class GroupShapeUtil extends ShapeUtil<TLGroupShape> {
@@ -14,9 +18,30 @@ export class GroupShapeUtil extends ShapeUtil<TLGroupShape> {
 	static override props = groupShapeProps
 	static override migrations = groupShapeMigrations
 
-	override hideSelectionBoundsFg = () => true
+	// Groups have no tool of their own, so there's no `tool.group` label to fall back on.
+	override getShapeName() {
+		return translateMessage(this.editor.i18n(), messages.name)
+	}
 
-	override canBind = () => false
+	override hideSelectionBoundsFg(shape: TLGroupShape) {
+		return true
+	}
+
+	override canFlip() {
+		return true
+	}
+
+	override canBind() {
+		return false
+	}
+
+	canResize() {
+		return true
+	}
+
+	canResizeChildren() {
+		return true
+	}
 
 	getDefaultProps(): TLGroupShape['props'] {
 		return {}
@@ -28,24 +53,29 @@ export class GroupShapeUtil extends ShapeUtil<TLGroupShape> {
 			return new Rectangle2d({ width: 1, height: 1, isFilled: false })
 		}
 
-		return new Group2d({
-			children: children.map((childId) => {
-				const shape = this.editor.getShape(childId)!
-				const geometry = this.editor.getShapeGeometry(childId)
-				const points = this.editor.getShapeLocalTransform(shape)!.applyToPoints(geometry.vertices)
+		// A child id can outlive its record. The children index and the geometry cache are separate
+		// derivations, so inside a transaction that removes a child the index can still name it while
+		// `getShapeGeometry` already answers nothing — its `!` hides that it returns `undefined` for a
+		// record the store no longer holds. Asserting instead of checking threw a `TypeError` out of a
+		// reactive recompute, where no caller could catch it.
+		const geometries: Geometry2d[] = []
+		for (const childId of children) {
+			const child = this.editor.getShape(childId)
+			if (!child) continue
+			const geometry = this.editor.getShapeGeometry(childId)
+			if (!geometry) continue
+			const transform = this.editor.getShapeLocalTransform(child)
+			if (!transform) continue
+			geometries.push(geometry.transform(transform, { isLabel: false }))
+		}
 
-				if (geometry.isClosed) {
-					return new Polygon2d({
-						points,
-						isFilled: true,
-					})
-				}
+		// Every child resolved to nothing, so there is no meaningful extent to report. Matches the
+		// no-children case above rather than building an empty `Group2d`, whose bounds are `NaN`.
+		if (geometries.length === 0) {
+			return new Rectangle2d({ width: 1, height: 1, isFilled: false })
+		}
 
-				return new Polyline2d({
-					points,
-				})
-			}),
-		})
+		return new Group2d({ children: geometries })
 	}
 
 	component(shape: TLGroupShape) {
@@ -55,9 +85,7 @@ export class GroupShapeUtil extends ShapeUtil<TLGroupShape> {
 		const isHintingOtherGroup =
 			hintingShapeIds.length > 0 &&
 			hintingShapeIds.some(
-				(id) =>
-					id !== shape.id &&
-					this.editor.isShapeOfType<TLGroupShape>(this.editor.getShape(id)!, 'group')
+				(id) => id !== shape.id && this.editor.isShapeOfType(this.editor.getShape(id)!, 'group')
 			)
 
 		const isFocused = this.editor.getCurrentPageState().focusedGroupId !== shape.id
@@ -74,19 +102,55 @@ export class GroupShapeUtil extends ShapeUtil<TLGroupShape> {
 		const bounds = this.editor.getShapeGeometry(shape).bounds
 
 		return (
-			<SVGContainer id={shape.id}>
+			<SVGContainer>
 				<DashedOutlineBox className="tl-group" bounds={bounds} />
 			</SVGContainer>
 		)
 	}
 
-	indicator(shape: TLGroupShape) {
-		// Not a class component, but eslint can't tell that :(
+	override getIndicatorPath(shape: TLGroupShape): Path2D {
 		const bounds = this.editor.getShapeGeometry(shape).bounds
-		return <DashedOutlineBox className="" bounds={bounds} />
+		const zoomLevel = this.editor.getEfficientZoomLevel()
+		const path = new Path2D()
+
+		for (const side of bounds.sides) {
+			const [start, end] = side
+			const length = start.dist(end)
+			if (length <= 0) continue
+
+			const { strokeDasharray, strokeDashoffset } = getPerfectDashProps(length, 1 / zoomLevel, {
+				style: 'dashed',
+				lengthRatio: 4,
+			})
+
+			if (strokeDasharray === 'none') {
+				path.moveTo(start.x, start.y)
+				path.lineTo(end.x, end.y)
+				continue
+			}
+
+			const [dashLength, gapLength] = strokeDasharray.split(' ').map(Number)
+			const dashOffset = Number(strokeDashoffset)
+			const period = dashLength + gapLength
+			if (!Number.isFinite(period) || period <= 0) continue
+
+			const dx = (end.x - start.x) / length
+			const dy = (end.y - start.y) / length
+
+			for (let dashStart = -dashOffset; dashStart < length; dashStart += period) {
+				const dashEnd = Math.min(length, dashStart + dashLength)
+				const clippedDashStart = Math.max(0, dashStart)
+				if (dashEnd <= clippedDashStart) continue
+
+				path.moveTo(start.x + dx * clippedDashStart, start.y + dy * clippedDashStart)
+				path.lineTo(start.x + dx * dashEnd, start.y + dy * dashEnd)
+			}
+		}
+
+		return path
 	}
 
-	override onChildrenChange: TLOnChildrenChangeHandler<TLGroupShape> = (group) => {
+	override onChildrenChange(group: TLGroupShape) {
 		const children = this.editor.getSortedChildIdsForParent(group.id)
 		if (children.length === 0) {
 			if (this.editor.getCurrentPageState().focusedGroupId === group.id) {
@@ -98,7 +162,7 @@ export class GroupShapeUtil extends ShapeUtil<TLGroupShape> {
 			if (this.editor.getCurrentPageState().focusedGroupId === group.id) {
 				this.editor.popFocusedGroupId()
 			}
-			this.editor.reparentShapes(children, group.parentId)
+			this.editor.reparentShapes(children, group.parentId, group.index)
 			this.editor.deleteShapes([group.id])
 			return
 		}

@@ -1,15 +1,13 @@
 import { useEffect } from 'react'
-import { preventDefault } from '../utils/dom'
+import { elementShouldCaptureKeys, preventDefault } from '../utils/dom'
 import { useEditor } from './useEditor'
-
-const IGNORED_TAGS = ['textarea', 'input']
 
 /**
  * When double tapping with the pencil in iOS, it enables a little zoom window in the UI. We don't
  * want this for drawing operations and can disable it by setting 'disableDoubleTapZoom' in the main
  * editor.
  */
-export function useFixSafariDoubleTapZoomPencilEvents(ref: React.RefObject<HTMLElement>) {
+export function useFixSafariDoubleTapZoomPencilEvents(ref: React.RefObject<HTMLElement | null>) {
 	const editor = useEditor()
 
 	useEffect(() => {
@@ -17,14 +15,14 @@ export function useFixSafariDoubleTapZoomPencilEvents(ref: React.RefObject<HTMLE
 
 		if (!elm) return
 
+		const win = editor.getContainerWindow()
 		const handleEvent = (e: PointerEvent | TouchEvent) => {
-			if (e instanceof PointerEvent && e.pointerType === 'pen') {
-				;(e as any).isKilled = true
+			if (e instanceof win.PointerEvent && e.pointerType === 'pen') {
+				editor.markEventAsHandled(e)
 				const { target } = e
 
-				// Allow events to propagate if the app is editing a shape, or if the event is occurring in a text area or input
 				if (
-					IGNORED_TAGS.includes((target as Element).tagName?.toLocaleLowerCase()) ||
+					elementShouldCaptureKeys(target instanceof win.Element ? target : null, false) ||
 					editor.isIn('select.editing_shape')
 				) {
 					return

@@ -1,8 +1,8 @@
 import { atom } from '@tldraw/state'
 import { getDefaultTranslationLocale } from '@tldraw/tlschema'
-import { getFromLocalStorage, setInLocalStorage, structuredClone } from '@tldraw/utils'
+import { getFromLocalStorage, setInLocalStorage, structuredClone, uniqueId } from '@tldraw/utils'
 import { T } from '@tldraw/validate'
-import { uniqueId } from '../utils/uniqueId'
+import { getGlobalWindow } from '../utils/dom'
 
 const USER_DATA_KEY = 'TLDRAW_USER_DATA_v3'
 
@@ -14,13 +14,20 @@ const USER_DATA_KEY = 'TLDRAW_USER_DATA_v3'
 export interface TLUserPreferences {
 	id: string
 	name?: string | null
-	locale?: string | null
 	color?: string | null
+	// N.B. These are duplicated in TLdrawAppUser.
+	locale?: string | null
 	animationSpeed?: number | null
+	areKeyboardShortcutsEnabled?: boolean | null
 	edgeScrollSpeed?: number | null
-	isDarkMode?: boolean | null
+	colorScheme?: 'light' | 'dark' | 'system'
 	isSnapMode?: boolean | null
 	isWrapMode?: boolean | null
+	isDynamicSizeMode?: boolean | null
+	isPasteAtCursorMode?: boolean | null
+	enhancedA11yMode?: boolean | null
+	inputMode?: 'trackpad' | 'mouse' | null
+	isZoomDirectionInverted?: boolean | null
 }
 
 interface UserDataSnapshot {
@@ -34,16 +41,24 @@ interface UserChangeBroadcastMessage {
 	data: UserDataSnapshot
 }
 
-const userTypeValidator: T.Validator<TLUserPreferences> = T.object<TLUserPreferences>({
+/** @public */
+export const userTypeValidator: T.Validator<TLUserPreferences> = T.object<TLUserPreferences>({
 	id: T.string,
 	name: T.string.nullable().optional(),
-	locale: T.string.nullable().optional(),
 	color: T.string.nullable().optional(),
-	isDarkMode: T.boolean.nullable().optional(),
+	// N.B. These are duplicated in TLdrawAppUser.
+	locale: T.string.nullable().optional(),
 	animationSpeed: T.number.nullable().optional(),
+	areKeyboardShortcutsEnabled: T.boolean.nullable().optional(),
 	edgeScrollSpeed: T.number.nullable().optional(),
+	colorScheme: T.literalEnum('light', 'dark', 'system').optional(),
 	isSnapMode: T.boolean.nullable().optional(),
 	isWrapMode: T.boolean.nullable().optional(),
+	isDynamicSizeMode: T.boolean.nullable().optional(),
+	isPasteAtCursorMode: T.boolean.nullable().optional(),
+	enhancedA11yMode: T.boolean.nullable().optional(),
+	inputMode: T.literalEnum('trackpad', 'mouse').nullable().optional(),
+	isZoomDirectionInverted: T.boolean.nullable().optional(),
 })
 
 const Versions = {
@@ -52,6 +67,14 @@ const Versions = {
 	MakeFieldsNullable: 3,
 	AddEdgeScrollSpeed: 4,
 	AddExcalidrawSelectMode: 5,
+	AddDynamicSizeMode: 6,
+	AllowSystemColorScheme: 7,
+	AddPasteAtCursor: 8,
+	AddKeyboardShortcuts: 9,
+	AddShowUiLabels: 10,
+	AddPointerPeripheral: 11,
+	RenameShowUiLabelsToEnhancedA11yMode: 12,
+	AddZoomDirectionInverted: 13,
 } as const
 
 const CURRENT_VERSION = Math.max(...Object.values(Versions))
@@ -71,6 +94,39 @@ function migrateSnapshot(data: { version: number; user: any }) {
 	}
 	if (data.version < Versions.AddExcalidrawSelectMode) {
 		data.user.isWrapMode = false
+	}
+	if (data.version < Versions.AllowSystemColorScheme) {
+		if (data.user.isDarkMode === true) {
+			data.user.colorScheme = 'dark'
+		} else if (data.user.isDarkMode === false) {
+			data.user.colorScheme = 'light'
+		}
+		delete data.user.isDarkMode
+	}
+
+	if (data.version < Versions.AddDynamicSizeMode) {
+		data.user.isDynamicSizeMode = false
+	}
+	if (data.version < Versions.AddPasteAtCursor) {
+		data.user.isPasteAtCursorMode = false
+	}
+	if (data.version < Versions.AddKeyboardShortcuts) {
+		data.user.areKeyboardShortcutsEnabled = true
+	}
+	if (data.version < Versions.AddShowUiLabels) {
+		data.user.showUiLabels = false
+	}
+	if (data.version < Versions.RenameShowUiLabelsToEnhancedA11yMode) {
+		data.user.enhancedA11yMode = data.user.showUiLabels
+		delete data.user.showUiLabels
+	}
+
+	if (data.version < Versions.AddPointerPeripheral) {
+		data.user.inputMode = null
+	}
+
+	if (data.version < Versions.AddZoomDirectionInverted) {
+		data.user.isZoomDirectionInverted = false
 	}
 
 	// finally
@@ -98,37 +154,39 @@ function getRandomColor() {
 }
 
 /** @internal */
-export function userPrefersDarkUI() {
-	if (typeof window === 'undefined') {
-		return false
-	}
-	return window.matchMedia?.('(prefers-color-scheme: dark)')?.matches ?? false
-}
-
-/** @internal */
 export function userPrefersReducedMotion() {
-	if (typeof window === 'undefined') {
-		return false
+	if (typeof window !== 'undefined' && getGlobalWindow().matchMedia) {
+		return getGlobalWindow().matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false
 	}
-	return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false
+
+	return false
 }
 
 /** @public */
 export const defaultUserPreferences = Object.freeze({
-	name: 'New User',
+	name: '',
 	locale: getDefaultTranslationLocale(),
 	color: getRandomColor(),
-	isDarkMode: false,
+
+	// N.B. These are duplicated in TLdrawAppUser.
 	edgeScrollSpeed: 1,
 	animationSpeed: userPrefersReducedMotion() ? 0 : 1,
+	areKeyboardShortcutsEnabled: true,
 	isSnapMode: false,
 	isWrapMode: false,
+	isDynamicSizeMode: false,
+	isPasteAtCursorMode: false,
+	enhancedA11yMode: false,
+	colorScheme: 'light',
+	inputMode: null,
+	isZoomDirectionInverted: false,
 }) satisfies Readonly<Omit<TLUserPreferences, 'id'>>
 
 /** @public */
 export function getFreshUserPreferences(): TLUserPreferences {
 	return {
 		id: uniqueId(),
+		color: getRandomColor(),
 	}
 }
 
@@ -143,18 +201,22 @@ function migrateUserPreferences(userData: unknown): TLUserPreferences {
 
 	const snapshot = structuredClone(userData) as any
 
-	migrateSnapshot(snapshot)
-
 	try {
+		// migration dereferences `user`, which malformed stored data may not have as an object
+		migrateSnapshot(snapshot)
 		return userTypeValidator.validate(snapshot.user)
-	} catch (e) {
+	} catch {
 		return getFreshUserPreferences()
 	}
 }
 
 function loadUserPreferences(): TLUserPreferences {
-	const userData = (JSON.parse(getFromLocalStorage(USER_DATA_KEY) || 'null') ??
-		null) as null | UserDataSnapshot
+	let userData: unknown = null
+	try {
+		userData = JSON.parse(getFromLocalStorage(USER_DATA_KEY) || 'null')
+	} catch {
+		// corrupt stored data is treated as absent rather than blocking the editor from mounting
+	}
 
 	return migrateUserPreferences(userData)
 }
@@ -218,7 +280,7 @@ export function getUserPreferences(): TLUserPreferences {
 	let prefs = globalUserPreferences.get()
 	if (!prefs) {
 		prefs = loadUserPreferences()
-		globalUserPreferences.set(prefs)
+		setUserPreferences(prefs)
 	}
 	return prefs
 }

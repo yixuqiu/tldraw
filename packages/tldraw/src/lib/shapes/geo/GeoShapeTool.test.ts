@@ -51,6 +51,55 @@ describe(GeoShapeTool, () => {
 
 		expect(editor.getCurrentPageShapes().length).toBe(1)
 	})
+
+	it('Creates geo shapes when scaled', () => {
+		editor.setCurrentTool('geo')
+		editor.pointerMove(50, 50)
+		editor.pointerDown()
+		editor.pointerMove(100, 100)
+		editor.pointerUp()
+
+		expect(editor.getLastCreatedShape()).toMatchObject({
+			props: {
+				w: 50,
+				h: 50,
+				scale: 1,
+			},
+		})
+
+		editor.user.updateUserPreferences({ isDynamicSizeMode: true })
+		editor.zoomIn() // 1 -> 2
+
+		editor.setCurrentTool('geo')
+		editor.pointerMove(50, 50)
+		editor.pointerDown()
+		editor.pointerMove(100, 100)
+		editor.pointerUp()
+
+		expect(editor.getLastCreatedShape()).toMatchObject({
+			props: {
+				w: 25,
+				h: 25,
+				scale: 0.5,
+			},
+		})
+
+		editor.zoomOut().zoomOut() // 2 -> 1 -> .5
+
+		editor.setCurrentTool('geo')
+		editor.pointerMove(50, 50)
+		editor.pointerDown()
+		editor.pointerMove(100, 100)
+		editor.pointerUp()
+
+		expect(editor.getLastCreatedShape()).toMatchObject({
+			props: {
+				w: 100,
+				h: 100,
+				scale: 2,
+			},
+		})
+	})
 })
 
 describe('When selecting the tool', () => {
@@ -85,7 +134,7 @@ describe('When in the idle state', () => {
 		editor.pointerMove(100, 100)
 		editor.pointerUp(100, 100)
 
-		editor.keyUp('Enter')
+		editor.keyPress('Enter')
 		editor.expectToBeIn('select.editing_shape')
 	})
 
@@ -160,6 +209,23 @@ describe('When in the pointing state', () => {
 		editor.expectToBeIn('geo.idle')
 		expect(editor.getCurrentPageShapes().length).toBe(1)
 	})
+
+	it('Leaves nothing behind on complete before the pointer is released', () => {
+		editor.setCurrentTool('geo')
+		editor.pointerDown(50, 50)
+		editor.expectToBeIn('geo.pointing')
+		editor.complete()
+		editor.expectToBeIn('geo.idle')
+		expect(editor.getCurrentPageShapes().length).toBe(0)
+	})
+
+	it('Does not create a geo when undo is pressed mid-press', () => {
+		editor.setCurrentTool('geo')
+		editor.pointerDown(50, 50)
+		editor.undo()
+		editor.expectToBeIn('geo.idle')
+		expect(editor.getCurrentPageShapes().length).toBe(0)
+	})
 })
 
 describe('When in the resizing state while creating a geo shape', () => {
@@ -178,6 +244,17 @@ describe('When in the resizing state while creating a geo shape', () => {
 		editor.pointerMove(100, 100)
 		editor.pointerUp(100, 100)
 		editor.expectToBeIn('select.idle')
+	})
+
+	it('Removes the pending geo shape when another tool is selected mid-drag', () => {
+		editor.setCurrentTool('geo')
+		editor.pointerDown(50, 50)
+		editor.pointerMove(100, 100)
+		editor.expectToBeIn('select.resizing')
+		expect(editor.getCurrentPageShapes().length).toBe(1)
+		editor.setCurrentTool('draw')
+		editor.expectToBeIn('draw.idle')
+		expect(editor.getCurrentPageShapes().length).toBe(0)
 	})
 
 	it('Returns to geo.idle on complete if tool lock is enabled', () => {

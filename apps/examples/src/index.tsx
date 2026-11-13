@@ -1,5 +1,7 @@
 import { getAssetUrlsByMetaUrl } from '@tldraw/assets/urls'
+import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { Helmet, HelmetProvider } from 'react-helmet-async'
 import { RouterProvider, createBrowserRouter } from 'react-router-dom'
 import {
 	DefaultErrorFallback,
@@ -9,10 +11,11 @@ import {
 } from 'tldraw'
 import { ExamplePage } from './ExamplePage'
 import { examples } from './examples'
+import { ExampleWrapper } from './ExampleWrapper'
 import Develop from './misc/develop'
 import EndToEnd from './misc/end-to-end'
 
-// This example is only used for end to end tests
+const ENABLE_STRICT_MODE = false
 
 // we use secret internal `setDefaultAssetUrls` functions to set these at the
 // top-level so assets don't need to be passed down in every single example.
@@ -20,8 +23,8 @@ const assetUrls = getAssetUrlsByMetaUrl()
 setDefaultEditorAssetUrls(assetUrls)
 setDefaultUiAssetUrls(assetUrls)
 const gettingStartedExamples = examples.find((e) => e.id === 'Getting started')
-if (!gettingStartedExamples) throw new Error('Could not find getting started exmaples')
-const basicExample = gettingStartedExamples.value.find((e) => e.title === 'Tldraw component')
+if (!gettingStartedExamples) throw new Error('Could not find getting started examples')
+const basicExample = gettingStartedExamples.value[0]
 if (!basicExample) throw new Error('Could not find initial example')
 
 const router = createBrowserRouter([
@@ -36,7 +39,7 @@ const router = createBrowserRouter([
 			return {
 				element: (
 					<ExamplePage example={basicExample}>
-						<Component />
+						<ExampleWrapper example={basicExample} component={Component} />
 					</ExamplePage>
 				),
 			}
@@ -50,6 +53,20 @@ const router = createBrowserRouter([
 		path: 'end-to-end',
 		lazy: async () => ({ element: <EndToEnd /> }),
 	},
+	{
+		path: 'libraries',
+		lazy: async () => {
+			const { default: Libraries } = await import('./misc/libraries')
+			return { element: <Libraries /> }
+		},
+	},
+	{
+		path: 'libraries-stress',
+		lazy: async () => {
+			const { default: LibrariesStress } = await import('./misc/libraries-stress')
+			return { element: <LibrariesStress /> }
+		},
+	},
 	...examples.flatMap((exampleArray) =>
 		exampleArray.value.flatMap((example) => [
 			{
@@ -58,9 +75,11 @@ const router = createBrowserRouter([
 					const Component = await example.loadComponent()
 					return {
 						element: (
-							<ExamplePage example={example}>
-								<Component />
-							</ExamplePage>
+							<NoIndex>
+								<ExamplePage example={example}>
+									<ExampleWrapper example={example} component={Component} />
+								</ExamplePage>
+							</NoIndex>
 						),
 					}
 				},
@@ -70,7 +89,11 @@ const router = createBrowserRouter([
 				lazy: async () => {
 					const Component = await example.loadComponent()
 					return {
-						element: <Component />,
+						element: (
+							<NoIndex>
+								<ExampleWrapper example={example} component={Component} />
+							</NoIndex>
+						),
 					}
 				},
 			},
@@ -78,15 +101,46 @@ const router = createBrowserRouter([
 	),
 ])
 
+function NoIndex({ children }: { children: React.ReactNode }) {
+	return (
+		<>
+			<Helmet>
+				<meta name="robots" content="noindex, noimageindex, nofollow" />
+			</Helmet>
+			{children}
+		</>
+	)
+}
+
 document.addEventListener('DOMContentLoaded', () => {
 	const rootElement = document.getElementById('root')!
 	const root = createRoot(rootElement!)
-	root.render(
+	const main = (
 		<ErrorBoundary
 			fallback={(error) => <DefaultErrorFallback error={error} />}
 			onError={(error) => console.error(error)}
 		>
-			<RouterProvider router={router} />
+			<HelmetProvider>
+				<RootMeta />
+				<RouterProvider router={router} />
+			</HelmetProvider>
 		</ErrorBoundary>
 	)
+	root.render(ENABLE_STRICT_MODE ? <StrictMode>{main}</StrictMode> : main)
 })
+
+function RootMeta() {
+	return (
+		<Helmet>
+			<title>tldraw examples</title>
+			<meta
+				name="keywords"
+				content="tldraw, examples, whiteboard, react, collaborative whiteboard, online drawing, team collboration, react, library"
+			/>
+			<meta
+				name="description"
+				content="Examples for using tldraw - a library for building infinite canvases with React. "
+			/>
+		</Helmet>
+	)
+}

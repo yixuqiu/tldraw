@@ -1,13 +1,13 @@
-import { useValue } from '@tldraw/state'
-import { TLInstancePresence } from '@tldraw/tlschema'
+import { useValue } from '@tldraw/state-react'
+import { TLInstancePresence, TLUserId } from '@tldraw/tlschema'
 import { useEditor } from './useEditor'
 
 // TODO: maybe move this to a computed property on the App class?
 /**
- * @returns The list of peer UserIDs
- * @internal
+ * @returns The latest presence of the user matching userId
+ * @public
  */
-export function usePresence(userId: string): TLInstancePresence | null {
+export function usePresence(userId: TLUserId): TLInstancePresence | null {
 	const editor = useEditor()
 
 	const latestPresence = useValue(
@@ -15,7 +15,7 @@ export function usePresence(userId: string): TLInstancePresence | null {
 		() => {
 			return editor.getCollaborators().find((c) => c.userId === userId)
 		},
-		[editor]
+		[editor, userId]
 	)
 
 	return latestPresence ?? null

@@ -1,33 +1,28 @@
 {
-	"extends": "../../config/tsconfig.base.json",
+	"extends": "../../internal/config/tsconfig.base.json",
 	"compilerOptions": {
-		"paths": {
-			"@/*": ["./*"]
-		},
-		"lib": ["dom", "dom.iterable", "esnext"],
-		"plugins": [
-			{
-				"name": "next"
-			}
-		],
+		"paths": { "@/*": ["./*"] },
+		"lib": ["DOM", "DOM.Iterable", "ESNext"],
+		"plugins": [{ "name": "next" }],
 		"allowJs": true,
 		"emitDeclarationOnly": false,
 		"noEmit": true,
 		"isolatedModules": true,
-		"jsx": "preserve"
+		"experimentalDecorators": true,
+		"jsx": "preserve",
+		"strictNullChecks": true
 	},
 	"include": [
 		"next-env.d.ts",
 		"**/*.ts",
 		"**/*.tsx",
-		"content.d.ts",
 		".next/types/**/*.ts",
-		"watcher.ts"
+		"watcher.ts",
+		"vitest.config.ts"
 	],
-	"exclude": ["node_modules", ".next"],
+	"exclude": ["node_modules", ".next", "postcss.config.js", "tailwind.config.js"],
 	"references": [
-		{
-			"path": "../../packages/utils"
-		}
+		{ "path": "../../packages/assets" },
+		{ "path": "../../packages/utils" }
 	]
 }

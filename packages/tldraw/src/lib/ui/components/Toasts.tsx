@@ -1,11 +1,18 @@
-import * as T from '@radix-ui/react-toast'
-import * as React from 'react'
+import { defineMessages, TLI18nMessage, useValue } from '@tldraw/editor'
+import { Toast as _Toast } from 'radix-ui'
+import { memo } from 'react'
 import { AlertSeverity, TLUiToast, useToasts } from '../context/toasts'
 import { useTranslation } from '../hooks/useTranslation/useTranslation'
 import { TLUiIconType } from '../icon-types'
 import { TldrawUiButton } from './primitives/Button/TldrawUiButton'
 import { TldrawUiButtonLabel } from './primitives/Button/TldrawUiButtonLabel'
 import { TldrawUiIcon } from './primitives/TldrawUiIcon'
+
+const messages = defineMessages({
+	toastClose: { id: 'toast.close', defaultMessage: 'Close' },
+})
+
+const DEFAULT_TOAST_DURATION = 4000
 
 const SEVERITY_TO_ICON: { [msg in AlertSeverity]: TLUiIconType } = {
 	success: 'check-circle',
@@ -14,7 +21,18 @@ const SEVERITY_TO_ICON: { [msg in AlertSeverity]: TLUiIconType } = {
 	info: 'info-circle',
 }
 
-function Toast({ toast }: { toast: TLUiToast }) {
+/** @internal */
+// Keyed on the severity rather than written at the call site, which used to compose the id from
+// `severity` and so hid all four from the extractor. The `Record` keeps it complete: a new
+// severity won't compile until it has a label.
+const severityMessages: Record<AlertSeverity, TLI18nMessage> = defineMessages({
+	success: { id: 'toast.success', defaultMessage: 'Success' },
+	info: { id: 'toast.info', defaultMessage: 'Info' },
+	warning: { id: 'toast.warning', defaultMessage: 'Warning' },
+	error: { id: 'toast.error', defaultMessage: 'Error' },
+})
+
+function TldrawUiToast({ toast }: { toast: TLUiToast }) {
 	const { removeToast } = useToasts()
 	const msg = useTranslation()
 
@@ -27,95 +45,80 @@ function Toast({ toast }: { toast: TLUiToast }) {
 	const hasActions = toast.actions && toast.actions.length > 0
 
 	const icon = toast.icon || (toast.severity && SEVERITY_TO_ICON[toast.severity])
+	const iconLabel = toast.iconLabel || (toast.severity ? msg(severityMessages[toast.severity]) : '')
 
 	return (
-		<T.Root
+		<_Toast.Root
 			onOpenChange={onOpenChange}
 			className="tlui-toast__container"
-			duration={toast.keepOpen ? Infinity : 5000}
+			duration={toast.keepOpen ? Infinity : DEFAULT_TOAST_DURATION}
 			data-severity={toast.severity}
 		>
 			{icon && (
 				<div className="tlui-toast__icon">
-					<TldrawUiIcon icon={icon} />
+					<TldrawUiIcon label={iconLabel} icon={icon} />
 				</div>
 			)}
-			<div className="tlui-toast__main">
+			<div
+				className="tlui-toast__main"
+				data-title={!!toast.title}
+				data-description={!!toast.description}
+				data-actions={!!toast.actions}
+			>
 				<div className="tlui-toast__content">
-					{toast.title && <T.Title className="tlui-toast__title">{toast.title}</T.Title>}
+					{toast.title && <_Toast.Title className="tlui-toast__title">{toast.title}</_Toast.Title>}
 					{toast.description && (
-						<T.Description className="tlui-toast__description">{toast.description}</T.Description>
+						<_Toast.Description className="tlui-toast__description">
+							{toast.description}
+						</_Toast.Description>
 					)}
 				</div>
 				{toast.actions && (
 					<div className="tlui-toast__actions">
 						{toast.actions.map((action, i) => (
-							<T.Action key={i} altText={action.label} asChild onClick={action.onClick}>
+							<_Toast.Action key={i} altText={action.label} asChild onClick={action.onClick}>
 								<TldrawUiButton type={action.type}>
 									<TldrawUiButtonLabel>{action.label}</TldrawUiButtonLabel>
 								</TldrawUiButton>
-							</T.Action>
+							</_Toast.Action>
 						))}
-						<T.Close asChild>
+						<_Toast.Close asChild>
 							<TldrawUiButton
 								type="normal"
 								className="tlui-toast__close"
 								style={{ marginLeft: 'auto' }}
 							>
-								<TldrawUiButtonLabel>{toast.closeLabel ?? msg('toast.close')}</TldrawUiButtonLabel>
+								<TldrawUiButtonLabel>
+									{toast.closeLabel ?? msg(messages.toastClose)}
+								</TldrawUiButtonLabel>
 							</TldrawUiButton>
-						</T.Close>
+						</_Toast.Close>
 					</div>
 				)}
 			</div>
 			{!hasActions && (
-				<T.Close asChild>
+				<_Toast.Close asChild>
 					<TldrawUiButton type="normal" className="tlui-toast__close">
-						<TldrawUiButtonLabel>{toast.closeLabel ?? msg('toast.close')}</TldrawUiButtonLabel>
+						<TldrawUiButtonLabel>
+							{toast.closeLabel ?? msg(messages.toastClose)}
+						</TldrawUiButtonLabel>
 					</TldrawUiButton>
-				</T.Close>
+				</_Toast.Close>
 			)}
-		</T.Root>
+		</_Toast.Root>
 	)
 }
 
-function _Toasts() {
+/** @public @react */
+export const DefaultToasts = memo(function TldrawUiToasts() {
 	const { toasts } = useToasts()
-
+	const toastsArray = useValue('toasts', () => toasts.get(), [])
 	return (
 		<>
-			{toasts.map((toast) => (
-				<Toast key={toast.id} toast={toast} />
+			{toastsArray.map((toast) => (
+				<TldrawUiToast key={toast.id} toast={toast} />
 			))}
+			<_Toast.ToastViewport className="tlui-toast__viewport" />
 		</>
 	)
-}
-
-export const Toasts = React.memo(_Toasts)
-
-export function ToastViewport() {
-	const { toasts } = useToasts()
-
-	const [hasToasts, setHasToasts] = React.useState(false)
-
-	React.useEffect(() => {
-		let cancelled = false
-		if (toasts.length) {
-			setHasToasts(true)
-		} else {
-			setTimeout(() => {
-				if (!cancelled) {
-					setHasToasts(false)
-				}
-			}, 1000)
-		}
-
-		return () => {
-			cancelled = true
-		}
-	}, [toasts.length, setHasToasts])
-
-	if (!hasToasts) return null
-
-	return <T.ToastViewport className="tlui-toast__viewport" />
-}
+})

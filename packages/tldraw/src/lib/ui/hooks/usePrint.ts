@@ -1,23 +1,26 @@
-import { uniqueId, useEditor } from '@tldraw/editor'
+import { assert, tlenv, uniqueId, useMaybeEditor } from '@tldraw/editor'
 import { useCallback, useRef } from 'react'
 
 /** @internal */
 export function usePrint() {
-	const editor = useEditor()
+	const editor = useMaybeEditor()
 	const prevPrintEl = useRef<HTMLDivElement | null>(null)
 	const prevStyleEl = useRef<HTMLStyleElement | null>(null)
 
 	return useCallback(
 		async function printSelectionOrPages() {
-			const el = document.createElement('div')
-			const style = document.createElement('style')
+			assert(editor, 'usePrint: editor is required')
+			const doc = editor.getContainerDocument()
+			const win = editor.getContainerWindow()
+			const el = doc.createElement('div')
+			const style = doc.createElement('style')
 
 			// todo: why are these using a ref? this seems like it could be a function rather than a hook
 			const clearElements = (printEl: HTMLDivElement | null, styleEl: HTMLStyleElement | null) => {
 				if (printEl) printEl.innerHTML = ''
-				if (styleEl && document.head.contains(styleEl)) document.head.removeChild(styleEl)
-				if (printEl && document.body.contains(printEl)) {
-					document.body.removeChild(printEl)
+				if (styleEl && doc.head.contains(styleEl)) doc.head.removeChild(styleEl)
+				if (printEl && doc.body.contains(printEl)) {
+					doc.body.removeChild(printEl)
 				}
 			}
 
@@ -129,8 +132,8 @@ export function usePrint() {
 		`
 
 			const beforePrintHandler = () => {
-				document.head.appendChild(style)
-				document.body.appendChild(el)
+				doc.head.appendChild(style)
+				doc.body.appendChild(el)
 			}
 
 			const afterPrintHandler = () => {
@@ -139,8 +142,8 @@ export function usePrint() {
 				})
 			}
 
-			window.addEventListener('beforeprint', beforePrintHandler)
-			window.addEventListener('afterprint', afterPrintHandler)
+			win.addEventListener('beforeprint', beforePrintHandler)
+			win.addEventListener('afterprint', afterPrintHandler)
 
 			function addPageToPrint(title: string, footer: string | null, svg: string) {
 				try {
@@ -161,43 +164,40 @@ export function usePrint() {
 			}
 
 			function triggerPrint() {
-				if (editor.environment.isChromeForIos) {
+				if (tlenv.isChromeForIos) {
 					beforePrintHandler()
-					window.print()
-				} else if (editor.environment.isSafari) {
+					win.print()
+				} else if (tlenv.isSafari) {
 					beforePrintHandler()
-					// eslint-disable-next-line deprecation/deprecation
-					document.execCommand('print', false)
+					// eslint-disable-next-line @typescript-eslint/no-deprecated
+					doc.execCommand('print', false)
 				} else {
-					window.print()
+					win.print()
 				}
 			}
 
 			const selectedShapeIds = editor.getSelectedShapeIds()
-			const currentPageId = editor.getCurrentPageId()
-			const pages = editor.getPages()
-
-			const preserveAspectRatio = 'xMidYMid meet'
 
 			const svgOpts = {
 				scale: 1,
 				background: false,
 				darkMode: false,
-				preserveAspectRatio,
+				preserveAspectRatio: 'xMidYMid meet',
 			}
 
-			if (editor.getSelectedShapeIds().length > 0) {
+			if (selectedShapeIds.length > 0) {
 				// Print the selected ids from the current page
+				const pageName = editor.getCurrentPage().name
 				const svgExport = await editor.getSvgString(selectedShapeIds, svgOpts)
 
 				if (svgExport) {
-					const page = pages.find((p) => p.id === currentPageId)
-					addPageToPrint(`tldraw — ${page?.name}`, null, svgExport.svg)
+					addPageToPrint(`tldraw — ${pageName}`, null, svgExport.svg)
 					triggerPrint()
 				}
 			} else {
 				if (allowAllPages) {
 					// Print all pages
+					const pages = editor.getPages()
 					for (let i = 0; i < pages.length; i++) {
 						const page = pages[i]
 						const svgExport = await editor.getSvgString(
@@ -222,8 +222,8 @@ export function usePrint() {
 				}
 			}
 
-			window.removeEventListener('beforeprint', beforePrintHandler)
-			window.removeEventListener('afterprint', afterPrintHandler)
+			win.removeEventListener('beforeprint', beforePrintHandler)
+			win.removeEventListener('afterprint', afterPrintHandler)
 		},
 		[editor]
 	)

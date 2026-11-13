@@ -1,4 +1,9 @@
-import { createShapeId, TLArrowShape } from '@tldraw/editor'
+import { act, renderHook } from '@testing-library/react'
+import { createShapeId, EditorContext, TLArrowShape } from '@tldraw/editor'
+import { createElement } from 'react'
+import { vi } from 'vitest'
+import { getArrowBindings } from '../../lib/shapes/arrow/shared'
+import { useMenuClipboardEvents } from '../../lib/ui/hooks/useClipboardEvents'
 import { TestEditor } from '../TestEditor'
 
 let editor: TestEditor
@@ -26,13 +31,13 @@ const doMockClipboard = () => {
 
 	Object.assign(window.navigator, {
 		clipboard: {
-			write: jest.fn((content: any) => {
+			write: vi.fn((content: any) => {
 				context.current = content
 			}),
 		},
 	})
 
-	globalThis.ClipboardItem = jest.fn((payload: any) => payload)
+	globalThis.ClipboardItem = vi.fn((payload: any) => payload) as any
 
 	return context
 }
@@ -201,32 +206,36 @@ describe('When copying and pasting', () => {
 	it('creates new bindings for arrows when pasting', async () => {
 		const mockClipboard = doMockClipboard()
 
-		editor.createShapes([
-			{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
-			{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
-			{
-				id: ids.arrow1,
-				type: 'arrow',
-				x: 150,
-				y: 150,
-				props: {
-					start: {
-						type: 'binding',
-						boundShapeId: ids.box1,
-						isExact: false,
+		editor
+			.createShapes([
+				{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
+				{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
+				{ id: ids.arrow1, type: 'arrow', x: 150, y: 150 },
+			])
+			.createBindings([
+				{
+					fromId: ids.arrow1,
+					toId: ids.box1,
+					type: 'arrow',
+					props: {
+						terminal: 'start',
 						normalizedAnchor: { x: 0.5, y: 0.5 },
-						isPrecise: false,
-					},
-					end: {
-						type: 'binding',
-						boundShapeId: ids.box2,
 						isExact: false,
-						normalizedAnchor: { x: 0.5, y: 0.5 },
 						isPrecise: false,
 					},
 				},
-			},
-		])
+				{
+					fromId: ids.arrow1,
+					toId: ids.box2,
+					type: 'arrow',
+					props: {
+						terminal: 'end',
+						normalizedAnchor: { x: 0.5, y: 0.5 },
+						isExact: false,
+						isPrecise: false,
+					},
+				},
+			])
 
 		const shapesBefore = editor.getCurrentPageShapes()
 		editor.selectAll().copy()
@@ -258,11 +267,10 @@ describe('When copying and pasting', () => {
 			...arrow1a,
 			id: arrow1b.id,
 			index: 'a6',
-			props: {
-				...arrow1a.props,
-				start: { ...arrow1a.props.start, boundShapeId: box1b.id },
-				end: { ...arrow1a.props.end, boundShapeId: box2b.id },
-			},
+		})
+		expect(getArrowBindings(editor, arrow1b as TLArrowShape)).toMatchObject({
+			start: { toId: box1b.id },
+			end: { toId: box2b.id },
 		})
 	})
 
@@ -385,34 +393,38 @@ describe('When copying and pasting', () => {
 	it('creates new bindings for arrows when pasting', async () => {
 		const mockClipboard = doMockClipboard()
 
-		editor.createShapes([
-			{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
-			{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
-			{
-				id: ids.arrow1,
-				type: 'arrow',
-				x: 150,
-				y: 150,
-				props: {
-					start: {
-						type: 'binding',
-						boundShapeId: ids.box1,
-						isExact: false,
+		editor
+			.createShapes([
+				{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
+				{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
+				{ id: ids.arrow1, type: 'arrow', x: 150, y: 150 },
+			])
+			.createBindings([
+				{
+					fromId: ids.arrow1,
+					toId: ids.box1,
+					type: 'arrow',
+					props: {
+						terminal: 'start',
 						normalizedAnchor: { x: 0.5, y: 0.5 },
-						isPrecise: false,
-					},
-					end: {
-						type: 'binding',
-						boundShapeId: ids.box2,
 						isExact: false,
-						normalizedAnchor: { x: 0.5, y: 0.5 },
 						isPrecise: false,
 					},
 				},
-			},
-		])
+				{
+					fromId: ids.arrow1,
+					toId: ids.box2,
+					type: 'arrow',
+					props: {
+						terminal: 'end',
+						normalizedAnchor: { x: 0.5, y: 0.5 },
+						isExact: false,
+						isPrecise: false,
+					},
+				},
+			])
 
-		const shapesBefore = editor.getCurrentPageShapes()
+		const shapesBefore = editor.getCurrentPageShapesSorted()
 
 		editor.selectAll().cut()
 
@@ -420,23 +432,16 @@ describe('When copying and pasting', () => {
 		await assertClipboardOfCorrectShape(mockClipboard.current)
 
 		editor.paste()
-		const shapesAfter = editor.getCurrentPageShapes()
+		const shapesAfter = editor.getCurrentPageShapesSorted()
 
 		// The new shapes should match the old shapes, except for their id and the arrow's bindings!
 		expect(shapesAfter.length).toBe(shapesBefore.length)
 		expect(shapesAfter[0]).toMatchObject({ ...shapesBefore[0], id: shapesAfter[0].id })
 		expect(shapesAfter[1]).toMatchObject({ ...shapesBefore[1], id: shapesAfter[1].id })
-		expect(shapesAfter[2]).toMatchObject({
-			...shapesBefore[2],
-			id: shapesAfter[2].id,
-			props: {
-				...shapesBefore[2].props,
-				start: {
-					...(shapesBefore[2] as TLArrowShape).props.start,
-					boundShapeId: shapesAfter[0].id,
-				},
-				end: { ...(shapesBefore[2] as TLArrowShape).props.end, boundShapeId: shapesAfter[1].id },
-			},
+		expect(shapesAfter[2]).toMatchObject({ ...shapesBefore[2], id: shapesAfter[2].id })
+		expect(getArrowBindings(editor, shapesAfter[2] as TLArrowShape)).toMatchObject({
+			start: { toId: shapesAfter[0].id },
+			end: { toId: shapesAfter[1].id },
 		})
 	})
 
@@ -477,5 +482,37 @@ describe('When copying and pasting', () => {
 		const pastedPoint = { x: pastedShape.x, y: pastedShape.y }
 
 		expect(pastedPoint).toMatchObject({ x: 150, y: 150 }) // center of group
+	})
+})
+
+describe('When cutting', () => {
+	function renderCut() {
+		const { result } = renderHook(() => useMenuClipboardEvents(), {
+			wrapper: ({ children }) => createElement(EditorContext.Provider, { value: editor }, children),
+		})
+		return result.current.cut
+	}
+
+	it('marks a history stopping point so undo does not roll back earlier changes', async () => {
+		// the cut writes to the clipboard before it deletes anything
+		Object.assign(window.navigator, { clipboard: { write: vi.fn() } })
+		globalThis.ClipboardItem = class {} as any
+
+		const cut = renderCut()
+		editor.createShape({ id: ids.box1, type: 'geo', x: 0, y: 0 })
+		editor.markHistoryStoppingPoint('rename page')
+		editor.renamePage(editor.getCurrentPageId(), 'My page')
+		editor.select(ids.box1)
+
+		await act(async () => {
+			await cut('menu')
+		})
+		expect(editor.getShape(ids.box1)).toBeUndefined()
+
+		editor.undo()
+
+		// the cut is undone, but the page rename before it is not
+		expect(editor.getShape(ids.box1)).toBeDefined()
+		expect(editor.getCurrentPage().name).toBe('My page')
 	})
 })

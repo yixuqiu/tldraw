@@ -1,41 +1,45 @@
-import { StateNode, TLEventHandlers, TLExitEventHandler, TLGroupShape, Vec } from '@tldraw/editor'
+import {
+	ShapeWithCrop,
+	StateNode,
+	TLClickEventInfo,
+	TLKeyboardEventInfo,
+	TLPointerEventInfo,
+	Vec,
+} from '@tldraw/editor'
 import { getHitShapeOnCanvasPointerDown } from '../../../../selection-logic/getHitShapeOnCanvasPointerDown'
-import { ShapeWithCrop, getTranslateCroppedImageChange } from './crop_helpers'
+import { updateHoveredOverlayId } from '../../../../selection-logic/updateHoveredOverlayId'
+import { getTranslateCroppedImageChange } from './crop_helpers'
 
 export class Idle extends StateNode {
 	static override id = 'idle'
 
-	override onEnter = () => {
+	override onEnter() {
 		this.editor.setCursor({ type: 'default', rotation: 0 })
 
 		const onlySelectedShape = this.editor.getOnlySelectedShape()
 
-		// well this fucking sucks. what the fuck.
-		// it's possible for a user to enter cropping, then undo
-		// (which clears the cropping id) but still remain in this state.
-		this.editor.on('tick', this.cleanupCroppingState)
-
 		if (onlySelectedShape) {
-			this.editor.mark('crop')
 			this.editor.setCroppingShape(onlySelectedShape.id)
 		}
+
+		updateHoveredOverlayId(this.editor)
 	}
 
-	override onExit: TLExitEventHandler = () => {
+	override onExit() {
 		this.editor.setCursor({ type: 'default', rotation: 0 })
-
-		this.editor.off('tick', this.cleanupCroppingState)
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onPointerMove() {
+		updateHoveredOverlayId(this.editor)
+	}
+
+	override onCancel() {
 		this.editor.setCroppingShape(null)
 		this.editor.setCurrentTool('select.idle', {})
 	}
 
-	override onPointerDown: TLEventHandlers['onPointerDown'] = (info) => {
-		if (this.editor.getIsMenuOpen()) return
-
-		if (info.ctrlKey) {
+	override onPointerDown(info: TLPointerEventInfo) {
+		if (info.accelKey) {
 			this.cancel()
 			// feed the event back into the statechart
 			this.editor.root.handleEvent(info)
@@ -44,8 +48,30 @@ export class Idle extends StateNode {
 
 		switch (info.target) {
 			case 'canvas': {
+				// Check overlays first — if we hit a crop/resize handle, re-dispatch
+				const currentPagePoint = this.editor.inputs.getCurrentPagePoint()
+				const hitOverlay = this.editor.overlays.getOverlayAtPoint(
+					currentPagePoint,
+					this.editor.getHitTestMargin()
+				)
+				if (hitOverlay) {
+					const overlayType = hitOverlay.props.overlayType as string | undefined
+					if (
+						overlayType === 'resize_handle' ||
+						overlayType === 'rotate_handle' ||
+						overlayType === 'mobile_rotate'
+					) {
+						this.onPointerDown({
+							...info,
+							target: 'selection',
+							handle: hitOverlay.props.handle as any,
+						})
+						return
+					}
+				}
+
 				const hitShape = getHitShapeOnCanvasPointerDown(this.editor)
-				if (hitShape && !this.editor.isShapeOfType<TLGroupShape>(hitShape, 'group')) {
+				if (hitShape && !this.editor.isShapeOfType(hitShape, 'group')) {
 					this.onPointerDown({
 						...info,
 						shape: hitShape,
@@ -63,17 +89,12 @@ export class Idle extends StateNode {
 				if (info.shape.id === this.editor.getCroppingShapeId()) {
 					this.editor.setCurrentTool('select.crop.pointing_crop', info)
 					return
-				} else {
-					if (this.editor.getShapeUtil(info.shape)?.canCrop(info.shape)) {
-						this.editor.setCroppingShape(info.shape.id)
-						this.editor.setSelectedShapes([info.shape.id])
-						this.editor.setCurrentTool('select.crop.pointing_crop', info)
-					} else {
-						this.cancel()
-						// feed the event back into the statechart
-						this.editor.root.handleEvent(info)
-					}
 				}
+				// Any other shape, croppable or not, ends the crop. Re-dispatching the
+				// event lets the select tool select that shape with the same click
+				// instead of silently moving the crop target onto it (#10760).
+				this.cancel()
+				this.editor.root.handleEvent(info)
 				break
 			}
 			case 'selection': {
@@ -85,27 +106,21 @@ export class Idle extends StateNode {
 					case 'bottom_right_rotate': {
 						this.editor.setCurrentTool('select.pointing_rotate_handle', {
 							...info,
-							onInteractionEnd: 'select.crop',
+							onInteractionEnd: 'select.crop.idle',
 						})
 						break
 					}
 					case 'top':
 					case 'right':
 					case 'bottom':
-					case 'left': {
-						this.editor.setCurrentTool('select.pointing_crop_handle', {
-							...info,
-							onInteractionEnd: 'select.crop',
-						})
-						break
-					}
+					case 'left':
 					case 'top_left':
 					case 'top_right':
 					case 'bottom_left':
 					case 'bottom_right': {
-						this.editor.setCurrentTool('select.pointing_crop_handle', {
+						this.editor.setCurrentTool('select.crop.pointing_crop_handle', {
 							...info,
-							onInteractionEnd: 'select.crop',
+							onInteractionEnd: 'select.crop.idle',
 						})
 						break
 					}
@@ -118,10 +133,10 @@ export class Idle extends StateNode {
 		}
 	}
 
-	override onDoubleClick: TLEventHandlers['onDoubleClick'] = (info) => {
-		// Without this, the double click's "settle" would trigger the reset
+	override onDoubleClick(info: TLClickEventInfo) {
+		// Without this, the double click's settle event would trigger the reset
 		// after the user double clicked the edge to begin cropping
-		if (this.editor.inputs.shiftKey || info.phase !== 'up') return
+		if (this.editor.inputs.getShiftKey() || info.phase !== 'down') return
 
 		const croppingShapeId = this.editor.getCroppingShapeId()
 		if (!croppingShapeId) return
@@ -131,21 +146,52 @@ export class Idle extends StateNode {
 		const util = this.editor.getShapeUtil(shape)
 		if (!util) return
 
-		if (info.target === 'selection') {
-			util.onDoubleClickEdge?.(shape)
+		// Check overlays first — if we hit a resize/rotate handle, re-dispatch
+		// as a selection event so onDoubleClickEdge fires.
+		if (info.target === 'canvas') {
+			const currentPagePoint = this.editor.inputs.getCurrentPagePoint()
+			const hitOverlay = this.editor.overlays.getOverlayAtPoint(
+				currentPagePoint,
+				this.editor.getHitTestMargin()
+			)
+			if (hitOverlay) {
+				const overlayType = hitOverlay.props.overlayType as string | undefined
+				if (
+					overlayType === 'resize_handle' ||
+					overlayType === 'rotate_handle' ||
+					overlayType === 'mobile_rotate'
+				) {
+					this.onDoubleClick({
+						...info,
+						target: 'selection',
+						handle: hitOverlay.props.handle as any,
+					})
+					return
+				}
+			}
 		}
+
+		if (info.target === 'selection') {
+			util.onDoubleClickEdge?.(shape, info)
+			return
+		}
+
+		// If the user double clicks the canvas, we want to cancel cropping,
+		// especially if it's an animated image, we want the image to continue playing.
+		this.cancel()
+		this.editor.root.handleEvent(info)
 	}
 
-	override onKeyDown: TLEventHandlers['onKeyDown'] = () => {
+	override onKeyDown() {
 		this.nudgeCroppingImage(false)
 	}
 
-	override onKeyRepeat: TLEventHandlers['onKeyRepeat'] = () => {
+	override onKeyRepeat() {
 		this.nudgeCroppingImage(true)
 	}
 
-	override onKeyUp: TLEventHandlers['onKeyUp'] = (info) => {
-		switch (info.code) {
+	override onKeyUp(info: TLKeyboardEventInfo) {
+		switch (info.key) {
 			case 'Enter': {
 				this.editor.setCroppingShape(null)
 				this.editor.setCurrentTool('select.idle', {})
@@ -157,12 +203,6 @@ export class Idle extends StateNode {
 	private cancel() {
 		this.editor.setCroppingShape(null)
 		this.editor.setCurrentTool('select.idle', {})
-	}
-
-	private cleanupCroppingState = () => {
-		if (!this.editor.getCroppingShapeId()) {
-			this.editor.setCurrentTool('select.idle', {})
-		}
 	}
 
 	private nudgeCroppingImage(ephemeral = false) {
@@ -196,10 +236,10 @@ export class Idle extends StateNode {
 			if (!ephemeral) {
 				// We don't want to create new marks if the user
 				// is just holding down the arrow keys
-				this.editor.mark('translate crop')
+				this.editor.markHistoryStoppingPoint('translate crop')
 			}
 
-			this.editor.updateShapes<ShapeWithCrop>([partial])
+			this.editor.updateShapes([partial])
 		}
 	}
 }

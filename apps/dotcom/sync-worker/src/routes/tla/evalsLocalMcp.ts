@@ -1,0 +1,340 @@
+import { RoomSnapshot } from '@tldraw/sync-core'
+import { TLComment, TLCommentThread } from '@tldraw/tlschema'
+import { IRequest } from 'itty-router'
+import { Environment } from '../../types'
+import { getDocumentNameFromSnapshot } from '../getDocumentNameFromSnapshot'
+import {
+	APPLY_OPS_TOOL_NAME,
+	BOARD_INFO_TOOL_NAME,
+	BOARD_NOT_FOUND_MESSAGE,
+	BOARD_USERS_TOOL_NAME,
+	CLUSTER_INFO_TOOL_NAME,
+	CLUSTER_SCREENSHOT_TOOL_NAME,
+	CREATE_BOARD_TOOL_NAME,
+	LIST_WORKSPACES_TOOL_NAME,
+	PAGE_INFO_TOOL_NAME,
+	READ_PAGE_COMMENTS_TOOL_NAME,
+	RENAME_BOARD_TOOL_NAME,
+	SEARCH_BOARDS_TOOL_NAME,
+	ShapeMeasurement,
+	WRITE_COMMENT_TOOL_NAME,
+	ToolResult,
+	compareBoardSearchOrder,
+	getBoardInfo,
+	getBoardSearchResults,
+	getClusterInfo,
+	getPageCommentsResult,
+	getPageInfo,
+	handleMcpJsonRpc,
+	isAfterBoardSearchCursor,
+	parseBoardInfoInput,
+	parseClusterInfoInput,
+	parseClusterScreenshotInput,
+	parseCreateBoardInput,
+	parseListWorkspacesInput,
+	parsePageInfoInput,
+	parseReadPageCommentsInput,
+	parseRenameBoardInput,
+	parseSearchBoardsInput,
+	parseWriteCommentInput,
+	pickClusterShapes,
+	readSnapshotPage,
+	resolveSnapshotPage,
+	toolError,
+	toolPageResult,
+	USER_STATE_TOOL_NAME,
+} from './boardTools'
+
+const HARNESS_GAP_MARKER = '[harness-gap]'
+
+// Insertion order is the fixture stand-in for creation time, but a bare index would have every eval
+// board report a 1970 timestamp — and a model reasoning about "my newest board" reads those. Spaced
+// an hour apart from a fixed date rather than from `Date.now()`, so two runs over the same fixtures
+// produce byte-identical results.
+const FIXTURE_CREATED_AT_BASE_MS = Date.UTC(2026, 0, 5, 9, 0, 0)
+const FIXTURE_CREATED_AT_STEP_MS = 60 * 60 * 1000
+
+function fixtureTimestamp(index: number): number {
+	return FIXTURE_CREATED_AT_BASE_MS + index * FIXTURE_CREATED_AT_STEP_MS
+}
+
+interface FixtureBoard {
+	snapshot: RoomSnapshot
+	measurements: Record<string, ShapeMeasurement>
+	shots: Record<string, string>
+}
+
+interface ScreenshotPlanEntry {
+	pageId: string
+	clusterIds: string[]
+	shapeIds: string[]
+}
+
+const sessions = new Map<string, Map<string, FixtureBoard>>()
+
+function notFoundUnlessLocal(env: Environment): Response | null {
+	return env.IS_LOCAL === 'true' ? null : new Response('Not Found', { status: 404 })
+}
+
+function screenshotFileName(clusterIds: string[], theme: 'light' | 'dark') {
+	const key = [...clusterIds]
+		.sort()
+		.join('+')
+		.replace(/[^a-zA-Z0-9+_-]/g, '_')
+	return `${key}.${theme}.png`
+}
+
+function textOf(result: ToolResult): string {
+	const block = result.content.find((part) => part.type === 'text')
+	if (!block || block.type !== 'text') throw new Error('Expected a text tool result')
+	return block.text
+}
+
+export function getEvalsFixtureScreenshotPlan(
+	snapshot: RoomSnapshot,
+	measurements: Record<string, ShapeMeasurement>
+): ScreenshotPlanEntry[] {
+	const pages = JSON.parse(textOf(getBoardInfo(snapshot, null))) as {
+		pages: Array<{ id: string }>
+	}
+	const plan: ScreenshotPlanEntry[] = []
+	for (const page of pages.pages) {
+		const selector = { kind: 'id', id: page.id } as const
+		const listed = readSnapshotPage(snapshot, selector, measurements)
+		if (!listed.ok) continue
+		const info = JSON.parse(textOf(getPageInfo(listed.read))) as {
+			clusters: Array<{ id: string }>
+		}
+		const clusterIds = info.clusters.map((cluster) => cluster.id)
+		const detailed = readSnapshotPage(snapshot, selector, measurements, clusterIds)
+		if (!detailed.ok) continue
+		const sets = [...clusterIds.map((id) => [id]), ...(clusterIds.length > 1 ? [clusterIds] : [])]
+		for (const set of sets) {
+			const picked = pickClusterShapes(detailed.read.details, set, selector)
+			if (!picked.ok || picked.shapeIds.length === 0) continue
+			plan.push({ pageId: page.id, clusterIds: set, shapeIds: picked.shapeIds })
+		}
+	}
+	return plan
+}
+
+export async function planEvalsFixtureScreenshots(
+	request: IRequest,
+	env: Environment
+): Promise<Response> {
+	const unavailable = notFoundUnlessLocal(env)
+	if (unavailable) return unavailable
+	const body = (await request.json()) as {
+		snapshot: RoomSnapshot
+		measurements: Record<string, ShapeMeasurement>
+	}
+	return Response.json({ plan: getEvalsFixtureScreenshotPlan(body.snapshot, body.measurements) })
+}
+
+export async function putEvalsFixtureBoard(request: IRequest, env: Environment): Promise<Response> {
+	const unavailable = notFoundUnlessLocal(env)
+	if (unavailable) return unavailable
+	const board = (await request.json()) as FixtureBoard
+	let session = sessions.get(request.params.sessionId)
+	if (!session) {
+		session = new Map()
+		sessions.set(request.params.sessionId, session)
+	}
+	session.set(request.params.boardId, board)
+	return Response.json({ stored: true }, { status: 201 })
+}
+
+export function deleteEvalsFixtureSession(request: IRequest, env: Environment): Response {
+	const unavailable = notFoundUnlessLocal(env)
+	if (unavailable) return unavailable
+	sessions.delete(request.params.sessionId)
+	return Response.json({ deleted: true })
+}
+
+async function callFixtureTool(
+	name: string,
+	args: unknown,
+	boards: Map<string, FixtureBoard>
+): Promise<ToolResult> {
+	try {
+		switch (name) {
+			case SEARCH_BOARDS_TOOL_NAME: {
+				const { terms, cursor } = parseSearchBoardsInput(args)
+				// The session is the whole "account": every board in it is one the caller owns. Names
+				// come from the snapshot, since a fixture has no `file` row to carry one, and
+				// insertion order stands in for creation order — so ordering and paging behave the
+				// way they do in production without fixtures needing timestamps.
+				const rows = [...boards.entries()]
+					.map(([id, board], index) => ({
+						id,
+						name: getDocumentNameFromSnapshot(board.snapshot) ?? '',
+						// A fixture session is the caller's own account, so every board arrived by being
+						// made here — the two timestamps are the same value, exactly as `createFile` writes
+						// them in production.
+						matched: terms.filter((term) =>
+							(getDocumentNameFromSnapshot(board.snapshot) ?? '')
+								.toLowerCase()
+								.includes(term.toLowerCase())
+						).length,
+						arrivedAt: fixtureTimestamp(index),
+						createdAt: fixtureTimestamp(index),
+						updatedAt: fixtureTimestamp(index),
+						workspaceName: '',
+						source: 'owned' as const,
+					}))
+					.filter((row) => !terms.length || row.matched > 0)
+					.sort(compareBoardSearchOrder)
+					.filter((row) => !cursor || isAfterBoardSearchCursor(row, cursor))
+				return getBoardSearchResults(rows, terms)
+			}
+			case BOARD_INFO_TOOL_NAME: {
+				const { boardId } = parseBoardInfoInput(args)
+				const board = boards.get(boardId)
+				// No file row, so the name comes from the snapshot, as it does for search above.
+				return board ? getBoardInfo(board.snapshot, null) : toolError(BOARD_NOT_FOUND_MESSAGE)
+			}
+			case PAGE_INFO_TOOL_NAME: {
+				const { boardId, page } = parsePageInfoInput(args)
+				const board = boards.get(boardId)
+				if (!board) return toolError(BOARD_NOT_FOUND_MESSAGE)
+				const listed = readSnapshotPage(board.snapshot, page, board.measurements)
+				return listed.ok ? getPageInfo(listed.read) : listed.result
+			}
+			case CLUSTER_INFO_TOOL_NAME: {
+				const { boardId, page, clusterIds, cursor } = parseClusterInfoInput(args)
+				const board = boards.get(boardId)
+				if (!board) return toolError(BOARD_NOT_FOUND_MESSAGE)
+				const read = readSnapshotPage(board.snapshot, page, board.measurements, clusterIds)
+				return read.ok ? getClusterInfo(read.read, clusterIds, page, cursor).result : read.result
+			}
+			case CLUSTER_SCREENSHOT_TOOL_NAME: {
+				const { boardId, page, clusterIds, theme } = parseClusterScreenshotInput(args)
+				const board = boards.get(boardId)
+				if (!board) return toolError(BOARD_NOT_FOUND_MESSAGE)
+				const read = readSnapshotPage(board.snapshot, page, board.measurements, clusterIds)
+				if (!read.ok) return read.result
+				const picked = pickClusterShapes(read.read.details, clusterIds, page)
+				if (!picked.ok) return picked.result
+				const png = board.shots[screenshotFileName(clusterIds, theme)]
+				return png
+					? toolPageResult(read.read.pageName, png)
+					: toolError(
+							`${HARNESS_GAP_MARKER} No screenshot was built for this cluster set. Run against staging or production to see the real render.`
+						)
+			}
+			case LIST_WORKSPACES_TOOL_NAME: {
+				// Parsed so argument errors read as they do in production; a fixture session has no
+				// workspaces to list.
+				parseListWorkspacesInput(args)
+				return toolError(
+					`${HARNESS_GAP_MARKER} Workspaces cannot be listed against fixtures. Run against staging or production to list them.`
+				)
+			}
+			case CREATE_BOARD_TOOL_NAME: {
+				// Parsed so argument errors read as they do in production; a fixture session has no
+				// workspaces or database to create into.
+				parseCreateBoardInput(args)
+				return toolError(
+					`${HARNESS_GAP_MARKER} Boards cannot be created against fixtures. Run against staging or production to create one.`
+				)
+			}
+			case RENAME_BOARD_TOOL_NAME: {
+				parseRenameBoardInput(args)
+				return toolError(
+					`${HARNESS_GAP_MARKER} Boards cannot be renamed against fixtures. Run against staging or production to rename one.`
+				)
+			}
+			case USER_STATE_TOOL_NAME:
+			case BOARD_USERS_TOOL_NAME:
+				return toolError(
+					`${HARNESS_GAP_MARKER} Fixtures have nobody on them. Run against staging or production to test presence.`
+				)
+			case APPLY_OPS_TOOL_NAME:
+				return toolError(
+					`${HARNESS_GAP_MARKER} Ops cannot be applied to fixtures. Run against staging or production to test edits.`
+				)
+			case READ_PAGE_COMMENTS_TOOL_NAME: {
+				const { boardId, page, includeResolved } = parseReadPageCommentsInput(args)
+				const board = boards.get(boardId)
+				if (!board) return toolError(BOARD_NOT_FOUND_MESSAGE)
+				const resolved = resolveSnapshotPage(board.snapshot, page)
+				if (!resolved.ok) return resolved.result
+				// Production reads these from Postgres; a fixture carries them as records in its
+				// snapshot, if at all. With no user table, an author is named by their id, and no
+				// comment is the caller's.
+				const records = board.snapshot.documents.map((doc) => doc.state)
+				const threads = (records as TLCommentThread[]).filter(
+					(r) =>
+						r.typeName === 'comment-thread' &&
+						r.pageId === resolved.page.pageId &&
+						!r.isDeleted &&
+						(includeResolved || !r.resolved)
+				)
+				const comments = (records as TLComment[]).filter(
+					(r) => r.typeName === 'comment' && !r.isDeleted
+				)
+				return getPageCommentsResult(
+					resolved.page,
+					threads.map((t) => ({
+						id: t.id,
+						anchor: t.anchor,
+						resolvedAt: t.resolved?.at ?? null,
+						createdAt: t.createdAt,
+					})),
+					comments.map((c) => ({
+						id: c.id,
+						threadId: c.threadId,
+						authorId: c.authorId,
+						authorName: c.authorId,
+						body: c.body,
+						createdAt: c.createdAt,
+						meta: c.meta,
+					})),
+					'',
+					// Fixtures are small enough for one page.
+					{ hasMore: false }
+				)
+			}
+			case WRITE_COMMENT_TOOL_NAME: {
+				parseWriteCommentInput(args)
+				return toolError(
+					`${HARNESS_GAP_MARKER} Comments cannot be posted against fixtures. Run against staging or production to post one.`
+				)
+			}
+			default:
+				return toolError(`Unknown tool: ${name}`)
+		}
+	} catch (error) {
+		return toolError(error instanceof Error ? error.message : String(error))
+	}
+}
+
+export async function evalsFixtureMcp(request: IRequest, env: Environment): Promise<Response> {
+	const unavailable = notFoundUnlessLocal(env)
+	if (unavailable) return unavailable
+	const boards = sessions.get(request.params.sessionId)
+	if (!boards) return new Response('Eval fixture session not found', { status: 404 })
+
+	let rpcRequest: Parameters<typeof handleMcpJsonRpc>[0]
+	try {
+		rpcRequest = (await request.json()) as Parameters<typeof handleMcpJsonRpc>[0]
+	} catch {
+		return Response.json(
+			{ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } },
+			{ status: 200 }
+		)
+	}
+	const reply = await handleMcpJsonRpc(rpcRequest, (name, args) =>
+		callFixtureTool(name, args, boards)
+	)
+	if (reply.kind === 'accepted') return new Response(null, { status: 202 })
+	return Response.json(
+		reply.kind === 'result'
+			? { jsonrpc: '2.0', id: reply.id, result: reply.result }
+			: { jsonrpc: '2.0', id: reply.id, error: { code: reply.code, message: reply.message } }
+	)
+}
+
+export function resetEvalsFixtureSessionsForTests() {
+	sessions.clear()
+}

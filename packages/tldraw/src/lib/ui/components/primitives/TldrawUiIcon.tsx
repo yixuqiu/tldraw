@@ -1,27 +1,75 @@
 import classNames from 'classnames'
-import { memo, useLayoutEffect, useRef } from 'react'
+import { cloneElement, memo, ReactElement, useLayoutEffect, useRef } from 'react'
 import { useAssetUrls } from '../../context/asset-urls'
 import { TLUiIconType } from '../../icon-types'
 
 /** @public */
-export interface TLUiIconProps extends React.HTMLProps<HTMLDivElement> {
-	icon: TLUiIconType | Exclude<string, TLUiIconType>
+export type TLUiIconJsx = ReactElement<React.HTMLAttributes<HTMLDivElement>>
+
+/** @public */
+export interface TLUiIconProps extends React.HTMLAttributes<HTMLDivElement> {
+	icon: TLUiIconType | Exclude<string, TLUiIconType> | TLUiIconJsx
+	label: string
 	small?: boolean
+	tiny?: boolean
 	color?: string
 	children?: undefined
 	invertIcon?: boolean
 	crossOrigin?: 'anonymous' | 'use-credentials'
 }
 
-/** @public */
-export const TldrawUiIcon = memo(function TldrawUi({
+/** @public @react */
+export const TldrawUiIcon = memo(function TldrawUiIcon({
+	label,
 	small,
+	invertIcon,
+	icon,
+	tiny,
+	color,
+	className,
+	...props
+}: TLUiIconProps) {
+	if (typeof icon === 'string') {
+		return (
+			<TldrawUIIconInner
+				label={label}
+				small={small}
+				tiny={tiny}
+				invertIcon={invertIcon}
+				icon={icon}
+				color={color}
+				className={className}
+				{...props}
+			/>
+		)
+	}
+
+	return cloneElement(icon, {
+		...props,
+		className: classNames(
+			{ 'tlui-icon__small': small, 'tlui-icon__tiny': tiny },
+			className,
+			icon.props.className
+		),
+		'aria-label': label,
+		style: {
+			color,
+			transform: invertIcon ? 'scale(-1, 1)' : undefined,
+			...icon.props.style,
+		},
+	})
+})
+
+function TldrawUIIconInner({
+	label,
+	small,
+	tiny,
 	invertIcon,
 	icon,
 	color,
 	className,
 	...props
-}: TLUiIconProps) {
+}: TLUiIconProps & { icon: TLUiIconType | Exclude<string, TLUiIconType> }) {
 	const assetUrls = useAssetUrls()
 	const asset = assetUrls.icons[icon as TLUiIconType] ?? assetUrls.icons['question-mark-circle']
 	const ref = useRef<HTMLDivElement>(null)
@@ -31,11 +79,11 @@ export const TldrawUiIcon = memo(function TldrawUi({
 			console.error(`Icon not found: ${icon}. Add it to the assetUrls.icons object.`)
 		}
 
-		if (ref?.current) {
+		if (ref.current) {
 			// HACK: Fix for <https://linear.app/tldraw/issue/TLD-1700/dragging-around-with-the-handtool-makes-lots-of-requests-for-icons>
 			// It seems that passing `WebkitMask` to react will cause a render on each call, no idea why... but this appears to be the fix.
 			// @ts-ignore
-			// eslint-disable-next-line deprecation/deprecation
+			// eslint-disable-next-line @typescript-eslint/no-deprecated
 			ref.current.style.webkitMask = `url(${asset}) center 100% / 100% no-repeat`
 		}
 	}, [ref, asset, icon])
@@ -45,9 +93,10 @@ export const TldrawUiIcon = memo(function TldrawUi({
 			<div
 				className={classNames(
 					'tlui-icon tlui-icon__placeholder',
-					{ 'tlui-icon__small': small },
+					{ 'tlui-icon__small': small, 'tlui-icon__tiny': tiny },
 					className
 				)}
+				{...props}
 			/>
 		)
 	}
@@ -56,7 +105,13 @@ export const TldrawUiIcon = memo(function TldrawUi({
 		<div
 			{...props}
 			ref={ref}
-			className={classNames('tlui-icon', { 'tlui-icon__small': small }, className)}
+			aria-label={label}
+			role="img"
+			className={classNames(
+				'tlui-icon',
+				{ 'tlui-icon__small': small, 'tlui-icon__tiny': tiny },
+				className
+			)}
 			style={{
 				color,
 				mask: `url(${asset}) center 100% / 100% no-repeat`,
@@ -64,4 +119,4 @@ export const TldrawUiIcon = memo(function TldrawUi({
 			}}
 		/>
 	)
-})
+}

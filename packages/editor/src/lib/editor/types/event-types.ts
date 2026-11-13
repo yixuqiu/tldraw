@@ -1,5 +1,6 @@
 import { TLHandle, TLShape, VecModel } from '@tldraw/tlschema'
 import { VecLike } from '../../primitives/Vec'
+import { TLOverlay } from '../overlays/OverlayUtil'
 import { TLSelectionHandle } from './selection-types'
 
 /** @public */
@@ -11,6 +12,7 @@ export type TLPointerEventTarget =
 	| { target: 'selection'; handle?: TLSelectionHandle; shape?: undefined }
 	| { target: 'shape'; shape: TLShape }
 	| { target: 'handle'; shape: TLShape; handle: TLHandle }
+	| { target: 'overlay'; overlay: TLOverlay; shape?: undefined }
 
 /** @public */
 export type TLPointerEventName =
@@ -22,7 +24,7 @@ export type TLPointerEventName =
 	| 'middle_click'
 
 /** @public */
-export type TLCLickEventName = 'double_click' | 'triple_click' | 'quadruple_click'
+export type TLCLickEventName = 'double_click'
 
 /** @public */
 export type TLPinchEventName = 'pinch_start' | 'pinch' | 'pinch_end'
@@ -48,6 +50,8 @@ export interface TLBaseEventInfo {
 	shiftKey: boolean
 	altKey: boolean
 	ctrlKey: boolean
+	metaKey: boolean
+	accelKey: boolean
 }
 
 /** @public */
@@ -59,6 +63,13 @@ export type TLPointerEventInfo = TLBaseEventInfo & {
 	pointerId: number
 	button: number
 	isPen: boolean
+	/**
+	 * Whether this pen event appears to be direct manipulation on the display (e.g. Apple Pencil on
+	 * an iPad or a Surface Pen on a touchscreen) rather than indirect input from a desktop graphics
+	 * tablet (e.g. a Wacom Intuos). Only direct-display pens should auto-enable pen mode. Drawing and
+	 * pressure behavior is driven by `isPen` and applies to all pens regardless of this flag.
+	 */
+	isPenDirect?: boolean
 } & TLPointerEventTarget
 
 /** @public */
@@ -68,7 +79,7 @@ export type TLClickEventInfo = TLBaseEventInfo & {
 	point: VecLike
 	pointerId: number
 	button: number
-	phase: 'down' | 'up' | 'settle'
+	phase: 'down' | 'up' | 'settle-down' | 'settle-up'
 } & TLPointerEventTarget
 
 /** @public */
@@ -96,13 +107,26 @@ export type TLWheelEventInfo = TLBaseEventInfo & {
 }
 
 /** @public */
-export type TLCancelEventInfo = { type: 'misc'; name: 'cancel' }
+export interface TLCancelEventInfo {
+	type: 'misc'
+	name: 'cancel'
+}
 /** @public */
-export type TLCompleteEventInfo = { type: 'misc'; name: 'complete' }
+export interface TLCompleteEventInfo {
+	type: 'misc'
+	name: 'complete'
+}
 /** @public */
-export type TLInterruptEventInfo = { type: 'misc'; name: 'interrupt' }
+export interface TLInterruptEventInfo {
+	type: 'misc'
+	name: 'interrupt'
+}
 /** @public */
-export type TLTickEventInfo = { type: 'misc'; name: 'tick'; elapsed: number }
+export interface TLTickEventInfo {
+	type: 'misc'
+	name: 'tick'
+	elapsed: number
+}
 
 /** @public */
 export type TLEventInfo =
@@ -156,8 +180,6 @@ export interface TLEventHandlers {
 	onLongPress: TLPointerEvent
 	onRightClick: TLPointerEvent
 	onDoubleClick: TLClickEvent
-	onTripleClick: TLClickEvent
-	onQuadrupleClick: TLClickEvent
 	onMiddleClick: TLPointerEvent
 	onPointerUp: TLPointerEvent
 	onKeyDown: TLKeyboardEvent
@@ -189,7 +211,5 @@ export const EVENT_NAME_MAP: Record<
 	complete: 'onComplete',
 	interrupt: 'onInterrupt',
 	double_click: 'onDoubleClick',
-	triple_click: 'onTripleClick',
-	quadruple_click: 'onQuadrupleClick',
 	tick: 'onTick',
 }

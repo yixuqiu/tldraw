@@ -7,23 +7,29 @@
 		"email": "hello@tldraw.com"
 	},
 	"homepage": "https://tldraw.dev",
-	"license": "Apache-2.0",
+	"license": "MIT",
+	"tldraw_template": {
+		"repo": "tldraw/nextjs-template",
+		"scripts": {
+			"lint": null,
+			"build-types": null
+		}
+	},
 	"scripts": {
-		"dev": "next dev",
+		"dev": "next dev -H 0.0.0.0",
 		"build": "next build",
 		"start": "next start",
-		"lint": "next lint"
+		"lint": "pnpm exec tsx ../../internal/scripts/lint.ts",
+		"build-types": "tsc"
 	},
 	"dependencies": {
-		"tldraw": "latest",
-		"@types/node": "20.3.1",
-		"@types/react": "18.2.12",
-		"@types/react-dom": "18.2.5",
-		"eslint": "8.43.0",
-		"eslint-config-next": "13.4.6",
-		"next": "13.5.0",
-		"react": "18.2.0",
-		"react-dom": "18.2.0",
-		"typescript": "5.1.3"
+		"@types/node": "^22.15.31",
+		"@types/react": "^19.2.7",
+		"@types/react-dom": "^19.2.3",
+		"next": "^16.3.0",
+		"react": "^19.2.1",
+		"react-dom": "^19.2.1",
+		"tldraw": "workspace:*",
+		"typescript": "^5.8.3"
 	}
 }

@@ -1,9 +1,10 @@
 import { createShapeId } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { TestEditor } from '../TestEditor'
 
 let editor: TestEditor
 
-jest.useFakeTimers()
+vi.useFakeTimers()
 
 const ids = {
 	boxA: createShapeId('boxA'),
@@ -23,14 +24,14 @@ describe('resizing a shape', () => {
 	it('always squashes history entries', () => {
 		editor.createShapes([{ id: ids.boxA, type: 'geo', props: { w: 100, h: 100 } }])
 
-		editor.mark('start')
-		const startHistoryLength = editor.history.getNumUndos()
+		editor.markHistoryStoppingPoint('start')
+		const startHistoryLength = editor.getHistory().getNumUndos()
 		editor.resizeShape(ids.boxA, { x: 2, y: 2 })
-		expect(editor.history.getNumUndos()).toBe(startHistoryLength + 1)
+		expect(editor.getHistory().getNumUndos()).toBe(startHistoryLength + 1)
 		editor.resizeShape(ids.boxA, { x: 2, y: 2 })
-		expect(editor.history.getNumUndos()).toBe(startHistoryLength + 1)
+		expect(editor.getHistory().getNumUndos()).toBe(startHistoryLength + 1)
 		editor.resizeShape(ids.boxA, { x: 2, y: 2 })
-		expect(editor.history.getNumUndos()).toBe(startHistoryLength + 1)
+		expect(editor.getHistory().getNumUndos()).toBe(startHistoryLength + 1)
 
 		expect(editor.getShapePageBounds(ids.boxA)).toCloselyMatchObject({
 			w: 800,

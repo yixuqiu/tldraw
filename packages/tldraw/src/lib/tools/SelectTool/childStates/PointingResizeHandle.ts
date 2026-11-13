@@ -1,10 +1,11 @@
 import {
 	StateNode,
+	TLClickEventInfo,
 	TLCursorType,
-	TLEventHandlers,
 	TLPointerEventInfo,
 	TLSelectionHandle,
 } from '@tldraw/editor'
+import { DeferredDoubleClick } from '../selectHelpers'
 
 export const CursorTypeMap: Record<TLSelectionHandle, TLCursorType> = {
 	bottom: 'ns-resize',
@@ -23,76 +24,95 @@ export const CursorTypeMap: Record<TLSelectionHandle, TLCursorType> = {
 }
 
 type PointingResizeHandleInfo = Extract<TLPointerEventInfo, { target: 'selection' }> & {
-	onInteractionEnd?: string
+	onInteractionEnd?: string | (() => void)
 }
 
 export class PointingResizeHandle extends StateNode {
 	static override id = 'pointing_resize_handle'
 
 	private info = {} as PointingResizeHandleInfo
+	private doubleClick = new DeferredDoubleClick(this)
 
 	private updateCursor() {
-		const selected = this.editor.getSelectedShapes()
 		const cursorType = CursorTypeMap[this.info.handle!]
 		this.editor.setCursor({
 			type: cursorType,
-			rotation: selected.length === 1 ? this.editor.getSelectionRotation() : 0,
+			rotation: this.editor.getSelectionRotation(),
 		})
 	}
 
-	override onEnter = (info: PointingResizeHandleInfo) => {
+	override onEnter(info: PointingResizeHandleInfo) {
 		this.info = info
+		this.doubleClick.start(info)
+		if (typeof info.onInteractionEnd === 'string') {
+			this.parent.setCurrentToolIdMask(info.onInteractionEnd)
+		}
 		this.updateCursor()
 	}
 
-	override onPointerMove: TLEventHandlers['onPointerMove'] = () => {
-		if (this.editor.inputs.isDragging) {
+	override onExit() {
+		this.parent.setCurrentToolIdMask(undefined)
+	}
+
+	override onPointerMove() {
+		if (this.editor.inputs.getIsDragging()) {
 			this.startResizing()
 		}
 	}
 
-	override onLongPress: TLEventHandlers['onLongPress'] = () => {
+	override onLongPress() {
 		this.startResizing()
 	}
 
 	private startResizing() {
-		if (this.editor.getInstanceState().isReadonly) return
+		if (this.editor.getIsReadonly()) return
 		this.parent.transition('resizing', this.info)
 	}
 
-	override onPointerUp: TLEventHandlers['onPointerUp'] = () => {
+	override onPointerUp() {
+		if (this.doubleClick.replay()) return
 		this.complete()
 	}
 
-	// override onPinchStart: TLEventHandlers['onPinchStart'] = (info) => {
-	// 	this.parent.transition('pinching', info)
-	// }
+	override onDoubleClick(info: TLClickEventInfo) {
+		this.doubleClick.defer(info)
+	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onCancel() {
 		this.cancel()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onComplete() {
 		this.cancel()
 	}
 
-	override onInterrupt = () => {
+	override onInterrupt() {
 		this.cancel()
 	}
 
 	private complete() {
-		if (this.info.onInteractionEnd) {
-			this.editor.setCurrentTool(this.info.onInteractionEnd, {})
-		} else {
-			this.parent.transition('idle')
+		const { onInteractionEnd } = this.info
+		if (onInteractionEnd) {
+			if (typeof onInteractionEnd === 'string') {
+				this.editor.setCurrentTool(onInteractionEnd, {})
+			} else {
+				onInteractionEnd()
+			}
+			return
 		}
+		this.parent.transition('idle')
 	}
 
 	private cancel() {
-		if (this.info.onInteractionEnd) {
-			this.editor.setCurrentTool(this.info.onInteractionEnd, {})
-		} else {
-			this.parent.transition('idle')
+		const { onInteractionEnd } = this.info
+		if (onInteractionEnd) {
+			if (typeof onInteractionEnd === 'string') {
+				this.editor.setCurrentTool(onInteractionEnd, {})
+			} else {
+				onInteractionEnd()
+			}
+			return
 		}
+		this.parent.transition('idle')
 	}
 }

@@ -1,55 +1,64 @@
-import { StateNode, TLInterruptEvent, TLKeyboardEvent, TLPointerEventInfo } from '@tldraw/editor'
+import {
+	StateNode,
+	TLKeyboardEventInfo,
+	TLPointerEventInfo,
+	TLStateNodeConstructor,
+} from '@tldraw/editor'
 import { Idle } from './childStates/Idle'
 import { Pointing } from './childStates/Pointing'
 import { ZoomBrushing } from './childStates/ZoomBrushing'
+import { ZoomQuick } from './childStates/ZoomQuick'
 
 /** @public */
 export class ZoomTool extends StateNode {
 	static override id = 'zoom'
 	static override initial = 'idle'
-	static override children = () => [Idle, ZoomBrushing, Pointing]
+	static override children(): TLStateNodeConstructor[] {
+		return [Idle, Pointing, ZoomBrushing, ZoomQuick]
+	}
+	static override isLockable = false
 
 	info = {} as TLPointerEventInfo & { onInteractionEnd?: string }
 
-	override onEnter = (info: TLPointerEventInfo & { onInteractionEnd: string }) => {
+	override onEnter(info: TLPointerEventInfo & { onInteractionEnd: string }) {
 		this.info = info
-		this.parent.setCurrentToolIdMask(info.onInteractionEnd)
+		// onInteractionEnd is a path like 'select.idle', extract just the tool ID for the mask
+		// getCurrentToolId reads the mask off the current tool, so a mask on the parent is never seen
+		const toolId = info.onInteractionEnd?.split('.')[0]
+		this.setCurrentToolIdMask(toolId)
 		this.updateCursor()
 	}
 
-	override onExit = () => {
-		this.parent.setCurrentToolIdMask(undefined)
+	override onExit() {
+		this.setCurrentToolIdMask(undefined)
 		this.editor.updateInstanceState({ zoomBrush: null, cursor: { type: 'default', rotation: 0 } })
-		this.parent.setCurrentToolIdMask(undefined)
 	}
 
-	override onKeyDown: TLKeyboardEvent | undefined = () => {
+	override onKeyDown() {
 		this.updateCursor()
 	}
 
-	override onKeyUp: TLKeyboardEvent = (info) => {
+	override onKeyUp(info: TLKeyboardEventInfo) {
 		this.updateCursor()
 
-		if (info.code === 'KeyZ') {
+		// Use toLowerCase to handle case when Shift is held (produces 'Z')
+		if (info.key.toLowerCase() === 'z') {
 			this.complete()
 		}
 	}
 
-	override onInterrupt: TLInterruptEvent = () => {
+	override onInterrupt() {
 		this.complete()
 	}
 
 	private complete() {
-		// Go back to the previous tool. If we are already in select we want to transition to idle
-		if (this.info.onInteractionEnd && this.info.onInteractionEnd !== 'select') {
-			this.editor.setCurrentTool(this.info.onInteractionEnd, this.info)
-		} else {
-			this.parent.transition('select')
-		}
+		// onInteractionEnd is a path like 'select.idle', extract just the tool ID
+		const toolId = this.info.onInteractionEnd?.split('.')[0] ?? 'select'
+		this.editor.setCurrentTool(toolId)
 	}
 
 	private updateCursor() {
-		if (this.editor.inputs.altKey) {
+		if (this.editor.inputs.getAltKey() && !this.editor.isIn('zoom.zoom_quick')) {
 			this.editor.setCursor({ type: 'zoom-out', rotation: 0 })
 		} else {
 			this.editor.setCursor({ type: 'zoom-in', rotation: 0 })

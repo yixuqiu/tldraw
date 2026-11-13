@@ -1,175 +1,328 @@
 /// <reference types="react" />
 
-export { preloadFont } from './lib/utils/assets/preload-font'
-
-export { useCanRedo, useCanUndo } from './lib/ui/hooks/menu-hooks'
-
-// eslint-disable-next-line local/no-export-star
+import { registerTldrawLibraryVersion } from '@tldraw/editor'
+export { getPointsFromDrawSegment, getPointsFromDrawSegments } from './lib/shapes/draw/getPath'
+export {
+	PathBuilder,
+	PathBuilderGeometry2d,
+	type BasePathBuilderOpts,
+	type CubicBezierToPathBuilderCommand,
+	type DashedPathBuilderOpts,
+	type DrawPathBuilderDOpts,
+	type DrawPathBuilderOpts,
+	type NonePathBuilderOpts,
+	type LineToPathBuilderCommand,
+	type MoveToPathBuilderCommand,
+	type PathBuilderCommand,
+	type PathBuilderCommandBase,
+	type PathBuilderCommandInfo,
+	type PathBuilderCommandOpts,
+	type PathBuilderLineOpts,
+	type PathBuilderOpts,
+	type PathBuilderToDOpts,
+	type SolidPathBuilderOpts,
+} from './lib/shapes/shared/PathBuilder'
+export { usePrefersReducedMotion } from './lib/shapes/shared/usePrefersReducedMotion'
+export { startEditingShapeWithRichText } from './lib/tools/SelectTool/selectHelpers'
+export { DefaultA11yAnnouncer, useSelectedShapesAnnouncer } from './lib/ui/components/A11y'
+export { AccessibilityMenu } from './lib/ui/components/AccessibilityMenu'
+export { ColorSchemeMenu } from './lib/ui/components/ColorSchemeMenu'
+export { DefaultFollowingIndicator } from './lib/ui/components/DefaultFollowingIndicator'
+export { DefaultDialogs } from './lib/ui/components/Dialogs'
+export {
+	TldrawUiColumn,
+	TldrawUiGrid,
+	TldrawUiOrientationProvider,
+	TldrawUiRow,
+	useTldrawUiOrientation,
+	type TldrawUiOrientationContext,
+	type TldrawUiOrientationProviderProps,
+	type TLUiLayoutProps,
+} from './lib/ui/components/primitives/layout'
+export {
+	TldrawUiMenuActionCheckboxItem,
+	type TLUiMenuActionCheckboxItemProps,
+} from './lib/ui/components/primitives/menus/TldrawUiMenuActionCheckboxItem'
+export {
+	TldrawUiMenuActionItem,
+	type TLUiMenuActionItemProps,
+} from './lib/ui/components/primitives/menus/TldrawUiMenuActionItem'
+export {
+	TldrawUiMenuToolItem,
+	type TLUiMenuToolItemProps,
+} from './lib/ui/components/primitives/menus/TldrawUiMenuToolItem'
+export { DefaultToasts } from './lib/ui/components/Toasts'
+export {
+	F,
+	useTldrawI18n,
+	type TLUiMessageProps,
+	type TLUiMessageValues,
+} from './lib/ui/context/i18n'
+export { TldrawUiTranslationProvider } from './lib/ui/hooks/useTranslation/useTranslation'
+// eslint-disable-next-line tldraw/no-export-star
 export * from '@tldraw/editor'
-export { Tldraw, type TldrawProps } from './lib/Tldraw'
-export { TldrawImage, type TldrawImageProps } from './lib/TldrawImage'
-export { TldrawHandles } from './lib/canvas/TldrawHandles'
-export { TldrawScribble } from './lib/canvas/TldrawScribble'
-export { TldrawSelectionBackground } from './lib/canvas/TldrawSelectionBackground'
-export { TldrawSelectionForeground } from './lib/canvas/TldrawSelectionForeground'
+export { BookmarkAssetUtil } from './lib/assets/BookmarkAssetUtil'
+export { ImageAssetUtil } from './lib/assets/ImageAssetUtil'
+export { VideoAssetUtil } from './lib/assets/VideoAssetUtil'
+export {
+	ArrowBindingHintOverlayUtil,
+	type TLArrowBindingHintOverlay,
+} from './lib/overlays/ArrowBindingHintOverlayUtil'
+export { ArrowBindingUtil } from './lib/bindings/arrow/ArrowBindingUtil'
+export { ArrowHintOverlayUtil, type TLArrowHintOverlay } from './lib/overlays/ArrowHintOverlayUtil'
+export {
+	BrushOverlayUtil,
+	type BrushOverlayUtilDisplayValues,
+	type BrushOverlayUtilOptions,
+	type TLBrushOverlay,
+} from './lib/overlays/BrushOverlayUtil'
+export { ZoomBrushOverlayUtil, type TLZoomBrushOverlay } from './lib/overlays/ZoomBrushOverlayUtil'
+export { ScribbleOverlayUtil, type TLScribbleOverlay } from './lib/overlays/ScribbleOverlayUtil'
+export {
+	CollaboratorHintOverlayUtil,
+	type TLCollaboratorHintOverlay,
+} from './lib/overlays/CollaboratorHintOverlayUtil'
+// Deprecated, but still exported so apps that customized canvas-drawn cursors keep working.
+// oxlint-disable-next-line typescript/no-deprecated
+export { CollaboratorCursorOverlayUtil } from './lib/overlays/CollaboratorCursorOverlayUtil'
+// oxlint-disable-next-line typescript/no-deprecated
+export type { TLCollaboratorCursorOverlay } from './lib/overlays/CollaboratorCursorOverlayUtil'
+export {
+	CollaboratorBrushOverlayUtil,
+	type TLCollaboratorBrushOverlay,
+} from './lib/overlays/CollaboratorBrushOverlayUtil'
+export {
+	CollaboratorScribbleOverlayUtil,
+	type TLCollaboratorScribbleOverlay,
+} from './lib/overlays/CollaboratorScribbleOverlayUtil'
+export {
+	CollaboratorShapeIndicatorOverlayUtil,
+	type TLCollaboratorShapeIndicatorOverlay,
+} from './lib/overlays/CollaboratorShapeIndicatorOverlayUtil'
+export {
+	ShapeHandleOverlayUtil,
+	type TLShapeHandleOverlay,
+} from './lib/overlays/ShapeHandleOverlayUtil'
+export {
+	ShapeIndicatorOverlayUtil,
+	type TLShapeIndicatorOverlay,
+} from './lib/overlays/ShapeIndicatorOverlayUtil'
+export {
+	SelectionForegroundOverlayUtil,
+	type TLSelectionForegroundOverlay,
+} from './lib/overlays/SelectionForegroundOverlayUtil'
+export {
+	SnapIndicatorOverlayUtil,
+	type TLSnapIndicatorOverlay,
+} from './lib/overlays/SnapIndicatorOverlayUtil'
+export { defaultAssetUtils } from './lib/defaultAssetUtils'
+export { defaultBindingUtils } from './lib/defaultBindingUtils'
+export { defaultOverlayUtils } from './lib/defaultOverlayUtils'
+export {
+	DEFAULT_EMBED_DEFINITIONS,
+	embedShapePermissionDefaults,
+	unknownEmbedShapePermissionOverrides,
+	type CustomEmbedDefinition,
+	type DefaultEmbedConfig,
+	type DefaultEmbedDefinitionType,
+	type EmbedDefinition,
+	type GoogleMapsEmbedConfig,
+	type TLEmbedDefinition,
+	type TLEmbedShapePermissions,
+} from './lib/defaultEmbedDefinitions'
+export {
+	centerSelectionAroundPoint,
+	createEmptyBookmarkShape,
+	createShapesForAssets,
+	DEFAULT_MAX_ASSET_SIZE,
+	DEFAULT_MAX_IMAGE_DIMENSION,
+	defaultHandleExternalEmbedContent,
+	defaultHandleExternalExcalidrawContent,
+	defaultHandleExternalFileAsset,
+	defaultHandleExternalFileContent,
+	defaultHandleExternalFileReplaceContent,
+	defaultHandleExternalSvgTextContent,
+	defaultHandleExternalTextContent,
+	defaultHandleExternalTldrawContent,
+	defaultHandleExternalUrlAsset,
+	defaultHandleExternalUrlContent,
+	getAssetInfo,
+	notifyIfFileNotAllowed,
+	registerDefaultExternalContentHandlers,
+	type TLDefaultExternalContentHandlerOpts,
+	type TLExternalContentProps,
+} from './lib/defaultExternalContentHandlers'
 export { defaultShapeTools } from './lib/defaultShapeTools'
 export { defaultShapeUtils } from './lib/defaultShapeUtils'
+export { registerDefaultSideEffects } from './lib/defaultSideEffects'
 export { defaultTools } from './lib/defaultTools'
+export {
+	type ArrowShapeOptions,
+	type ArrowShapeUtilDisplayValues,
+	type TLArcArrowInfo,
+	type TLArcInfo,
+	type TLArrowInfo,
+	type TLArrowPoint,
+	type TLElbowArrowInfo,
+	type TLStraightArrowInfo,
+} from './lib/shapes/arrow/arrow-types'
 export { ArrowShapeTool } from './lib/shapes/arrow/ArrowShapeTool'
 export { ArrowShapeUtil } from './lib/shapes/arrow/ArrowShapeUtil'
-export { BookmarkShapeUtil } from './lib/shapes/bookmark/BookmarkShapeUtil'
+export {
+	clearArrowTargetState,
+	getArrowTargetState,
+	updateArrowTargetState,
+	type ArrowTargetState,
+	type UpdateArrowTargetStateOpts,
+} from './lib/shapes/arrow/arrowTargetState'
+export {
+	type ElbowArrowBox,
+	type ElbowArrowBoxEdges,
+	type ElbowArrowBoxes,
+	type ElbowArrowEdge,
+	type ElbowArrowInfo,
+	type ElbowArrowInfoWithoutRoute,
+	type ElbowArrowMidpointHandle,
+	type ElbowArrowOptions,
+	type ElbowArrowRange,
+	type ElbowArrowRoute,
+	type ElbowArrowSide,
+	type ElbowArrowSideReason,
+	type ElbowArrowTargetBox,
+} from './lib/shapes/arrow/elbow/definitions'
+export { getArrowInfo } from './lib/shapes/arrow/getArrowInfo'
+export {
+	getArrowBindings,
+	getArrowTerminalsInArrowSpace,
+	type TLArrowBindings,
+} from './lib/shapes/arrow/shared'
+export { createBookmarkFromUrl } from './lib/shapes/bookmark/bookmarks'
+export {
+	BookmarkShapeUtil,
+	type BookmarkShapeOptions,
+	type BookmarkShapeUtilDisplayValues,
+} from './lib/shapes/bookmark/BookmarkShapeUtil'
 export { DrawShapeTool } from './lib/shapes/draw/DrawShapeTool'
-export { DrawShapeUtil } from './lib/shapes/draw/DrawShapeUtil'
-export { EmbedShapeUtil } from './lib/shapes/embed/EmbedShapeUtil'
+export {
+	DrawShapeUtil,
+	type DrawShapeOptions,
+	type DrawShapeUtilDisplayValues,
+} from './lib/shapes/draw/DrawShapeUtil'
+export {
+	EmbedShapeUtil,
+	type EmbedShapeOptions,
+	type EmbedShapeUtilDisplayValues,
+} from './lib/shapes/embed/EmbedShapeUtil'
 export { FrameShapeTool } from './lib/shapes/frame/FrameShapeTool'
-export { FrameShapeUtil } from './lib/shapes/frame/FrameShapeUtil'
+export {
+	FrameShapeUtil,
+	type FrameShapeOptions,
+	type FrameShapeUtilDisplayValues,
+} from './lib/shapes/frame/FrameShapeUtil'
 export { GeoShapeTool } from './lib/shapes/geo/GeoShapeTool'
-export { GeoShapeUtil } from './lib/shapes/geo/GeoShapeUtil'
+export {
+	GeoShapeUtil,
+	type GeoShapeOptions,
+	type GeoShapeUtilDisplayValues,
+} from './lib/shapes/geo/GeoShapeUtil'
+export {
+	defaultGeoTypeDefinitions,
+	getGeoTypeDefinition,
+	type GeoTypeDefinition,
+} from './lib/shapes/geo/getGeoShapePath'
 export { HighlightShapeTool } from './lib/shapes/highlight/HighlightShapeTool'
-export { HighlightShapeUtil } from './lib/shapes/highlight/HighlightShapeUtil'
-export { ImageShapeUtil } from './lib/shapes/image/ImageShapeUtil'
+export {
+	HighlightShapeUtil,
+	type HighlightShapeOptions,
+	type HighlightShapeUtilDisplayValues,
+} from './lib/shapes/highlight/HighlightShapeUtil'
+export {
+	ImageShapeUtil,
+	type ImageShapeOptions,
+	type ImageShapeUtilDisplayValues,
+} from './lib/shapes/image/ImageShapeUtil'
 export { LineShapeTool } from './lib/shapes/line/LineShapeTool'
-export { LineShapeUtil } from './lib/shapes/line/LineShapeUtil'
+export {
+	LineShapeUtil,
+	type LineShapeOptions,
+	type LineShapeUtilDisplayValues,
+} from './lib/shapes/line/LineShapeUtil'
+export {
+	DefaultNoteShapeAttribution,
+	type TLNoteShapeAttributionComponent,
+	type TLNoteShapeAttributionProps,
+} from './lib/shapes/note/DefaultNoteShapeAttribution'
 export { NoteShapeTool } from './lib/shapes/note/NoteShapeTool'
-export { NoteShapeUtil } from './lib/shapes/note/NoteShapeUtil'
-export { useDefaultColorTheme } from './lib/shapes/shared/ShapeFill'
-export { TextLabel } from './lib/shapes/shared/TextLabel'
-export { getPerfectDashProps } from './lib/shapes/shared/getPerfectDashProps'
+export {
+	NoteShapeUtil,
+	type NoteShapeOptions,
+	type NoteShapeUtilDisplayValues,
+} from './lib/shapes/note/NoteShapeUtil'
+export {
+	ASPECT_RATIO_OPTIONS,
+	ASPECT_RATIO_TO_VALUE,
+	getCropBox,
+	getDefaultCrop,
+	getUncroppedSize,
+	type ASPECT_RATIO_OPTION,
+	type CropBoxOptions,
+} from './lib/shapes/shared/crop'
+export { getFontFamily } from './lib/shapes/shared/default-shape-constants'
+export {
+	allDefaultFontFaces,
+	DefaultFontFaces,
+	type TLDefaultFont,
+	type TLDefaultFonts,
+} from './lib/shapes/shared/defaultFonts'
+export { getStroke } from './lib/shapes/shared/freehand/getStroke'
+export { getStrokeOutlinePoints } from './lib/shapes/shared/freehand/getStrokeOutlinePoints'
+export { getStrokePoints } from './lib/shapes/shared/freehand/getStrokePoints'
+export { getSvgPathFromStrokePoints } from './lib/shapes/shared/freehand/svg'
+export { type StrokeOptions, type StrokePoint } from './lib/shapes/shared/freehand/types'
+export {
+	getDisplayValues,
+	type ShapeOptionsWithDisplayValues,
+} from './lib/shapes/shared/getDisplayValues'
+export { PlainTextLabel, type PlainTextLabelProps } from './lib/shapes/shared/PlainTextLabel'
+export {
+	RichTextLabel,
+	RichTextSVG,
+	type RichTextLabelProps,
+	type RichTextSVGProps,
+} from './lib/shapes/shared/RichTextLabel'
+export { useEditablePlainText } from './lib/shapes/shared/useEditablePlainText'
+export { useEditableRichText } from './lib/shapes/shared/useEditableRichText'
+export {
+	useImageOrVideoAsset,
+	type UseImageOrVideoAssetOptions,
+} from './lib/shapes/shared/useImageOrVideoAsset'
+export { PlainTextArea } from './lib/shapes/text/PlainTextArea'
+export { RichTextArea, type TextAreaProps } from './lib/shapes/text/RichTextArea'
 export { TextShapeTool } from './lib/shapes/text/TextShapeTool'
-export { TextShapeUtil } from './lib/shapes/text/TextShapeUtil'
-export { VideoShapeUtil } from './lib/shapes/video/VideoShapeUtil'
+export {
+	TextShapeUtil,
+	type TextShapeOptions,
+	type TextShapeUtilDisplayValues,
+} from './lib/shapes/text/TextShapeUtil'
+export {
+	VideoShapeUtil,
+	type VideoShapeOptions,
+	type VideoShapeUtilDisplayValues,
+} from './lib/shapes/video/VideoShapeUtil'
+export { getColorStyleItems, getFontStyleItems, type StyleValuesForUi } from './lib/styles'
+export { Tldraw, type TLComponents, type TldrawBaseProps, type TldrawProps } from './lib/Tldraw'
+export { TldrawImage, type TldrawImageProps } from './lib/TldrawImage'
 export { EraserTool } from './lib/tools/EraserTool/EraserTool'
 export { HandTool } from './lib/tools/HandTool/HandTool'
 export { LaserTool } from './lib/tools/LaserTool/LaserTool'
+export { getHitShapeOnCanvasPointerDown } from './lib/tools/selection-logic/getHitShapeOnCanvasPointerDown'
 export { SelectTool } from './lib/tools/SelectTool/SelectTool'
-export { getOccludedChildren, kickoutOccludedShapes } from './lib/tools/SelectTool/selectHelpers'
 export { ZoomTool } from './lib/tools/ZoomTool/ZoomTool'
-// UI
-export { useEditableText } from './lib/shapes/shared/useEditableText'
-export { TldrawUi, type TldrawUiBaseProps, type TldrawUiProps } from './lib/ui/TldrawUi'
-export { setDefaultUiAssetUrls, type TLUiAssetUrlOverrides } from './lib/ui/assetUrls'
-export { OfflineIndicator } from './lib/ui/components/OfflineIndicator/OfflineIndicator'
-export { Spinner } from './lib/ui/components/Spinner'
-export { PORTRAIT_BREAKPOINT } from './lib/ui/constants'
 export {
-	TldrawUiContextProvider,
-	type TldrawUiContextProviderProps,
-} from './lib/ui/context/TldrawUiContextProvider'
-export {
-	useActions,
-	type TLUiActionItem,
-	type TLUiActionsContextType,
-} from './lib/ui/context/actions'
-export { AssetUrlsProvider, useAssetUrls } from './lib/ui/context/asset-urls'
-export { BreakPointProvider, useBreakpoint } from './lib/ui/context/breakpoints'
-export {
-	useDialogs,
-	type TLUiDialog,
-	type TLUiDialogProps,
-	type TLUiDialogsContextType,
-} from './lib/ui/context/dialogs'
-export {
-	UiEventsProvider,
-	useUiEvents,
-	type EventsProviderProps,
-	type TLUiEventContextType,
-	type TLUiEventHandler,
-	type TLUiEventMap,
-	type TLUiEventSource,
-} from './lib/ui/context/events'
-export {
-	useToasts,
-	type AlertSeverity,
-	type TLUiToast,
-	type TLUiToastAction,
-	type TLUiToastsContextType,
-} from './lib/ui/context/toasts'
-export { useMenuClipboardEvents, useNativeClipboardEvents } from './lib/ui/hooks/useClipboardEvents'
-export { useCopyAs } from './lib/ui/hooks/useCopyAs'
-export { useExportAs } from './lib/ui/hooks/useExportAs'
-export { useKeyboardShortcuts } from './lib/ui/hooks/useKeyboardShortcuts'
-export { useLocalStorageState } from './lib/ui/hooks/useLocalStorageState'
-export { useMenuIsOpen } from './lib/ui/hooks/useMenuIsOpen'
-export { usePreloadAssets } from './lib/ui/hooks/usePreloadAssets'
-export { useReadonly } from './lib/ui/hooks/useReadonly'
-export { useRelevantStyles } from './lib/ui/hooks/useRelevantStyles'
-export {
-	useTools,
-	type TLUiToolItem,
-	type TLUiToolsContextType,
-	type TLUiToolsProviderProps,
-} from './lib/ui/hooks/useTools'
-export { type TLUiTranslationKey } from './lib/ui/hooks/useTranslation/TLUiTranslationKey'
-export { type TLUiTranslation } from './lib/ui/hooks/useTranslation/translations'
-export {
-	useCurrentTranslation,
-	useTranslation,
-	type TLUiTranslationContextType,
-} from './lib/ui/hooks/useTranslation/useTranslation'
-export { type TLUiIconType } from './lib/ui/icon-types'
-export { useDefaultHelpers, type TLUiOverrides } from './lib/ui/overrides'
-export {
-	DEFAULT_ACCEPTED_IMG_TYPE,
-	DEFAULT_ACCEPTED_VID_TYPE,
-	containBoxSize,
-	downsizeImage,
-	isGifAnimated,
-} from './lib/utils/assets/assets'
-export { getEmbedInfo } from './lib/utils/embeds/embeds'
-export { copyAs } from './lib/utils/export/copyAs'
-export { exportToBlob, getSvgAsImage } from './lib/utils/export/export'
-export { exportAs, type TLExportType } from './lib/utils/export/exportAs'
-export { fitFrameToContent, removeFrame } from './lib/utils/frames/frames'
-export {
-	defaultEditorAssetUrls,
-	setDefaultEditorAssetUrls,
-} from './lib/utils/static-assets/assetUrls'
-export { truncateStringWithEllipsis } from './lib/utils/text/text'
-export {
-	buildFromV1Document,
-	type LegacyTldrawDocument,
-} from './lib/utils/tldr/buildFromV1Document'
-export {
-	TLDRAW_FILE_EXTENSION,
-	parseAndLoadDocument,
-	parseTldrawJsonFile,
-	serializeTldrawJson,
-	serializeTldrawJsonBlob,
-	type TldrawFile,
-} from './lib/utils/tldr/file'
-
-// Minimap default component
-export { DefaultMinimap } from './lib/ui/components/Minimap/DefaultMinimap'
-
-// Helper to unwrap label from action items
-export { unwrapLabel } from './lib/ui/context/actions'
-
-export {
-	TldrawUiComponentsProvider,
-	useTldrawUiComponents,
-	type TLUiComponents,
-	type TLUiComponentsProviderProps,
-} from './lib/ui/context/components'
-
-export { DefaultPageMenu } from './lib/ui/components/PageMenu/DefaultPageMenu'
-export { PageItemInput } from './lib/ui/components/PageMenu/PageItemInput'
-export { PageItemSubmenu } from './lib/ui/components/PageMenu/PageItemSubmenu'
-
-export {
-	DefaultStylePanel,
-	type TLUiStylePanelProps,
-} from './lib/ui/components/StylePanel/DefaultStylePanel'
-export {
-	ArrowheadStylePickerSet,
-	CommonStylePickerSet,
-	DefaultStylePanelContent,
-	GeoStylePickerSet,
-	OpacitySlider,
-	SplineStylePickerSet,
-	TextStylePickerSet,
-	type TLUiStylePanelContentProps,
-} from './lib/ui/components/StylePanel/DefaultStylePanelContent'
-
+	setDefaultUiAssetUrls,
+	type TLUiAssetUrlOverrides,
+	type TLUiAssetUrls,
+} from './lib/ui/assetUrls'
 export {
 	DefaultActionsMenu,
 	type TLUiActionsMenuProps,
@@ -184,14 +337,32 @@ export {
 	StackMenuItems,
 	ZoomOrRotateMenuItem,
 } from './lib/ui/components/ActionsMenu/DefaultActionsMenuContent'
-
 export {
 	DefaultContextMenu as ContextMenu,
 	DefaultContextMenu,
 	type TLUiContextMenuProps,
 } from './lib/ui/components/ContextMenu/DefaultContextMenu'
 export { DefaultContextMenuContent } from './lib/ui/components/ContextMenu/DefaultContextMenuContent'
-
+export {
+	DefaultDebugMenu,
+	type TLUiDebugMenuProps,
+} from './lib/ui/components/DebugMenu/DefaultDebugMenu'
+export {
+	DebugFlags,
+	DefaultDebugMenuContent,
+	ExampleDialog,
+	FeatureFlags,
+	type CustomDebugFlags,
+	type DebugFlagsProps,
+	type ExampleDialogProps,
+	type FeatureFlagsProps,
+} from './lib/ui/components/DebugMenu/DefaultDebugMenuContent'
+export { DefaultMenuPanel } from './lib/ui/components/DefaultMenuPanel'
+export {
+	DefaultHelperButtons,
+	type TLUiHelperButtonsProps,
+} from './lib/ui/components/HelperButtons/DefaultHelperButtons'
+export { DefaultHelperButtonsContent } from './lib/ui/components/HelperButtons/DefaultHelperButtonsContent'
 export {
 	DefaultHelpMenu,
 	type TLUiHelpMenuProps,
@@ -200,8 +371,28 @@ export {
 	DefaultHelpMenuContent,
 	KeyboardShortcutsMenuItem,
 } from './lib/ui/components/HelpMenu/DefaultHelpMenuContent'
+export {
+	DefaultKeyboardShortcutsDialog,
+	type TLUiKeyboardShortcutsDialogProps,
+} from './lib/ui/components/KeyboardShortcutsDialog/DefaultKeyboardShortcutsDialog'
+export { DefaultKeyboardShortcutsDialogContent } from './lib/ui/components/KeyboardShortcutsDialog/DefaultKeyboardShortcutsDialogContent'
 export { LanguageMenu } from './lib/ui/components/LanguageMenu'
-
+export { InputModeMenu } from './lib/ui/components/InputModeMenu'
+export {
+	DefaultMainMenu,
+	type TLUiMainMenuProps,
+} from './lib/ui/components/MainMenu/DefaultMainMenu'
+export {
+	DefaultMainMenuContent,
+	EditSubmenu,
+	ExportFileContentSubMenu,
+	ExtrasGroup,
+	LockGroup,
+	MiscMenuGroup,
+	PreferencesGroup,
+	UndoRedoGroup,
+	ViewSubmenu,
+} from './lib/ui/components/MainMenu/DefaultMainMenuContent'
 export {
 	ArrangeMenuSubmenu,
 	ClipboardMenuGroup,
@@ -210,10 +401,13 @@ export {
 	ConvertToEmbedMenuItem,
 	CopyAsMenuGroup,
 	CopyMenuItem,
+	CursorChatItem,
 	CutMenuItem,
 	DeleteMenuItem,
 	DuplicateMenuItem,
 	EditLinkMenuItem,
+	EditMenuSubmenu,
+	ExportAsMenuGroup,
 	FitFrameToContentMenuItem,
 	GroupMenuItem,
 	MoveToPageMenu,
@@ -223,12 +417,16 @@ export {
 	ReorderMenuSubmenu,
 	SelectAllMenuItem,
 	ToggleAutoSizeMenuItem,
-	ToggleDarkModeItem,
 	ToggleDebugModeItem,
+	ToggleDynamicSizeModeItem,
 	ToggleEdgeScrollingItem,
+	ToggleEnhancedA11yModeItem,
 	ToggleFocusModeItem,
 	ToggleGridItem,
+	ToggleInvertZoomItem,
+	ToggleKeyboardShortcutsItem,
 	ToggleLockMenuItem,
+	TogglePasteAtCursorItem,
 	ToggleReduceMotionItem,
 	ToggleSnapModeItem,
 	ToggleToolLockItem,
@@ -240,62 +438,16 @@ export {
 	ZoomToFitMenuItem,
 	ZoomToSelectionMenuItem,
 } from './lib/ui/components/menu-items'
-
+export { DefaultMinimap } from './lib/ui/components/Minimap/DefaultMinimap'
+export { MobileStylePanel } from './lib/ui/components/MobileStylePanel'
+export { DefaultNavigationPanel } from './lib/ui/components/NavigationPanel/DefaultNavigationPanel'
+export { OfflineIndicator } from './lib/ui/components/OfflineIndicator/OfflineIndicator'
+export { DefaultPageMenu } from './lib/ui/components/PageMenu/DefaultPageMenu'
+export { PageItemInput, type PageItemInputProps } from './lib/ui/components/PageMenu/PageItemInput'
 export {
-	DefaultMainMenu,
-	type TLUiMainMenuProps,
-} from './lib/ui/components/MainMenu/DefaultMainMenu'
-export {
-	DefaultMainMenuContent,
-	EditSubmenu,
-	ExportFileContentSubMenu,
-	ExtrasGroup,
-	MiscMenuGroup,
-	PreferencesGroup,
-	UndoRedoGroup,
-	ViewSubmenu,
-} from './lib/ui/components/MainMenu/DefaultMainMenuContent'
-
-export {
-	DefaultQuickActions,
-	type TLUiQuickActionsProps,
-} from './lib/ui/components/QuickActions/DefaultQuickActions'
-export { DefaultQuickActionsContent } from './lib/ui/components/QuickActions/DefaultQuickActionsContent'
-
-export {
-	DefaultZoomMenu,
-	type TLUiZoomMenuProps,
-} from './lib/ui/components/ZoomMenu/DefaultZoomMenu'
-export { DefaultZoomMenuContent } from './lib/ui/components/ZoomMenu/DefaultZoomMenuContent'
-
-export {
-	DefaultHelperButtons,
-	type TLUiHelperButtonsProps,
-} from './lib/ui/components/HelperButtons/DefaultHelperButtons'
-export { DefaultHelperButtonsContent } from './lib/ui/components/HelperButtons/DefaultHelperButtonsContent'
-
-export {
-	DefaultKeyboardShortcutsDialog,
-	type TLUiKeyboardShortcutsDialogProps,
-} from './lib/ui/components/KeyboardShortcutsDialog/DefaultKeyboardShortcutsDialog'
-export { DefaultKeyboardShortcutsDialogContent } from './lib/ui/components/KeyboardShortcutsDialog/DefaultKeyboardShortcutsDialogContent'
-
-export {
-	DefaultDebugMenu,
-	type TLUiDebugMenuProps,
-} from './lib/ui/components/DebugMenu/DefaultDebugMenu'
-export {
-	DebugFlags,
-	DefaultDebugMenuContent,
-	ExampleDialog,
-	FeatureFlags,
-} from './lib/ui/components/DebugMenu/DefaultDebugMenuContent'
-
-export { type TLComponents } from './lib/Tldraw'
-
-/* ------------------- Primitives ------------------- */
-
-// Button
+	PageItemSubmenu,
+	type PageItemSubmenuProps,
+} from './lib/ui/components/PageMenu/PageItemSubmenu'
 export {
 	TldrawUiButton,
 	type TLUiButtonProps,
@@ -312,107 +464,6 @@ export {
 	TldrawUiButtonLabel,
 	type TLUiButtonLabelProps,
 } from './lib/ui/components/primitives/Button/TldrawUiButtonLabel'
-
-// Button picker
-export {
-	TldrawUiButtonPicker,
-	type TLUiButtonPickerProps,
-} from './lib/ui/components/primitives/TldrawUiButtonPicker'
-
-// Dialog
-export {
-	TldrawUiDialogBody,
-	TldrawUiDialogCloseButton,
-	TldrawUiDialogFooter,
-	TldrawUiDialogHeader,
-	TldrawUiDialogTitle,
-	type TLUiDialogBodyProps,
-	type TLUiDialogFooterProps,
-	type TLUiDialogHeaderProps,
-	type TLUiDialogTitleProps,
-} from './lib/ui/components/primitives/TldrawUiDialog'
-
-// Dropdown Menu
-export {
-	TldrawUiDropdownMenuCheckboxItem,
-	TldrawUiDropdownMenuContent,
-	TldrawUiDropdownMenuGroup,
-	TldrawUiDropdownMenuIndicator,
-	TldrawUiDropdownMenuItem,
-	TldrawUiDropdownMenuRoot,
-	TldrawUiDropdownMenuSub,
-	TldrawUiDropdownMenuSubTrigger,
-	TldrawUiDropdownMenuTrigger,
-	type TLUiDropdownMenuCheckboxItemProps,
-	type TLUiDropdownMenuContentProps,
-	type TLUiDropdownMenuGroupProps,
-	type TLUiDropdownMenuItemProps,
-	type TLUiDropdownMenuRootProps,
-	type TLUiDropdownMenuSubProps,
-	type TLUiDropdownMenuSubTriggerProps,
-	type TLUiDropdownMenuTriggerProps,
-} from './lib/ui/components/primitives/TldrawUiDropdownMenu'
-
-// Icon
-export { TldrawUiIcon, type TLUiIconProps } from './lib/ui/components/primitives/TldrawUiIcon'
-
-// Input
-export { TldrawUiInput, type TLUiInputProps } from './lib/ui/components/primitives/TldrawUiInput'
-
-// Kbd
-export { TldrawUiKbd, type TLUiKbdProps } from './lib/ui/components/primitives/TldrawUiKbd'
-
-// Popover
-export {
-	TldrawUiPopover,
-	TldrawUiPopoverContent,
-	TldrawUiPopoverTrigger,
-	type TLUiPopoverContentProps,
-	type TLUiPopoverProps,
-	type TLUiPopoverTriggerProps,
-} from './lib/ui/components/primitives/TldrawUiPopover'
-
-// Slider
-export { TldrawUiSlider, type TLUiSliderProps } from './lib/ui/components/primitives/TldrawUiSlider'
-
-// Toolbar
-export { DefaultToolbar } from './lib/ui/components/Toolbar/DefaultToolbar'
-export {
-	ArrowDownToolbarItem,
-	ArrowLeftToolbarItem,
-	ArrowRightToolbarItem,
-	ArrowToolbarItem,
-	ArrowUpToolbarItem,
-	AssetToolbarItem,
-	CheckBoxToolbarItem,
-	CloudToolbarItem,
-	DefaultToolbarContent,
-	DiamondToolbarItem,
-	DrawToolbarItem,
-	EllipseToolbarItem,
-	EraserToolbarItem,
-	FrameToolbarItem,
-	HandToolbarItem,
-	HexagonToolbarItem,
-	HighlightToolbarItem,
-	LaserToolbarItem,
-	LineToolbarItem,
-	NoteToolbarItem,
-	OvalToolbarItem,
-	RectangleToolbarItem,
-	RhombusToolbarItem,
-	SelectToolbarItem,
-	StarToolbarItem,
-	TextToolbarItem,
-	TrapezoidToolbarItem,
-	TriangleToolbarItem,
-	XBoxToolbarItem,
-	useIsToolSelected,
-} from './lib/ui/components/Toolbar/DefaultToolbarContent'
-
-/* ----------------- Menu Primitives ---------------- */
-
-// General UI components for building menus
 export {
 	TldrawUiMenuCheckboxItem,
 	type TLUiMenuCheckboxItemProps,
@@ -420,6 +471,7 @@ export {
 export {
 	TldrawUiMenuContextProvider,
 	type TLUiMenuContextProviderProps,
+	type TLUiMenuContextType,
 } from './lib/ui/components/primitives/menus/TldrawUiMenuContext'
 export {
 	TldrawUiMenuGroup,
@@ -433,11 +485,444 @@ export {
 	TldrawUiMenuSubmenu,
 	type TLUiMenuSubmenuProps,
 } from './lib/ui/components/primitives/menus/TldrawUiMenuSubmenu'
-
-/* ----------------- Constants ---------------- */
-
 export {
-	FONT_FAMILIES,
-	LABEL_FONT_SIZES,
-	TEXT_PROPS,
-} from './lib/shapes/shared/default-shape-constants'
+	TldrawUiContextualToolbar,
+	type TLUiContextualToolbarProps,
+} from './lib/ui/components/primitives/TldrawUiContextualToolbar'
+export {
+	TldrawUiDialogBody,
+	TldrawUiDialogCloseButton,
+	TldrawUiDialogFooter,
+	TldrawUiDialogHeader,
+	TldrawUiDialogTitle,
+	type TLUiDialogBodyProps,
+	type TLUiDialogFooterProps,
+	type TLUiDialogHeaderProps,
+	type TLUiDialogTitleProps,
+} from './lib/ui/components/primitives/TldrawUiDialog'
+export {
+	TldrawUiDropdownMenuCheckboxItem,
+	TldrawUiDropdownMenuContent,
+	TldrawUiDropdownMenuGroup,
+	TldrawUiDropdownMenuIndicator,
+	TldrawUiDropdownMenuItem,
+	TldrawUiDropdownMenuRoot,
+	TldrawUiDropdownMenuSub,
+	TldrawUiDropdownMenuSubContent,
+	TldrawUiDropdownMenuSubTrigger,
+	TldrawUiDropdownMenuTrigger,
+	type TLUiDropdownMenuCheckboxItemProps,
+	type TLUiDropdownMenuContentProps,
+	type TLUiDropdownMenuGroupProps,
+	type TLUiDropdownMenuItemProps,
+	type TLUiDropdownMenuRootProps,
+	type TLUiDropdownMenuSubContentProps,
+	type TLUiDropdownMenuSubProps,
+	type TLUiDropdownMenuSubTriggerProps,
+	type TLUiDropdownMenuTriggerProps,
+} from './lib/ui/components/primitives/TldrawUiDropdownMenu'
+export {
+	TldrawUiIcon,
+	type TLUiIconJsx,
+	type TLUiIconProps,
+} from './lib/ui/components/primitives/TldrawUiIcon'
+export { TldrawUiInput, type TLUiInputProps } from './lib/ui/components/primitives/TldrawUiInput'
+export { TldrawUiKbd, type TLUiKbdProps } from './lib/ui/components/primitives/TldrawUiKbd'
+export {
+	TldrawUiPopover,
+	TldrawUiPopoverContent,
+	TldrawUiPopoverTrigger,
+	type TLUiPopoverContentProps,
+	type TLUiPopoverProps,
+	type TLUiPopoverTriggerProps,
+} from './lib/ui/components/primitives/TldrawUiPopover'
+export {
+	TldrawUiSelect,
+	TldrawUiSelectContent,
+	TldrawUiSelectItem,
+	TldrawUiSelectTrigger,
+	TldrawUiSelectValue,
+	type TLUiSelectContentProps,
+	type TLUiSelectItemProps,
+	type TLUiSelectProps,
+	type TLUiSelectTriggerProps,
+	type TLUiSelectValueProps,
+} from './lib/ui/components/primitives/TldrawUiSelect'
+export { TldrawUiSlider, type TLUiSliderProps } from './lib/ui/components/primitives/TldrawUiSlider'
+export {
+	TldrawUiToolbar,
+	TldrawUiToolbarButton,
+	TldrawUiToolbarToggleGroup,
+	TldrawUiToolbarToggleItem,
+	type TLUiToolbarButtonProps,
+	type TLUiToolbarProps,
+	type TLUiToolbarToggleGroupProps,
+	type TLUiToolbarToggleItemProps,
+} from './lib/ui/components/primitives/TldrawUiToolbar'
+export {
+	hideAllTooltips,
+	TldrawUiTooltip,
+	TldrawUiTooltipProvider,
+	type TldrawUiTooltipProps,
+	type TldrawUiTooltipProviderProps,
+} from './lib/ui/components/primitives/TldrawUiTooltip'
+export {
+	DefaultQuickActions,
+	type TLUiQuickActionsProps,
+} from './lib/ui/components/QuickActions/DefaultQuickActions'
+export { DefaultQuickActionsContent } from './lib/ui/components/QuickActions/DefaultQuickActionsContent'
+export {
+	DefaultPeopleMenu,
+	// legacy
+	DefaultPeopleMenu as PeopleMenu,
+	type DefaultPeopleMenuProps,
+	type DefaultPeopleMenuProps as PeopleMenuProps,
+} from './lib/ui/components/SharePanel/DefaultPeopleMenu'
+export {
+	DefaultPeopleMenuAvatar,
+	type TLUiPeopleMenuAvatarProps,
+} from './lib/ui/components/SharePanel/DefaultPeopleMenuAvatar'
+export {
+	DefaultPeopleMenuContent,
+	type DefaultPeopleMenuContentProps,
+} from './lib/ui/components/SharePanel/DefaultPeopleMenuContent'
+export {
+	DefaultPeopleMenuFacePile,
+	type TLUiPeopleMenuFacePileProps,
+} from './lib/ui/components/SharePanel/DefaultPeopleMenuFacePile'
+export {
+	DefaultPeopleMenuItem,
+	type TLUiPeopleMenuItemProps,
+} from './lib/ui/components/SharePanel/DefaultPeopleMenuItem'
+export { DefaultSharePanel } from './lib/ui/components/SharePanel/DefaultSharePanel'
+export { DefaultUserPresenceEditor } from './lib/ui/components/SharePanel/DefaultUserPresenceEditor'
+export { Spinner } from './lib/ui/components/Spinner'
+export {
+	DefaultStylePanel,
+	type TLUiStylePanelProps,
+} from './lib/ui/components/StylePanel/DefaultStylePanel'
+export {
+	DefaultStylePanelContent,
+	StylePanelArrowheadPicker,
+	StylePanelArrowKindPicker,
+	StylePanelColorPicker,
+	StylePanelDashPicker,
+	StylePanelFillPicker,
+	StylePanelFontPicker,
+	StylePanelGeoShapePicker,
+	StylePanelLabelAlignPicker,
+	StylePanelOpacityPicker,
+	StylePanelSection,
+	StylePanelSizePicker,
+	StylePanelSplinePicker,
+	StylePanelTextAlignPicker,
+	type StylePanelSectionProps,
+} from './lib/ui/components/StylePanel/DefaultStylePanelContent'
+export {
+	StylePanelButtonPicker,
+	StylePanelButtonPickerInline,
+	type StylePanelButtonPickerProps,
+} from './lib/ui/components/StylePanel/StylePanelButtonPicker'
+export {
+	StylePanelContextProvider,
+	useStylePanelContext,
+	type StylePanelContext,
+	type StylePanelContextProviderProps,
+} from './lib/ui/components/StylePanel/StylePanelContext'
+export {
+	StylePanelDoubleDropdownPicker,
+	StylePanelDoubleDropdownPickerInline,
+	type StylePanelDoubleDropdownPickerProps,
+} from './lib/ui/components/StylePanel/StylePanelDoubleDropdownPicker'
+export {
+	StylePanelDropdownPicker,
+	StylePanelDropdownPickerInline,
+	type StylePanelDropdownPickerProps,
+} from './lib/ui/components/StylePanel/StylePanelDropdownPicker'
+export {
+	StylePanelSubheading,
+	type StylePanelSubheadingProps,
+} from './lib/ui/components/StylePanel/StylePanelSubheading'
+export {
+	DefaultImageToolbar,
+	type TLUiImageToolbarProps,
+} from './lib/ui/components/Toolbar/DefaultImageToolbar'
+export {
+	DefaultImageToolbarContent,
+	type DefaultImageToolbarContentProps,
+} from './lib/ui/components/Toolbar/DefaultImageToolbarContent'
+export {
+	DefaultRichTextToolbar,
+	type TLUiRichTextToolbarProps,
+} from './lib/ui/components/Toolbar/DefaultRichTextToolbar'
+export {
+	DefaultRichTextToolbarContent,
+	type DefaultRichTextToolbarContentProps,
+} from './lib/ui/components/Toolbar/DefaultRichTextToolbarContent'
+export {
+	DefaultToolbar,
+	type DefaultToolbarProps,
+} from './lib/ui/components/Toolbar/DefaultToolbar'
+export {
+	ArrowDownToolbarItem,
+	ArrowLeftToolbarItem,
+	ArrowRightToolbarItem,
+	ArrowToolbarItem,
+	ArrowUpToolbarItem,
+	AssetToolbarItem,
+	CheckBoxToolbarItem,
+	CloudToolbarItem,
+	CommentToolbarItem,
+	DefaultToolbarContent,
+	DiamondToolbarItem,
+	DrawToolbarItem,
+	EllipseToolbarItem,
+	EraserToolbarItem,
+	FrameToolbarItem,
+	HandToolbarItem,
+	HeartToolbarItem,
+	HexagonToolbarItem,
+	HighlightToolbarItem,
+	LaserToolbarItem,
+	LineToolbarItem,
+	NoteToolbarItem,
+	OvalToolbarItem,
+	RectangleToolbarItem,
+	RhombusToolbarItem,
+	SelectToolbarItem,
+	StarToolbarItem,
+	TextToolbarItem,
+	ToolbarItem,
+	TrapezoidToolbarItem,
+	TriangleToolbarItem,
+	useIsToolSelected,
+	XBoxToolbarItem,
+	type ToolbarItemProps,
+} from './lib/ui/components/Toolbar/DefaultToolbarContent'
+export {
+	DefaultVideoToolbar,
+	type TLUiVideoToolbarProps,
+} from './lib/ui/components/Toolbar/DefaultVideoToolbar'
+export {
+	DefaultVideoToolbarContent,
+	type DefaultVideoToolbarContentProps,
+} from './lib/ui/components/Toolbar/DefaultVideoToolbarContent'
+export {
+	OverflowingToolbar,
+	type OverflowingToolbarProps,
+} from './lib/ui/components/Toolbar/OverflowingToolbar'
+export {
+	ToggleToolLockedButton,
+	type ToggleToolLockedButtonProps,
+} from './lib/ui/components/Toolbar/ToggleToolLockedButton'
+export {
+	CenteredTopPanelContainer,
+	type CenteredTopPanelContainerProps,
+} from './lib/ui/components/TopPanel/CenteredTopPanelContainer'
+export {
+	DefaultZoomMenu,
+	type TLUiZoomMenuProps,
+} from './lib/ui/components/ZoomMenu/DefaultZoomMenu'
+export { DefaultZoomMenuContent } from './lib/ui/components/ZoomMenu/DefaultZoomMenuContent'
+export { PORTRAIT_BREAKPOINT } from './lib/ui/constants'
+export {
+	TldrawUiA11yProvider,
+	useA11y,
+	type A11yPriority,
+	type A11yProviderProps,
+	type TLUiA11y,
+	type TLUiA11yContextType,
+} from './lib/ui/context/a11y'
+export {
+	unwrapLabel,
+	useActions,
+	type ActionsProviderProps,
+	type TLUiActionItem,
+	type TLUiActionsContextType,
+} from './lib/ui/context/actions'
+export {
+	AssetUrlsProvider,
+	useAssetUrls,
+	type AssetUrlsProviderProps,
+} from './lib/ui/context/asset-urls'
+export {
+	BreakPointProvider,
+	useBreakpoint,
+	type BreakPointProviderProps,
+} from './lib/ui/context/breakpoints'
+export {
+	TldrawUiComponentsProvider,
+	useTldrawUiComponents,
+	type TLUiComponents,
+	type TLUiComponentsProviderProps,
+} from './lib/ui/context/components'
+export {
+	TldrawUiDialogsProvider,
+	useDialogs,
+	type TLUiDialog,
+	type TLUiDialogProps,
+	type TLUiDialogsContextType,
+	type TLUiDialogsProviderProps,
+} from './lib/ui/context/dialogs'
+export {
+	TldrawUiEventsProvider,
+	useUiEvents,
+	type EventsProviderProps,
+	type TLUiEventContextType,
+	type TLUiEventData,
+	type TLUiEventHandler,
+	type TLUiEventMap,
+	type TLUiEventSource,
+} from './lib/ui/context/events'
+export {
+	TldrawUiContextProvider,
+	type TLUiContextProviderProps,
+} from './lib/ui/context/TldrawUiContextProvider'
+export {
+	TldrawUiToastsProvider,
+	useToasts,
+	type AlertSeverity,
+	type TLUiToast,
+	type TLUiToastAction,
+	type TLUiToastsContextType,
+	type TLUiToastsProviderProps,
+} from './lib/ui/context/toasts'
+export {
+	useCanApplySelectionAction,
+	useCanRedo,
+	useCanUndo,
+	useUnlockedSelectedShapesCount,
+} from './lib/ui/hooks/menu-hooks'
+export {
+	handleNativeOrMenuCopy,
+	useMenuClipboardEvents,
+	useNativeClipboardEvents,
+} from './lib/ui/hooks/useClipboardEvents'
+export {
+	useCollaborationStatus,
+	useShowCollaborationUi,
+} from './lib/ui/hooks/useCollaborationStatus'
+export { useCopyAs } from './lib/ui/hooks/useCopyAs'
+export { useExportAs } from './lib/ui/hooks/useExportAs'
+export { useKeyboardShortcuts } from './lib/ui/hooks/useKeyboardShortcuts'
+export { useLocalStorageState } from './lib/ui/hooks/useLocalStorageState'
+export { useMenuIsOpen } from './lib/ui/hooks/useMenuIsOpen'
+export { useReadonly } from './lib/ui/hooks/useReadonly'
+export { useSomeActionsEnabled } from './lib/ui/hooks/useActionState'
+export { useRelevantStyles } from './lib/ui/hooks/useRelevantStyles'
+export {
+	onDragFromToolbarToCreateShape,
+	useTools,
+	type OnDragFromToolbarToCreateShapesOpts,
+	type TLUiToolItem,
+	type TLUiToolsContextType,
+	type TLUiToolsProviderProps,
+} from './lib/ui/hooks/useTools'
+export { type TLUiTranslationKey } from './lib/ui/hooks/useTranslation/TLUiTranslationKey'
+export { RTL_LANGUAGES, type TLUiTranslation } from './lib/ui/hooks/useTranslation/translations'
+export {
+	useCurrentTranslation,
+	useDirection,
+	useMaybeCurrentTranslation,
+	useTranslation,
+	type TLUiTranslationContextType,
+	type TLUiTranslationProviderProps,
+	type TLUiTranslationValues,
+} from './lib/ui/hooks/useTranslation/useTranslation'
+export { iconTypes, type TLUiIconType } from './lib/ui/icon-types'
+export { useDefaultHelpers, type TLUiOverrideHelpers, type TLUiOverrides } from './lib/ui/overrides'
+export { TldrawUi, TldrawUiInFrontOfTheCanvas, type TldrawUiProps } from './lib/ui/TldrawUi'
+export { containBoxSize, downsizeImage, type BoxWidthHeight } from './lib/utils/assets/assets'
+export { preloadFont, type TLTypeFace } from './lib/utils/assets/preload-font'
+export { getEmbedInfo, type TLEmbedResult } from './lib/utils/embeds/embeds'
+export { putExcalidrawContent } from './lib/utils/excalidraw/putExcalidrawContent'
+export { copyAs, type CopyAsOptions, type TLCopyType } from './lib/utils/export/copyAs'
+export { downloadFile, exportAs, type ExportAsOptions } from './lib/utils/export/exportAs'
+export { fitFrameToContent, removeFrame } from './lib/utils/frames/frames'
+export {
+	defaultEditorAssetUrls,
+	setDefaultEditorAssetUrls,
+	type TLEditorAssetUrls,
+} from './lib/utils/static-assets/assetUrls'
+export { sanitizeSvg } from './lib/utils/svg/sanitizeSvg'
+export {
+	defaultAddFontsFromNode,
+	getTipTapDefaultExtensions,
+	KeyboardShiftEnterTweakExtension,
+	renderHtmlFromRichText,
+	renderHtmlFromRichTextForMeasurement,
+	renderHtmlFromRichTextWithExtensions,
+	renderPlaintextFromRichText,
+	renderRichTextFromHTML,
+	tipTapDefaultExtensions,
+} from './lib/utils/text/richText'
+export { truncateStringWithEllipsis } from './lib/utils/text/text'
+export {
+	Extension,
+	getSchema,
+	Mark,
+	mergeAttributes,
+	Node,
+	TaskItem,
+	TaskList,
+	type Extensions,
+	type JSONContent,
+	type TaskItemOptions,
+	type TaskListOptions,
+} from './lib/utils/text/tiptap'
+export {
+	defaultWrappingPairs,
+	WrapSelectionExtension,
+	type WrapSelectionOptions,
+} from './lib/utils/text/wrapSelection'
+export {
+	buildFromV1Document,
+	TLV1AlignStyle,
+	TLV1AssetType,
+	TLV1ColorStyle,
+	TLV1DashStyle,
+	TLV1Decoration,
+	TLV1FontStyle,
+	TLV1ShapeType,
+	TLV1SizeStyle,
+	type TLV1ArrowBinding,
+	type TLV1ArrowShape,
+	type TLV1Asset,
+	type TLV1BaseAsset,
+	type TLV1BaseBinding,
+	type TLV1BaseShape,
+	type TLV1Binding,
+	type TLV1Bounds,
+	type TLV1Document,
+	type TLV1DrawShape,
+	type TLV1EllipseShape,
+	type TLV1GroupShape,
+	type TLV1Handle,
+	type TLV1ImageAsset,
+	type TLV1ImageShape,
+	type TLV1Page,
+	type TLV1PageState,
+	type TLV1RectangleShape,
+	type TLV1Shape,
+	type TLV1ShapeStyles,
+	type TLV1StickyShape,
+	type TLV1TextShape,
+	type TLV1TriangleShape,
+	type TLV1VideoAsset,
+	type TLV1VideoShape,
+} from './lib/utils/tldr/buildFromV1Document'
+export {
+	parseAndLoadDocument,
+	parseTldrawJsonFile,
+	serializeTldrawJson,
+	serializeTldrawJsonBlob,
+	TLDRAW_FILE_EXTENSION,
+	type TldrawFile,
+	type TldrawFileParseError,
+} from './lib/utils/tldr/file'
+
+registerTldrawLibraryVersion(
+	(globalThis as any).TLDRAW_LIBRARY_NAME,
+	(globalThis as any).TLDRAW_LIBRARY_VERSION,
+	(globalThis as any).TLDRAW_LIBRARY_MODULES
+)

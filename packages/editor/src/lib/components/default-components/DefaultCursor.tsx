@@ -1,10 +1,12 @@
 import { VecModel } from '@tldraw/tlschema'
 import classNames from 'classnames'
 import { memo, useRef } from 'react'
+import { useSharedSafeId } from '../../hooks/useSafeId'
 import { useTransform } from '../../hooks/useTransform'
 
 /** @public */
-export type TLCursorProps = {
+export interface TLCursorProps {
+	userId: string
 	className?: string
 	point: VecModel | null
 	zoom: number
@@ -13,7 +15,13 @@ export type TLCursorProps = {
 	chatMessage: string
 }
 
-/** @public */
+/**
+ * The default collaborator cursor: the arrow glyph plus a name tag or chat bubble. The arrow is a
+ * `<use>` of a shared `<defs>` symbol that `LiveCollaborators` renders, so a `DefaultCursor`
+ * used outside that layer draws no arrow.
+ *
+ * @public @react
+ */
 export const DefaultCursor = memo(function DefaultCursor({
 	className,
 	zoom,
@@ -25,12 +33,14 @@ export const DefaultCursor = memo(function DefaultCursor({
 	const rCursor = useRef<HTMLDivElement>(null)
 	useTransform(rCursor, point?.x, point?.y, 1 / zoom)
 
+	const cursorId = useSharedSafeId('cursor')
+
 	if (!point) return null
 
 	return (
-		<div ref={rCursor} className={classNames('tl-overlays__item', className)}>
-			<svg className="tl-cursor">
-				<use href="#cursor" color={color} />
+		<div ref={rCursor} className={classNames('tl-collaborators__item', className)}>
+			<svg className="tl-cursor" aria-hidden="true">
+				<use href={`#${cursorId}`} color={color} />
 			</svg>
 			{chatMessage ? (
 				<>

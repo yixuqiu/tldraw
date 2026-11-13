@@ -1,14 +1,13 @@
-import { isEqual } from 'lodash'
-import fetch from 'node-fetch'
-import * as vscode from 'vscode'
-import { TLDrawDocument } from './TldrawDocument'
-import { loadFile } from './file'
-
+import isEqual from 'lodash/isEqual'
 import { UnknownRecord } from 'tldraw'
+import * as vscode from 'vscode'
 // @ts-ignore
 import type { VscodeMessage } from '../../messages'
+import { loadFile } from './file'
+import { getMimeTypeFromPath } from './media'
+import { TLDrawDocument } from './TldrawDocument'
+import { unfurl } from './unfurl'
 import { nicelog } from './utils'
-const BOOKMARK_ENDPOINT = 'https://bookmark-extractor.tldraw.com/api/bookmark'
 
 export const GlobalStateKeys = {
 	ShowV1FileOpenWarning: 'showV1fileOpenWarning',
@@ -28,8 +27,8 @@ export class WebViewMessageHandler {
 	) {}
 
 	isLoaded = false
-	firstChangeDone = false
 
+	// eslint-disable-next-line tldraw/prefer-class-methods
 	handle = async (e: VscodeMessage) => {
 		if (!this.document) return
 
@@ -72,31 +71,45 @@ export class WebViewMessageHandler {
 				vscode.commands.executeCommand('workbench.action.reloadWindow')
 				break
 			}
+			case 'vscode:get-file/request': {
+				try {
+					const url = e.data.url
+					const fileUri = vscode.Uri.parse(url)
+					const fileData = await vscode.workspace.fs.readFile(fileUri)
+					const mimeType = getMimeTypeFromPath(fileUri.path)
+
+					this.webviewPanel.webview.postMessage({
+						type: 'vscode:get-file/response',
+						uuid: e.uuid + '_response',
+						data: {
+							fileName: fileUri.path.split('/').pop(),
+							file: Array.from(fileData),
+							mimeType,
+						},
+					})
+				} catch (error: any) {
+					this.webviewPanel.webview.postMessage({
+						type: 'vscode:get-file/error',
+						data: {
+							error: error.toString(),
+						},
+					})
+				}
+			}
 			case 'vscode:bookmark/request': {
 				const url = e.data.url
-				fetch(BOOKMARK_ENDPOINT, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						// We can fake the origin here because we're in node.js
-						origin: 'https://www.tldraw.com',
-					},
-					body: JSON.stringify({
-						url,
-					}),
-				})
-					.then((resp) => {
-						return resp.json()
-					})
-					.then((json: any) => {
+				await unfurl(url)
+					.then(async (json: any) => {
 						this.webviewPanel.webview.postMessage({
 							type: 'vscode:bookmark/response',
-							uuid: e.uuid,
+							// Add a suffix to the uuid to represent the response.
+							uuid: e.uuid + '_response',
 							data: {
 								url,
 								title: json.title,
 								description: json.description,
 								image: json.image,
+								favicon: json.favicon,
 							},
 						})
 					})
@@ -136,11 +149,6 @@ export class WebViewMessageHandler {
 			case 'vscode:editor-updated': {
 				if (!this.isLoaded) return
 
-				if (!this.firstChangeDone) {
-					this.firstChangeDone = true
-					return
-				}
-
 				const raw = e.data.fileContents
 				if (!raw) return
 
@@ -175,7 +183,7 @@ export class WebViewMessageHandler {
 		}
 	}
 
-	private omit = (records: UnknownRecord[], keys: RegExp) => {
+	omit(records: UnknownRecord[], keys: RegExp) {
 		return records.filter((record) => {
 			return !record.id.match(keys)
 		})

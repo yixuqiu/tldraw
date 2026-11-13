@@ -144,8 +144,8 @@ describe('Vec.Uni', () => {
 		expect(Vec.Uni(new Vec(10, 10))).toMatchObject(new Vec(0.7071067811865475, 0.7071067811865475))
 	})
 
-	it('Divide-by-zero spits out NaN (at the moment)', () => {
-		expect(Vec.Uni(new Vec(0, 0))).toMatchObject(new Vec(NaN, NaN))
+	it('Divide-by-zero spits out 0', () => {
+		expect(Vec.Uni(new Vec(0, 0))).toMatchObject(new Vec(0, 0))
 	})
 })
 
@@ -253,8 +253,7 @@ describe('Vec.IsClockwise', () => {
 
 describe('Vec.ToFixed', () => {
 	it('Rounds a vector to the a given precision.', () => {
-		expect(Vec.ToFixed(new Vec(1.2345, 5.678), 1)).toMatchObject(new Vec(1.2, 5.7))
-		expect(Vec.ToFixed(new Vec(1.2345, 5.678), 2)).toMatchObject(new Vec(1.23, 5.68))
+		expect(Vec.ToFixed(new Vec(1.2345, 5.678))).toMatchObject(new Vec(1.23, 5.68))
 	})
 })
 
@@ -337,6 +336,16 @@ describe('Vec.Slope', () => {
 		expect(Vec.Slope(new Vec(0, 0), new Vec(50, 100))).toEqual(2)
 		expect(Vec.Slope(new Vec(0, 0), new Vec(-50, 100))).toEqual(-2)
 		expect(Vec.Slope(new Vec(123, 456), new Vec(789, 24))).toEqual(-0.6486486486486487)
+		// A.x happened to equal B.y here, which used to trip the vertical guard
+		expect(Vec.Slope(new Vec(1, 0), new Vec(0, 1))).toEqual(-1)
+		expect(Vec.Slope(new Vec(5, 0), new Vec(5, 10))).toBeNaN()
+	})
+})
+
+describe('Vec.cross', () => {
+	it('Matches the static Vec.Cross.', () => {
+		expect(Vec.Cross(new Vec(1, 2, 3), new Vec(4, 5, 6))).toMatchObject({ x: -3, y: 6 })
+		expect(new Vec(1, 2, 3).cross(new Vec(4, 5, 6))).toMatchObject({ x: -3, y: 6 })
 	})
 })
 

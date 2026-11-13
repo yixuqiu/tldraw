@@ -1,5 +1,6 @@
 import {
 	GapsSnapIndicator,
+	IndexKey,
 	PointsSnapIndicator,
 	SnapIndicator,
 	TLArrowShape,
@@ -10,8 +11,11 @@ import {
 	Vec,
 	createShapeId,
 } from '@tldraw/editor'
-import { TestEditor } from './TestEditor'
+import { vi } from 'vitest'
+import { getArrowBindings } from '../lib/shapes/arrow/shared'
+import { TranslatingInfo } from '../lib/tools/SelectTool/childStates/Translating'
 import { getSnapLines } from './getSnapLines'
+import { TestEditor } from './TestEditor'
 
 let editor: TestEditor
 
@@ -38,8 +42,14 @@ const ids = {
 }
 
 beforeEach(() => {
-	console.error = jest.fn()
-	editor = new TestEditor()
+	console.error = vi.fn()
+	editor = new TestEditor({
+		options: {
+			adjacentShapeMargin: 20,
+			edgeScrollDelay: 0,
+			edgeScrollEaseDuration: 0,
+		},
+	})
 })
 
 const getNumSnapPoints = (snap: SnapIndicator): number => {
@@ -132,20 +142,23 @@ describe('When translating...', () => {
 			.expectShapeToMatch({ id: ids.box1, x: 60, y: 60 })
 	})
 
+	// edgeScrollSpeed is 25px per 60 Hz frame; forceTick emits a 16ms tick
+	const edgeScrollPxPerTick = 25 * (16 / (1000 / 60))
+
 	it('translates a single shape near the top left edge', () => {
 		editor.user.updateUserPreferences({ edgeScrollSpeed: 1 })
 		editor.pointerDown(50, 50, ids.box1).pointerMove(0, 50) // [-50, 0]
 
 		const before = editor.getShape<TLGeoShape>(ids.box1)!
 
-		jest.advanceTimersByTime(100)
+		editor.forceTick()
 		editor
 			// The change is bigger than expected because the camera moves
-			.expectShapeToMatch({ id: ids.box1, x: -160, y: 10 })
-			// We'll continue moving in the x postion, but now we'll also move in the y position.
+			.expectShapeToMatch({ id: ids.box1, x: -40 - edgeScrollPxPerTick, y: 10 })
+			// We'll continue moving in the x position, but now we'll also move in the y position.
 			// The speed in the y position is smaller since we are further away from the edge.
 			.pointerMove(0, 25)
-		jest.advanceTimersByTime(100)
+		vi.advanceTimersByTime(100)
 		editor.pointerUp()
 
 		const after = editor.getShape<TLGeoShape>(ids.box1)!
@@ -160,16 +173,32 @@ describe('When translating...', () => {
 		editor.user.updateUserPreferences({ edgeScrollSpeed: 1 })
 		editor.pointerDown(50, 50, ids.box1).pointerMove(1080, 50)
 
-		jest.advanceTimersByTime(100)
+		editor.forceTick()
+		editor.forceTick()
+		editor.forceTick()
 		editor
 			// The change is bigger than expected because the camera moves
-			.expectShapeToMatch({ id: ids.box1, x: 1160, y: 10 })
+			.expectShapeToMatch({ id: ids.box1, x: 1040 + edgeScrollPxPerTick * 3, y: 10 })
 			.pointerMove(1080, 800)
-		jest.advanceTimersByTime(100)
+
+		// The viewport is shorter than 1000px, so vertical scrolling runs at 0.612x, and the pointer
+		// is only 75% of the way into the edge zone
+		const edgeScrollPyPerTick = edgeScrollPxPerTick * 0.612 * 0.75
+		editor.forceTick()
+		editor.forceTick()
+		editor.forceTick()
 		editor
-			.expectShapeToMatch({ id: ids.box1, x: 1320, y: 845.68 })
+			.expectShapeToMatch({
+				id: ids.box1,
+				x: 1040 + edgeScrollPxPerTick * 7,
+				y: 760 + edgeScrollPyPerTick * 4,
+			})
 			.pointerUp()
-			.expectShapeToMatch({ id: ids.box1, x: 1340, y: 857.92 })
+			.expectShapeToMatch({
+				id: ids.box1,
+				x: 1040 + edgeScrollPxPerTick * 8,
+				y: 760 + edgeScrollPyPerTick * 4 + edgeScrollPxPerTick * 0.612,
+			})
 	})
 
 	it('translates multiple shapes', () => {
@@ -240,7 +269,7 @@ describe('When cloning...', () => {
 
 		// Stop cloning!
 		editor.keyUp('Alt')
-		jest.advanceTimersByTime(500)
+		vi.advanceTimersByTime(500)
 
 		editor.expectShapeToMatch({ id: ids.box1, x: 20, y: 0 }) // A should be at the translated position...
 		expect(editor.getShape(newShape.id)).toBeUndefined() // And the new node should be gone!
@@ -275,7 +304,7 @@ describe('When cloning...', () => {
 		editor.keyUp('Alt')
 
 		// wait 500ms
-		jest.advanceTimersByTime(500)
+		vi.advanceTimersByTime(500)
 		editor
 			.expectShapeToMatch({ id: ids.box1, x: 20, y: 0 }) // A should be at the translated position...
 			.expectShapeToMatch({ id: ids.box2, x: 210, y: 190 }) // B should be at the translated position...
@@ -313,7 +342,7 @@ describe('When cloning...', () => {
 		// Stop cloning!
 		editor.keyUp('Alt')
 		// wait 500ms
-		jest.advanceTimersByTime(500)
+		vi.advanceTimersByTime(500)
 
 		editor.expectShapeToMatch({ id: ids.box2, x: 210, y: 190 }) // B should be at the translated position...
 		expect(editor.getShape(cloneB.id)).toBeUndefined() // And the new node A should be gone!
@@ -322,7 +351,7 @@ describe('When cloning...', () => {
 
 	it('Clones twice', () => {
 		const groupId = createShapeId('g')
-		editor.groupShapes([ids.box1, ids.box2], groupId)
+		editor.groupShapes([ids.box1, ids.box2], { groupId: groupId })
 		const count1 = editor.getCurrentPageShapes().length
 
 		editor.pointerDown(50, 50, { shape: editor.getShape(groupId)!, target: 'shape' })
@@ -338,7 +367,7 @@ describe('When cloning...', () => {
 		expect(editor.getCurrentPageShapes().length).toBe(count1 + 3) // 2 new box and group
 
 		editor.keyUp('Alt')
-		jest.advanceTimersByTime(500)
+		vi.advanceTimersByTime(500)
 
 		expect(editor.getCurrentPageShapes().length).toBe(count1) // 2 new box and group
 
@@ -486,7 +515,7 @@ describe('snapping with single shapes', () => {
 
 		// release ctrl key and it unsnaps
 		editor.keyUp('Control')
-		jest.advanceTimersByTime(200)
+		vi.advanceTimersByTime(200)
 
 		expect(editor.getShape(ids.box2)!).toMatchObject({ x: 11, y: 0 })
 
@@ -768,9 +797,6 @@ describe('snapping with multiple shapes', () => {
 })
 
 describe('Snap-between behavior', () => {
-	beforeEach(() => {
-		editor?.dispose()
-	})
 	it('snaps a shape horizontally between two others', () => {
 		// ┌─────┐               ┌─────┐
 		// │     │               │     │
@@ -1073,6 +1099,63 @@ describe('Snap-between behavior', () => {
 		expect(pointLines[1].points).toHaveLength(6)
 	})
 
+	it('shows both horizontal snap-betweens when their breadths only touch', () => {
+		// ┌───┐       ┌───┐
+		// │ A ├──┼──┤ B │  ┌───┐
+		// ├───┤       ├───┤  │ X │ ◄─── drag
+		// │ C ├──┼──┤ D │  └───┘
+		// └───┘       └───┘
+		// the A-B and C-D gaps share the same span but their breadths only meet at
+		// y=10, which is not an overlap, so neither center snap hides the other
+		editor.createShapes([
+			box(ids.box1, 0, 0),
+			box(ids.box2, 20, 0),
+			box(ids.line1, 0, 10),
+			box(ids.boxD, 20, 10),
+			box(ids.boxX, 50, 0, 4, 20),
+		])
+
+		editor.pointerDown(52, 10, ids.boxX).pointerMove(16, 10, { ctrlKey: true })
+		expect(editor.getShape(ids.boxX)).toMatchObject({ x: 13, y: 0 })
+
+		const { gapLines } = getGapAndPointLines(editor.snaps.getIndicators()!)
+		expect(gapLines).toHaveLength(2)
+		expect(gapLines.map((line) => line.direction)).toEqual(['horizontal', 'horizontal'])
+		expect(gapLines[0].gaps).toHaveLength(2)
+		expect(gapLines[1].gaps).toHaveLength(2)
+	})
+
+	it('shows both vertical snap-betweens when their breadths only touch', () => {
+		// ┌───┬───┐
+		// │ A │ B │
+		// └─┬─┴─┬─┘
+		//   ┼   ┼
+		// ┌─┴─┬─┴─┐
+		// │ C │ D │
+		// └───┴───┘
+		//
+		// ┌───────┐
+		// │   X   │ ◄─── drag
+		// └───────┘
+		// vertical mirror of the horizontal case above; both axes must agree
+		editor.createShapes([
+			box(ids.box1, 0, 0),
+			box(ids.box2, 10, 0),
+			box(ids.line1, 0, 20),
+			box(ids.boxD, 10, 20),
+			box(ids.boxX, 0, 50, 20, 4),
+		])
+
+		editor.pointerDown(10, 52, ids.boxX).pointerMove(10, 16, { ctrlKey: true })
+		expect(editor.getShape(ids.boxX)).toMatchObject({ x: 0, y: 13 })
+
+		const { gapLines } = getGapAndPointLines(editor.snaps.getIndicators()!)
+		expect(gapLines).toHaveLength(2)
+		expect(gapLines.map((line) => line.direction)).toEqual(['vertical', 'vertical'])
+		expect(gapLines[0].gaps).toHaveLength(2)
+		expect(gapLines[1].gaps).toHaveLength(2)
+	})
+
 	it('should not snap horizontally if the shape is larger than the gap', () => {
 		//        ┌─────┐             ┌─────┐
 		//        │     │             │     │
@@ -1145,9 +1228,6 @@ describe('Snap-between behavior', () => {
 })
 
 describe('Snap-next-to behavior', () => {
-	beforeEach(() => {
-		editor?.dispose()
-	})
 	it('snaps a shape to the left of two others, matching the gap size', () => {
 		// ┌───┐
 		// │ X │
@@ -1631,84 +1711,113 @@ describe('translating a shape with a bound shape', () => {
 
 	it('should preserve arrow bindings', () => {
 		const arrow1 = createShapeId('arrow1')
-		editor.createShapes([
-			{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
-			{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
-			{
-				id: arrow1,
-				type: 'arrow',
-				x: 150,
-				y: 150,
-				props: {
-					start: {
-						type: 'binding',
-						isExact: false,
-						boundShapeId: ids.box1,
-						normalizedAnchor: { x: 0.5, y: 0.5 },
-						isPrecise: false,
+		editor
+			.createShapes([
+				{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
+				{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
+				{
+					id: arrow1,
+					type: 'arrow',
+					x: 150,
+					y: 150,
+					props: {
+						start: { x: 0, y: 0 },
+						end: { x: 0, y: 0 },
 					},
-					end: {
-						type: 'binding',
+				},
+			])
+			.createBindings([
+				{
+					type: 'arrow',
+					fromId: arrow1,
+					toId: ids.box1,
+					props: {
+						terminal: 'start',
 						isExact: false,
-						boundShapeId: ids.box2,
 						normalizedAnchor: { x: 0.5, y: 0.5 },
 						isPrecise: false,
 					},
 				},
-			},
-		])
+				{
+					type: 'arrow',
+					fromId: arrow1,
+					toId: ids.box2,
+					props: {
+						terminal: 'end',
+						isExact: false,
+						normalizedAnchor: { x: 0.5, y: 0.5 },
+						isPrecise: false,
+					},
+				},
+			])
 
 		editor.select(ids.box1, arrow1)
 		editor.pointerDown(150, 150, ids.box1).pointerMove(0, 0)
 
 		expect(editor.getShape(ids.box1)).toMatchObject({ x: -50, y: -50 })
-		expect(editor.getShape(arrow1)).toMatchObject({
-			props: { start: { type: 'binding' }, end: { type: 'binding' } },
+		expect(getArrowBindings(editor, editor.getShape(arrow1) as TLArrowShape)).toMatchObject({
+			start: { type: 'arrow' },
+			end: { type: 'arrow' },
 		})
 	})
 
 	it('breaks arrow bindings when cloning', () => {
 		const arrow1 = createShapeId('arrow1')
-		editor.createShapes([
-			{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
-			{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
-			{
-				id: arrow1,
-				type: 'arrow',
-				x: 150,
-				y: 150,
-				props: {
-					start: {
-						type: 'binding',
-						isExact: false,
-						boundShapeId: ids.box1,
-						normalizedAnchor: { x: 0.5, y: 0.5 },
-						isPrecise: false,
+		editor
+			.createShapes([
+				{ id: ids.box1, type: 'geo', x: 100, y: 100, props: { w: 100, h: 100 } },
+				{ id: ids.box2, type: 'geo', x: 300, y: 300, props: { w: 100, h: 100 } },
+				{
+					id: arrow1,
+					type: 'arrow',
+					x: 150,
+					y: 150,
+					props: {
+						start: { x: 0, y: 0 },
+						end: { x: 0, y: 0 },
 					},
-					end: {
-						type: 'binding',
+				},
+			])
+			.createBindings([
+				{
+					type: 'arrow',
+					fromId: arrow1,
+					toId: ids.box1,
+					props: {
+						terminal: 'start',
 						isExact: false,
-						boundShapeId: ids.box2,
 						normalizedAnchor: { x: 0.5, y: 0.5 },
 						isPrecise: false,
 					},
 				},
-			},
-		])
+				{
+					type: 'arrow',
+					fromId: arrow1,
+					toId: ids.box2,
+					props: {
+						terminal: 'end',
+						isExact: false,
+						normalizedAnchor: { x: 0.5, y: 0.5 },
+						isPrecise: false,
+					},
+				},
+			])
 
 		editor.select(ids.box1, arrow1)
 		editor.pointerDown(150, 150, ids.box1).pointerMove(0, 0, { altKey: true })
 
 		expect(editor.getShape(ids.box1)).toMatchObject({ x: 100, y: 100 })
-		expect(editor.getShape(arrow1)).toMatchObject({
-			props: { start: { type: 'binding' }, end: { type: 'binding' } },
+		expect(getArrowBindings(editor, editor.getShape(arrow1) as TLArrowShape)).toMatchObject({
+			start: { type: 'arrow' },
+			end: { type: 'arrow' },
 		})
 
 		const newArrow = editor
 			.getCurrentPageShapes()
-			.find((s) => editor.isShapeOfType<TLArrowShape>(s, 'arrow') && s.id !== arrow1)
-		expect(newArrow).toMatchObject({
-			props: { start: { type: 'binding' }, end: { type: 'point' } },
+			.find((s) => editor.isShapeOfType(s, 'arrow') && s.id !== arrow1)! as TLArrowShape
+		expect(getArrowBindings(editor, newArrow)).toMatchObject({
+			start: { type: 'arrow' },
+			end: undefined,
 		})
 	})
 })
@@ -1966,7 +2075,7 @@ describe('Note shape grid helper positions / pits', () => {
 		for (const pit of defaultPitLocations) {
 			editor
 				.pointerMove(pit.x - 4, pit.y - 4) // not exactly in the pit...
-				.expectShapeToMatch({ ...shape, x: pit.x - 100, y: pit.y - 100 }) // but it's in the pit!
+				.expectShapeToMatch({ ...shape, x: pit.x - 100, y: pit.y - 100, index: 'a2' as IndexKey }) // but it's in the pit!
 		}
 	})
 
@@ -1982,9 +2091,11 @@ describe('Note shape grid helper positions / pits', () => {
 
 		for (const pit of defaultPitLocations) {
 			const rotatedPit = new Vec(pit.x, pit.y).rot(0.001)
-			editor
-				.pointerMove(rotatedPit.x - 4, rotatedPit.y - 4) // not exactly in the pit...
-				.expectShapeToMatch({ ...shape, x: rotatedPit.x - 104, y: rotatedPit.y - 104 }) // and NOT in the pit
+			editor.pointerMove(rotatedPit.x - 4, rotatedPit.y - 4) // not exactly in the pit...
+
+			const shapeAfter = editor.getShape(shape)!
+			expect(Math.abs(shapeAfter.x - (rotatedPit.x - 104))).toBeLessThanOrEqual(0.001)
+			expect(Math.abs(shapeAfter.y - (rotatedPit.y - 104))).toBeLessThanOrEqual(0.001)
 		}
 	})
 
@@ -2001,9 +2112,11 @@ describe('Note shape grid helper positions / pits', () => {
 		for (const pit of defaultPitLocations) {
 			const rotatedPit = new Vec(pit.x, pit.y).rot(0.001)
 			const rotatedPointPosition = new Vec(pit.x - 100, pit.y - 100).rot(0.001)
-			editor
-				.pointerMove(rotatedPit.x - 4, rotatedPit.y - 4) // not exactly in the pit...
-				.expectShapeToMatch({ ...shape, x: rotatedPointPosition.x, y: rotatedPointPosition.y }) // and in the pit
+			editor.pointerMove(rotatedPit.x - 4, rotatedPit.y - 4) // not exactly in the pit...
+
+			const shapeAfter = editor.getShape(shape)!
+			expect(Math.abs(shapeAfter.x - rotatedPointPosition.x)).toBeLessThanOrEqual(0.001)
+			expect(Math.abs(shapeAfter.y - rotatedPointPosition.y)).toBeLessThanOrEqual(0.001)
 		}
 	})
 
@@ -2011,7 +2124,7 @@ describe('Note shape grid helper positions / pits', () => {
 		editor
 			.createShape({ type: 'note' })
 			.createShape({ type: 'note', x: 500, y: 500 })
-			.updateShape({ ...editor.getLastCreatedShape(), props: { growY: 100 } })
+			.updateShape({ ...editor.getLastCreatedShape<TLNoteShape>(), props: { growY: 100 } })
 			.pointerMove(600, 600)
 			// start translating
 			.pointerDown()
@@ -2022,15 +2135,15 @@ describe('Note shape grid helper positions / pits', () => {
 		const pit = defaultPitLocations[0] // top
 		editor
 			.pointerMove(pit.x - 4, pit.y - 4) // not exactly in the pit...
-			.expectShapeToMatch({ ...shape, x: pit.x - 104, y: pit.y - 104 }) // not in the pit — the pit is further up!
+			.expectShapeToMatch({ ...shape, x: pit.x - 104, y: pit.y - 104, index: 'a2' as IndexKey }) // not in the pit — the pit is further up!
 			.pointerMove(pit.x - 4, pit.y - 4 - 100) // account for the translating shape's growY
-			.expectShapeToMatch({ ...shape, x: pit.x - 100, y: pit.y - 200 }) // and we're in the pit
+			.expectShapeToMatch({ ...shape, x: pit.x - 100, y: pit.y - 200, index: 'a2' as IndexKey }) // and we're in the pit
 	})
 
 	it('Snaps correctly to the bottom when the not-translating shape has growY', () => {
 		editor
 			.createShape({ type: 'note' })
-			.updateShape({ ...editor.getLastCreatedShape(), props: { growY: 100 } })
+			.updateShape({ ...editor.getLastCreatedShape<TLNoteShape>(), props: { growY: 100 } })
 			.createShape({ type: 'note', x: 500, y: 500 })
 			.pointerMove(600, 600)
 			// start translating
@@ -2040,9 +2153,9 @@ describe('Note shape grid helper positions / pits', () => {
 
 		editor
 			.pointerMove(104, 324) // not exactly in the pit...
-			.expectShapeToMatch({ ...shape, x: 4, y: 224 }) // not in the pit — the pit is further down!
+			.expectShapeToMatch({ ...shape, x: 4, y: 224, index: 'a2' as IndexKey }) // not in the pit — the pit is further down!
 			.pointerMove(104, 424) // account for the shape's growY
-			.expectShapeToMatch({ ...shape, x: 0, y: 320 }) // and we're in the pit (420 - 100 = 320)
+			.expectShapeToMatch({ ...shape, x: 0, y: 320, index: 'a2' as IndexKey }) // and we're in the pit (420 - 100 = 320)
 	})
 
 	it('Snaps multiple notes to the pit using the note under the cursor', () => {
@@ -2064,7 +2177,7 @@ describe('Note shape grid helper positions / pits', () => {
 
 		// B snaps the selection to the pit
 		// (index is manually set because the sticky gets brought to front)
-		editor.expectShapeToMatch({ ...shapeB, x: 220, y: 0 })
+		editor.expectShapeToMatch({ ...shapeB, x: 220, y: 0, index: 'a2' as IndexKey })
 		expect(editor.getSelectionPageBounds()).toMatchObject({ x: 220, y: 0, w: 400, h: 200 })
 
 		editor.cancel()
@@ -2085,7 +2198,7 @@ describe('Note shape grid helper positions / pits', () => {
 		// Even though B is in the same place as it was when it snapped (while dragging over B),
 		// because our cursor is over C it won't fall into the pit—because it's not hovered
 		// (index is manually set because the sticky gets brought to front)
-		editor.expectShapeToMatch({ ...shapeB, x: 216, y: -4 })
+		editor.expectShapeToMatch({ ...shapeB, x: 216, y: -4, index: 'a2' as IndexKey })
 		expect(editor.getSelectionPageBounds()).toMatchObject({ x: 216, y: -4, w: 400, h: 200 })
 	})
 
@@ -2128,5 +2241,351 @@ describe('Note shape grid helper positions / pits', () => {
 		// B snaps the selection to the pit
 		editor.expectShapeToMatch({ id: shapeB.id, x: 220, y: 0 }) // snapped
 		editor.expectShapeToMatch({ id: shapeC.id, x: 221, y: 1 }) // not snapped
+	})
+})
+
+describe('cancelling a translate operation', () => {
+	it('undoes any changes since the start of the translate operation', () => {
+		editor.createShape({
+			type: 'geo',
+			x: 0,
+			y: 0,
+			props: {
+				w: 100,
+				h: 100,
+			},
+		})
+
+		const shape = editor.getLastCreatedShape()
+
+		editor.select(shape)
+
+		const bounds = editor.getShapePageBounds(shape.id)!
+		editor.pointerDown(bounds.midX, bounds.midY)
+		editor.pointerMove(bounds.midX + 100, bounds.midY)
+		expect(editor.getShapePageBounds(shape.id)).toMatchObject({ x: 100, y: 0, w: 100, h: 100 })
+		editor.cancel()
+		expect(editor.getShapePageBounds(shape.id)).toMatchObject({ x: 0, y: 0, w: 100, h: 100 })
+	})
+
+	it('undoes the shape creation if creating a shape', () => {
+		editor.setCurrentTool('note')
+		editor.pointerDown(0, 0)
+		editor.pointerMove(100, 100)
+		editor.expectToBeIn('select.translating')
+		const shape = editor.getLastCreatedShape()
+		expect(editor.getShapePageBounds(shape)?.center).toMatchObject({ x: 100, y: 100 })
+		editor.cancel()
+		expect(editor.getShape(shape.id)).toBeUndefined()
+	})
+
+	it('handles legacy creating:{shapeId} marks created with editor.mark', () => {
+		const shapeId = createShapeId()
+
+		editor
+			.createShape({
+				id: shapeId,
+				type: 'geo',
+				x: 0,
+				y: 0,
+				props: {
+					w: 100,
+					h: 100,
+				},
+			})
+			.select(shapeId)
+		const shape = editor.getOnlySelectedShape()!
+		editor.markHistoryStoppingPoint(`before`)
+		editor.updateShape({ ...shape, meta: { a: 'before' } })
+		editor.markHistoryStoppingPoint(`creating:${shapeId}`)
+		editor.updateShape({ ...shape, meta: { a: 'creating' } })
+		editor.markHistoryStoppingPoint(`after`)
+		editor.updateShape({ ...shape, meta: { a: 'after' } })
+		editor.pointerMove(0, 0)
+		editor.setCurrentTool('select.translating', {
+			type: 'pointer',
+			button: 0, // left mouse button
+			altKey: false,
+			ctrlKey: false,
+			metaKey: false,
+			accelKey: false,
+			isPen: false,
+			name: 'pointer_move',
+			point: { x: 0, y: 0 },
+			pointerId: 0,
+			shape: editor.getShape(shapeId)!,
+			shiftKey: false,
+			target: 'shape',
+			isCreating: true,
+		} satisfies TranslatingInfo)
+		expect(editor.getShapePageBounds(shapeId)?.center).toMatchObject({ x: 50, y: 50 })
+		editor.expectToBeIn('select.translating')
+		editor.pointerMove(100, 100)
+		expect(editor.getShapePageBounds(shapeId)?.center).toMatchObject({ x: 150, y: 150 })
+		expect(editor.getShape(shapeId)?.meta).toMatchObject({ a: 'after' })
+		editor.cancel()
+		expect(editor.getShape(shapeId)?.meta).toMatchObject({ a: 'before' })
+	})
+
+	it('handles legacy creating:{shapeId} marks created with editor.markHistoryStoppingPoint', () => {
+		const shapeId = createShapeId()
+
+		editor
+			.createShape({
+				id: shapeId,
+				type: 'geo',
+				x: 0,
+				y: 0,
+				props: {
+					w: 100,
+					h: 100,
+				},
+			})
+			.select(shapeId)
+		const shape = editor.getOnlySelectedShape()!
+		editor.markHistoryStoppingPoint(`before`)
+		editor.updateShape({ ...shape, meta: { a: 'before' } })
+		editor.markHistoryStoppingPoint(`creating:${shapeId}`)
+		editor.updateShape({ ...shape, meta: { a: 'creating' } })
+		editor.markHistoryStoppingPoint(`after`)
+		editor.updateShape({ ...shape, meta: { a: 'after' } })
+		editor.pointerMove(0, 0)
+		editor.setCurrentTool('select.translating', {
+			type: 'pointer',
+			button: 0, // left mouse button
+			altKey: false,
+			ctrlKey: false,
+			metaKey: false,
+			accelKey: false,
+			isPen: false,
+			name: 'pointer_move',
+			point: { x: 0, y: 0 },
+			pointerId: 0,
+			shape: editor.getShape(shapeId)!,
+			shiftKey: false,
+			target: 'shape',
+			isCreating: true,
+		} satisfies TranslatingInfo)
+		expect(editor.getShapePageBounds(shapeId)?.center).toMatchObject({ x: 50, y: 50 })
+		editor.expectToBeIn('select.translating')
+		editor.pointerMove(100, 100)
+		expect(editor.getShapePageBounds(shapeId)?.center).toMatchObject({ x: 150, y: 150 })
+		expect(editor.getShape(shapeId)?.meta).toMatchObject({ a: 'after' })
+		editor.cancel()
+		expect(editor.getShape(shapeId)?.meta).toMatchObject({ a: 'before' })
+	})
+})
+
+describe('cloning mid-drag', () => {
+	it('reparents the clone, not the original, when alt is pressed during the drag', () => {
+		editor.createShapes([
+			{ id: ids.frame1, type: 'frame', x: 500, y: 0, props: { w: 200, h: 200 } },
+			{ id: ids.box1, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } },
+		])
+		editor.pointerDown(50, 50, { target: 'shape', shape: editor.getShape(ids.box1) })
+		editor.pointerMove(60, 60)
+		editor.expectToBeIn('select.translating')
+		editor.keyDown('Alt')
+		editor.pointerMove(600, 100)
+		vi.advanceTimersByTime(300)
+		editor.pointerUp(600, 100)
+
+		const original = editor.getShape(ids.box1)!
+		expect(original.parentId).toBe(editor.getCurrentPageId())
+		expect(editor.getShapePageBounds(original)).toMatchObject({ x: 0, y: 0 })
+
+		const clone = editor.getCurrentPageShapes().find((s) => s.type === 'geo' && s.id !== ids.box1)!
+		expect(clone.parentId).toBe(ids.frame1)
+	})
+
+	it('reparents the original when alt is released during the drag', () => {
+		editor.createShapes([
+			{ id: ids.frame1, type: 'frame', x: 500, y: 0, props: { w: 200, h: 200 } },
+			{ id: ids.box1, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } },
+		])
+		editor.keyDown('Alt')
+		editor.pointerDown(50, 50, { target: 'shape', shape: editor.getShape(ids.box1) })
+		editor.pointerMove(60, 60)
+		editor.expectToBeIn('select.translating')
+		editor.keyUp('Alt')
+		vi.advanceTimersByTime(250) // the alt key is released on a timer
+		editor.pointerMove(600, 100)
+		vi.advanceTimersByTime(300)
+		editor.pointerUp(600, 100)
+
+		expect(editor.getCurrentPageShapes().filter((s) => s.type === 'geo')).toHaveLength(1)
+		expect(editor.getShape(ids.box1)!.parentId).toBe(ids.frame1)
+	})
+})
+
+describe('when shapes disappear mid-drag', () => {
+	it('does not crash when a bound arrow being translated is deleted', () => {
+		editor.createShapes([
+			{ id: ids.box1, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } },
+			{
+				id: ids.lineA,
+				type: 'arrow',
+				x: 200,
+				y: 200,
+				props: { start: { x: 0, y: 0 }, end: { x: 100, y: 100 } },
+			},
+		])
+		editor.createBindings([
+			{
+				fromId: ids.lineA,
+				toId: ids.box1,
+				type: 'arrow',
+				props: {
+					terminal: 'start',
+					normalizedAnchor: { x: 0.5, y: 0.5 },
+					isExact: false,
+					isPrecise: false,
+					snap: 'none',
+				},
+			},
+		])
+		editor.select(ids.lineA)
+		editor.pointerDown(250, 250, { target: 'shape', shape: editor.getShape(ids.lineA) })
+		editor.pointerMove(260, 260)
+		editor.expectToBeIn('select.translating')
+
+		editor.store.mergeRemoteChanges(() => editor.store.remove([ids.lineA]))
+
+		expect(() => editor.pointerMove(270, 270)).not.toThrow()
+		expect(() => editor.pointerUp(270, 270)).not.toThrow()
+		editor.expectToBeIn('select.idle')
+	})
+
+	it('does not crash when the drop target is deleted', () => {
+		editor.createShapes([
+			{ id: ids.frame1, type: 'frame', x: 500, y: 0, props: { w: 200, h: 200 } },
+			{ id: ids.box1, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } },
+		])
+		editor.pointerDown(50, 50, { target: 'shape', shape: editor.getShape(ids.box1) })
+		editor.pointerMove(600, 100)
+		vi.advanceTimersByTime(300)
+		expect(editor.getShape(ids.box1)!.parentId).toBe(ids.frame1)
+
+		editor.store.mergeRemoteChanges(() => editor.store.remove([ids.frame1]))
+
+		expect(() => {
+			editor.pointerMove(610, 110)
+			vi.advanceTimersByTime(300)
+			editor.pointerUp(610, 110)
+		}).not.toThrow()
+		editor.expectToBeIn('select.idle')
+		// The dragged shape shouldn't be left orphaned under the deleted frame
+		expect(editor.getShape(ids.box1)!.parentId).toBe(editor.getCurrentPageId())
+		expect(editor.getCurrentPageShapeIds().has(ids.box1)).toBe(true)
+	})
+
+	it('keeps the shape where it is when the drop target is deleted and the pointer lifts', () => {
+		editor.createShapes([
+			{ id: ids.frame1, type: 'frame', x: 500, y: 0, props: { w: 200, h: 200 } },
+			{ id: ids.box1, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } },
+		])
+		editor.pointerDown(50, 50, { target: 'shape', shape: editor.getShape(ids.box1) })
+		editor.pointerMove(600, 100)
+		vi.advanceTimersByTime(300)
+		expect(editor.getShape(ids.box1)!.parentId).toBe(ids.frame1)
+		expect(editor.getShapePageBounds(ids.box1)).toMatchObject({ x: 550, y: 50 })
+
+		editor.store.mergeRemoteChanges(() => editor.store.remove([ids.frame1]))
+
+		// No pointer move after the delete, so nothing re-runs moveShapesToPoint: the
+		// reparent onto the page has to preserve the shape's page position by itself.
+		editor.pointerUp(600, 100)
+
+		expect(editor.getShape(ids.box1)!.parentId).toBe(editor.getCurrentPageId())
+		expect(editor.getShapePageBounds(ids.box1)).toMatchObject({ x: 550, y: 50 })
+	})
+})
+
+it('returns to idle after a creating translate with no onCreate', () => {
+	editor.createShape({ type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } })
+	const shape = editor.getLastCreatedShape()
+	editor.select(shape)
+	editor.pointerMove(50, 50)
+	editor.setCurrentTool('select.translating', {
+		type: 'pointer',
+		button: 0,
+		altKey: false,
+		ctrlKey: false,
+		metaKey: false,
+		accelKey: false,
+		isPen: false,
+		name: 'pointer_move',
+		point: { x: 50, y: 50 },
+		pointerId: 0,
+		shape,
+		shiftKey: false,
+		target: 'shape',
+		isCreating: true,
+	} satisfies TranslatingInfo)
+	editor.pointerMove(100, 100)
+	editor.pointerUp(100, 100)
+	editor.expectToBeIn('select.idle')
+})
+
+it('preserves z-indexes when translating', () => {
+	editor.createShape({ type: 'geo', x: 0, y: 0, props: { w: 200, h: 200 } })
+	editor.createShape({ type: 'geo', x: 100, y: 100, props: { w: 200, h: 200 } })
+	const [box1, box2] = editor.getLastCreatedShapes(2)
+
+	const ordered1 = editor.getCurrentPageShapesSorted().map((s) => s.id)
+	expect(ordered1.indexOf(box1.id)).toBe(0)
+	expect(ordered1.indexOf(box2.id)).toBe(1)
+
+	editor.select(box1)
+	editor.pointerDown(50, 50)
+	editor.pointerMove(60, 60)
+
+	vi.advanceTimersByTime(500)
+
+	const ordered2 = editor.getCurrentPageShapesSorted().map((s) => s.id)
+	expect(ordered2.indexOf(box1.id)).toBe(0)
+	expect(ordered2.indexOf(box2.id)).toBe(1)
+})
+
+describe('When moving shapes are changed externally mid-translation...', () => {
+	it('keeps an external rotation applied during the drag', () => {
+		editor.createShapes([box(ids.box1, 0, 0, 100, 100)])
+
+		editor.pointerDown(50, 50, ids.box1).pointerMove(150, 50)
+		editor.expectToBeIn('select.translating')
+		editor.expectShapeToMatch({ id: ids.box1, x: 100, y: 0 })
+
+		// Rotate the shape from outside the interaction, as a keyboard shortcut
+		// bound to `rotateShapesBy` would
+		editor.rotateShapesBy([ids.box1], Math.PI / 2)
+		const rotated = editor.getShape(ids.box1)!
+		expect(rotated.rotation).toBe(Math.PI / 2)
+		expect(rotated.x).not.toBeCloseTo(100, 6)
+
+		// An update without pointer movement must not stomp the rotated position
+		editor.pointerMove(150, 50)
+		let current = editor.getShape(ids.box1)!
+		expect(current.x).toBeCloseTo(rotated.x, 6)
+		expect(current.y).toBeCloseTo(rotated.y, 6)
+		expect(current.rotation).toBe(Math.PI / 2)
+
+		// Continuing the drag moves the shape from its rotated position
+		editor.pointerMove(150, 150).pointerUp()
+		current = editor.getShape(ids.box1)!
+		expect(current.x).toBeCloseTo(rotated.x, 6)
+		expect(current.y).toBeCloseTo(rotated.y + 100, 6)
+		expect(current.rotation).toBe(Math.PI / 2)
+	})
+
+	it('keeps an external position change applied during the drag', () => {
+		editor.createShapes([box(ids.box1, 0, 0, 100, 100)])
+
+		editor.pointerDown(50, 50, ids.box1).pointerMove(150, 50)
+		editor.expectShapeToMatch({ id: ids.box1, x: 100, y: 0 })
+
+		editor.nudgeShapes([ids.box1], { x: 0, y: 20 })
+
+		editor.pointerMove(250, 50).pointerUp()
+		editor.expectShapeToMatch({ id: ids.box1, x: 200, y: 20 })
 	})
 })

@@ -1,14 +1,15 @@
 import { Box } from '../Box'
-import { Vec } from '../Vec'
-import { PI, PI2 } from '../utils'
+import { PI, PI2, clamp, perimeterOfEllipse, pointInPolygon } from '../utils'
+import { Vec, VecLike } from '../Vec'
 import { Edge2d } from './Edge2d'
+import { getVerticesCountForArcLength } from './geometry-constants'
 import { Geometry2d, Geometry2dOptions } from './Geometry2d'
-import { getVerticesCountForLength } from './geometry-constants'
 
 /** @public */
 export class Ellipse2d extends Geometry2d {
-	w: number
-	h: number
+	private _w: number
+	private _h: number
+	private _edges?: Edge2d[]
 
 	constructor(
 		public config: Omit<Geometry2dOptions, 'isClosed'> & {
@@ -18,13 +19,11 @@ export class Ellipse2d extends Geometry2d {
 	) {
 		super({ ...config, isClosed: true })
 		const { width, height } = config
-		this.w = width
-		this.h = height
+		this._w = width
+		this._h = height
 	}
 
-	_edges?: Edge2d[]
-
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get edges() {
 		if (!this._edges) {
 			const { vertices } = this
@@ -41,14 +40,14 @@ export class Ellipse2d extends Geometry2d {
 
 	getVertices() {
 		// Perimeter of the ellipse
-		const w = Math.max(1, this.w)
-		const h = Math.max(1, this.h)
+		const w = Math.max(1, this._w)
+		const h = Math.max(1, this._h)
 		const cx = w / 2
 		const cy = h / 2
 		const q = Math.pow(cx - cy, 2) / Math.pow(cx + cy, 2)
 		const p = PI * (cx + cy) * (1 + (3 * q) / (10 + Math.sqrt(4 - 3 * q)))
 		// Number of points
-		const len = getVerticesCountForLength(p)
+		const len = getVerticesCountForArcLength(p)
 		// Size of step
 		const step = PI2 / len
 
@@ -63,7 +62,7 @@ export class Ellipse2d extends Geometry2d {
 		const vertices = Array(len)
 
 		for (let i = 0; i < len; i++) {
-			vertices[i] = new Vec(cx + cx * cos, cy + cy * sin)
+			vertices[i] = new Vec(clamp(cx + cx * cos, 0, w), clamp(cy + cy * sin, 0, h))
 			ts = b * cos + a * sin
 			tc = a * cos - b * sin
 			sin = ts
@@ -73,7 +72,7 @@ export class Ellipse2d extends Geometry2d {
 		return vertices
 	}
 
-	nearestPoint(A: Vec): Vec {
+	nearestPoint(A: VecLike): Vec {
 		let nearest: Vec | undefined
 		let dist = Infinity
 		let d: number
@@ -90,11 +89,42 @@ export class Ellipse2d extends Geometry2d {
 		return nearest
 	}
 
-	hitTestLineSegment(A: Vec, B: Vec): boolean {
+	override distanceToPoint(point: VecLike, hitInside = false): number {
+		const { edges } = this
+		let minDist = Infinity
+		for (let i = 0; i < edges.length; i++) {
+			const d = edges[i].distanceToPoint(point)
+			if (d < minDist) minDist = d
+		}
+		if (this.isClosed && (this.isFilled || hitInside) && pointInPolygon(point, this.vertices)) {
+			return -minDist
+		}
+		return minDist
+	}
+
+	hitTestLineSegment(A: VecLike, B: VecLike): boolean {
 		return this.edges.some((edge) => edge.hitTestLineSegment(A, B))
 	}
 
 	getBounds() {
-		return new Box(0, 0, this.w, this.h)
+		return new Box(0, 0, this._w, this._h)
+	}
+
+	getLength(): number {
+		const { _w: w, _h: h } = this
+		const cx = w / 2
+		const cy = h / 2
+		const rx = Math.max(0, cx)
+		const ry = Math.max(0, cy)
+		return perimeterOfEllipse(rx, ry)
+	}
+
+	getSvgPathData(first = false) {
+		const { _w: w, _h: h } = this
+		const cx = w / 2
+		const cy = h / 2
+		const rx = Math.max(0, cx)
+		const ry = Math.max(0, cy)
+		return `${first ? `M${cx - rx},${cy}` : ``} a${rx},${ry},0,1,1,${rx * 2},0a${rx},${ry},0,1,1,-${rx * 2},0`
 	}
 }

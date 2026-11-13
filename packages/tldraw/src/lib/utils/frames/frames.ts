@@ -1,7 +1,17 @@
-import { Box, Editor, TLFrameShape, TLShapeId, TLShapePartial, Vec, compact } from '@tldraw/editor'
+import {
+	Box,
+	Editor,
+	TLBaseBoxShape,
+	TLShape,
+	TLShapeId,
+	TLShapePartial,
+	Vec,
+	compact,
+	kickoutOccludedShapes,
+} from '@tldraw/editor'
 
 /**
- * Remove a frame.
+ * Remove a frame (or any frame-like container shape).
  *
  * @param editor - tldraw editor instance.
  * @param ids - Ids of the frames you wish to remove.
@@ -11,30 +21,74 @@ import { Box, Editor, TLFrameShape, TLShapeId, TLShapePartial, Vec, compact } fr
 export function removeFrame(editor: Editor, ids: TLShapeId[]) {
 	const frames = compact(
 		ids
-			.map((id) => editor.getShape<TLFrameShape>(id))
-			.filter((f) => f && editor.isShapeOfType<TLFrameShape>(f, 'frame'))
+			.map((id) => editor.getShape<TLBaseBoxShape>(id))
+			.filter((f) => f && editor.isShapeFrameLike(f))
 	)
 	if (!frames.length) return
 
 	const allChildren: TLShapeId[] = []
-	editor.batch(() => {
+	editor.run(() => {
 		frames.map((frame) => {
 			const children = editor.getSortedChildIdsForParent(frame.id)
 			if (children.length) {
-				editor.reparentShapes(children, frame.parentId, frame.index)
+				kickoutOccludedShapes(editor, children, {
+					filter: (s) => !frames.find((f) => f.id === s.id),
+				})
 				allChildren.push(...children)
 			}
 		})
 		editor.setSelectedShapes(allChildren)
-		editor.deleteShapes(ids)
+		editor.deleteShapes(frames)
 	})
+}
+
+/**
+ * The ids from `ids` that a new frame could actually hold. Locked shapes stay put, matching
+ * group, and an arrow bound to a shape that will not be in the frame is skipped because the
+ * arrow binding util would reparent it straight back out.
+ *
+ * @internal
+ */
+export function getFrameableShapeIds(editor: Editor, ids: TLShapeId[]): TLShapeId[] {
+	const unlocked = compact(ids.map((id) => editor.getShape(id))).filter((shape) => !shape.isLocked)
+	// Check bound targets against the unlocked set rather than `ids`: a locked target stays out
+	// of the frame, so its arrow must too. Arrows can't bind to arrows, so one pass is enough.
+	const unlockedIds = new Set(unlocked.map((shape) => shape.id))
+	return unlocked
+		.filter((shape) =>
+			editor.getBindingsFromShape(shape, 'arrow').every((binding) => unlockedIds.has(binding.toId))
+		)
+		.map((shape) => shape.id)
 }
 
 /** @internal */
 export const DEFAULT_FRAME_PADDING = 50
 
+export function getFrameChildrenBounds(
+	children: (TLShape | undefined)[],
+	editor: Editor,
+	opts: { padding: number } = { padding: DEFAULT_FRAME_PADDING }
+) {
+	const bounds = Box.FromPoints(
+		children.flatMap((shape) => {
+			if (!shape) return []
+			const geometry = editor.getShapeGeometry(shape.id)
+			const transform = editor.getShapeLocalTransform(shape)
+			return transform?.applyToPoints(geometry.vertices) ?? []
+		})
+	)
+
+	const padding = opts.padding ?? DEFAULT_FRAME_PADDING
+	const w = bounds.w + 2 * padding
+	const h = bounds.h + 2 * padding
+	const dx = padding - bounds.minX
+	const dy = padding - bounds.minY
+
+	return { w, h, dx, dy }
+}
+
 /**
- * Fit a frame to its content.
+ * Fit a frame (or any frame-like container shape) to its content.
  *
  * @param id - Id of the frame you wish to fit to content.
  * @param editor - tlraw editor instance.
@@ -43,30 +97,20 @@ export const DEFAULT_FRAME_PADDING = 50
  * @public
  */
 export function fitFrameToContent(editor: Editor, id: TLShapeId, opts = {} as { padding: number }) {
-	const frame = editor.getShape<TLFrameShape>(id)
-	if (!frame) return
+	const frame = editor.getShape<TLBaseBoxShape>(id)
+	if (!frame || !editor.isShapeFrameLike(frame)) return
 
 	const childIds = editor.getSortedChildIdsForParent(frame.id)
 	const children = compact(childIds.map((id) => editor.getShape(id)))
 	if (!children.length) return
 
-	const bounds = Box.FromPoints(
-		children.flatMap((shape) => {
-			const geometry = editor.getShapeGeometry(shape.id)
-			return editor.getShapeLocalTransform(shape)!.applyToPoints(geometry.vertices)
-		})
-	)
+	const { w, h, dx, dy } = getFrameChildrenBounds(children, editor, opts)
 
-	const { padding = DEFAULT_FRAME_PADDING } = opts
-	const w = bounds.w + 2 * padding
-	const h = bounds.h + 2 * padding
-	const dx = padding - bounds.minX
-	const dy = padding - bounds.minY
 	// The shapes already perfectly fit the frame.
 	if (dx === 0 && dy === 0 && frame.props.w === w && frame.props.h === h) return
 
 	const diff = new Vec(dx, dy).rot(frame.rotation)
-	editor.batch(() => {
+	editor.run(() => {
 		const changes: TLShapePartial[] = childIds.map((child) => {
 			const shape = editor.getShape(child)!
 			return {

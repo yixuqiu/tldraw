@@ -1,14 +1,16 @@
-import { RotateCorner, StateNode, TLEventHandlers, TLPointerEventInfo } from '@tldraw/editor'
+import { RotateCorner, StateNode, TLClickEventInfo, TLPointerEventInfo } from '@tldraw/editor'
+import { DeferredDoubleClick } from '../selectHelpers'
 import { CursorTypeMap } from './PointingResizeHandle'
 
 type PointingRotateHandleInfo = Extract<TLPointerEventInfo, { target: 'selection' }> & {
-	onInteractionEnd?: string
+	onInteractionEnd?: string | (() => void)
 }
 
 export class PointingRotateHandle extends StateNode {
 	static override id = 'pointing_rotate_handle'
 
 	private info = {} as PointingRotateHandleInfo
+	private doubleClick = new DeferredDoubleClick(this)
 
 	private updateCursor() {
 		this.editor.setCursor({
@@ -17,61 +19,80 @@ export class PointingRotateHandle extends StateNode {
 		})
 	}
 
-	override onEnter = (info: PointingRotateHandleInfo) => {
-		this.parent.setCurrentToolIdMask(info.onInteractionEnd)
+	override onEnter(info: PointingRotateHandleInfo) {
 		this.info = info
+		this.doubleClick.start(info)
+		if (typeof info.onInteractionEnd === 'string') {
+			this.parent.setCurrentToolIdMask(info.onInteractionEnd)
+		}
 		this.updateCursor()
 	}
 
-	override onExit = () => {
+	override onExit() {
 		this.parent.setCurrentToolIdMask(undefined)
 		this.editor.setCursor({ type: 'default', rotation: 0 })
 	}
 
-	override onPointerMove: TLEventHandlers['onPointerMove'] = () => {
-		if (this.editor.inputs.isDragging) {
+	override onPointerMove() {
+		if (this.editor.inputs.getIsDragging()) {
 			this.startRotating()
 		}
 	}
 
-	override onLongPress: TLEventHandlers['onLongPress'] = () => {
+	override onLongPress() {
 		this.startRotating()
 	}
 
 	private startRotating() {
-		if (this.editor.getInstanceState().isReadonly) return
+		if (this.editor.getIsReadonly()) return
 		this.parent.transition('rotating', this.info)
 	}
 
-	override onPointerUp = () => {
+	override onPointerUp() {
+		if (this.doubleClick.replay()) return
 		this.complete()
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onDoubleClick(info: TLClickEventInfo) {
+		this.doubleClick.defer(info)
+	}
+
+	override onCancel() {
 		this.cancel()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onComplete() {
 		this.cancel()
 	}
 
-	override onInterrupt = () => {
+	override onInterrupt() {
 		this.cancel()
 	}
 
 	private complete() {
-		if (this.info.onInteractionEnd) {
-			this.editor.setCurrentTool(this.info.onInteractionEnd, {})
-		} else {
-			this.parent.transition('idle')
+		const { onInteractionEnd } = this.info
+		if (onInteractionEnd) {
+			if (typeof onInteractionEnd === 'string') {
+				// Return to the tool that was active before this one, whether tool lock is turned on or not!
+				this.editor.setCurrentTool(onInteractionEnd, {})
+			} else {
+				onInteractionEnd?.()
+			}
+			return
 		}
+		this.parent.transition('idle')
 	}
 
 	private cancel() {
-		if (this.info.onInteractionEnd) {
-			this.editor.setCurrentTool(this.info.onInteractionEnd, {})
-		} else {
-			this.parent.transition('idle')
+		const { onInteractionEnd } = this.info
+		if (onInteractionEnd) {
+			if (typeof onInteractionEnd === 'string') {
+				this.editor.setCurrentTool(onInteractionEnd, {})
+			} else {
+				onInteractionEnd()
+			}
+			return
 		}
+		this.parent.transition('idle')
 	}
 }

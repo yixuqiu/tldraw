@@ -1,10 +1,9 @@
 import * as vscode from 'vscode'
+// @ts-ignore
+import type { VscodeMessage } from '../../messages'
 import { DocumentChangeEventArgs, TLDrawDocument } from './TldrawDocument'
 import { TldrawWebviewManager } from './TldrawWebviewManager'
 import { nicelog } from './utils'
-
-// @ts-ignore
-import type { VscodeMessage } from '../../messages'
 
 export class TldrawEditorProvider implements vscode.CustomEditorProvider<TLDrawDocument> {
 	private static newTDFileId = 1
@@ -19,7 +18,7 @@ export class TldrawEditorProvider implements vscode.CustomEditorProvider<TLDrawD
 
 	constructor(private readonly context: vscode.ExtensionContext) {}
 
-	public static register = (context: vscode.ExtensionContext): vscode.Disposable => {
+	public static register(context: vscode.ExtensionContext): vscode.Disposable {
 		// Several commands exist only to prevent the default keyboard shortcuts
 		const noopCmds = ['zoomIn', 'zoomOut', 'resetZoom', 'toggleDarkMode']
 		noopCmds.forEach((name) =>

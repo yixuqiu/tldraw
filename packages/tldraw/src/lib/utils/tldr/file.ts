@@ -1,5 +1,9 @@
 import {
+	createTLStore,
+	defineMessages,
 	Editor,
+	exhaustiveSwitchError,
+	fetch,
 	FileHelpers,
 	MigrationFailureReason,
 	MigrationResult,
@@ -9,20 +13,41 @@ import {
 	SerializedSchemaV1,
 	SerializedSchemaV2,
 	SerializedStore,
+	StoreSnapshot,
 	T,
 	TLAssetId,
+	TLImageAsset,
 	TLRecord,
 	TLSchema,
 	TLStore,
-	UnknownRecord,
-	createTLStore,
-	exhaustiveSwitchError,
-	partition,
+	TLVideoAsset,
 	transact,
+	UnknownRecord,
 } from '@tldraw/editor'
 import { TLUiToastsContextType } from '../../ui/context/toasts'
-import { TLUiTranslationKey } from '../../ui/hooks/useTranslation/TLUiTranslationKey'
+import { useTranslation } from '../../ui/hooks/useTranslation/useTranslation'
 import { buildFromV1Document } from '../tldr/buildFromV1Document'
+
+const messages = defineMessages({
+	assetsFilesUploadFailed: { id: 'assets.files.upload-failed', defaultMessage: 'Upload failed' },
+	fileSystemFileOpenErrorFileFormatVersionTooNew: {
+		id: 'file-system.file-open-error.file-format-version-too-new',
+		defaultMessage:
+			'The file you tried to open is from a newer version of tldraw. Please reload the page and try again.',
+	},
+	fileSystemFileOpenErrorGenericCorruptedFile: {
+		id: 'file-system.file-open-error.generic-corrupted-file',
+		defaultMessage: 'The file you tried to open is corrupted.',
+	},
+	fileSystemFileOpenErrorNotATldrawFile: {
+		id: 'file-system.file-open-error.not-a-tldraw-file',
+		defaultMessage: 'The file you tried to open doesn’t look like a tldraw file.',
+	},
+	fileSystemFileOpenErrorTitle: {
+		id: 'file-system.file-open-error.title',
+		defaultMessage: 'Could not open file',
+	},
+})
 
 /** @public */
 export const TLDRAW_FILE_MIMETYPE = 'application/vnd.tldraw+json' as const
@@ -80,7 +105,7 @@ export function isV1File(data: any) {
 			return true
 		}
 		return false
-	} catch (e) {
+	} catch {
 		return false
 	}
 }
@@ -113,7 +138,7 @@ export function parseTldrawJsonFile({
 			if (isV1File(data)) {
 				return Result.err({ type: 'v1File', data })
 			}
-		} catch (e) {
+		} catch {
 			// noop
 		}
 
@@ -133,9 +158,10 @@ export function parseTldrawJsonFile({
 	// records. lets create a store with the records and migrate it to the
 	// latest version
 	let migrationResult: MigrationResult<SerializedStore<TLRecord>>
+	let storeSnapshot: SerializedStore<TLRecord>
 	try {
 		const records = pruneUnusedAssets(data.records as TLRecord[])
-		const storeSnapshot = Object.fromEntries(records.map((r) => [r.id, r]))
+		storeSnapshot = Object.fromEntries(records.map((r) => [r.id, r]))
 		migrationResult = schema.migrateStoreSnapshot({ store: storeSnapshot, schema: data.schema })
 	} catch (e) {
 		// junk data in the migration
@@ -152,7 +178,7 @@ export function parseTldrawJsonFile({
 	try {
 		return Result.ok(
 			createTLStore({
-				initialData: migrationResult.value,
+				snapshot: { store: storeSnapshot, schema: data.schema },
 				schema,
 			})
 		)
@@ -164,20 +190,29 @@ export function parseTldrawJsonFile({
 	}
 }
 
+// An asset is in use while any other record names it: a shape's assetId, or an asset id anywhere
+// in a record, such as a custom record that keeps shapes for later.
 function pruneUnusedAssets(records: TLRecord[]) {
-	const usedAssets = new Set<TLAssetId>()
-	for (const record of records) {
-		if (record.typeName === 'shape' && 'assetId' in record.props && record.props.assetId) {
-			usedAssets.add(record.props.assetId)
+	const assetIds = new Set<string>(records.filter((r) => r.typeName === 'asset').map((r) => r.id))
+	if (assetIds.size === 0) return records
+	const usedAssets = new Set<string>()
+	const visit = (value: unknown) => {
+		if (typeof value === 'string') {
+			if (assetIds.has(value)) usedAssets.add(value)
+		} else if (value && typeof value === 'object') {
+			for (const child of Object.values(value)) visit(child)
 		}
+	}
+	for (const record of records) {
+		if (record.typeName !== 'asset') visit(record)
 	}
 	return records.filter((r) => r.typeName !== 'asset' || usedAssets.has(r.id))
 }
 
 /** @public */
-export async function serializeTldrawJson(store: TLStore): Promise<string> {
+export async function serializeTldrawJson(editor: Editor): Promise<string> {
 	const records: TLRecord[] = []
-	for (const record of store.allRecords()) {
+	for (const record of editor.store.allRecords()) {
 		switch (record.typeName) {
 			case 'asset':
 				if (
@@ -187,10 +222,13 @@ export async function serializeTldrawJson(store: TLStore): Promise<string> {
 				) {
 					let assetSrcToSave
 					try {
+						let src = record.props.src
+						if (!src.startsWith('http')) {
+							src =
+								(await editor.resolveAssetUrl(record.id, { shouldResolveToOriginal: true })) || ''
+						}
 						// try to save the asset as a base64 string
-						assetSrcToSave = await FileHelpers.blobToDataUrl(
-							await (await fetch(record.props.src)).blob()
-						)
+						assetSrcToSave = await FileHelpers.blobToDataUrl(await (await fetch(src)).blob())
 					} catch {
 						// if that fails, just save the original src
 						assetSrcToSave = record.props.src
@@ -215,21 +253,21 @@ export async function serializeTldrawJson(store: TLStore): Promise<string> {
 
 	return JSON.stringify({
 		tldrawFileFormatVersion: LATEST_TLDRAW_FILE_FORMAT_VERSION,
-		schema: store.schema.serialize(),
+		schema: editor.store.schema.serialize(),
 		records: pruneUnusedAssets(records),
 	})
 }
 
 /** @public */
-export async function serializeTldrawJsonBlob(store: TLStore): Promise<Blob> {
-	return new Blob([await serializeTldrawJson(store)], { type: TLDRAW_FILE_MIMETYPE })
+export async function serializeTldrawJsonBlob(editor: Editor): Promise<Blob> {
+	return new Blob([await serializeTldrawJson(editor)], { type: TLDRAW_FILE_MIMETYPE })
 }
 
 /** @internal */
 export async function parseAndLoadDocument(
 	editor: Editor,
 	document: string,
-	msg: (id: TLUiTranslationKey | Exclude<string, TLUiTranslationKey>) => string,
+	msg: ReturnType<typeof useTranslation>,
 	addToast: TLUiToastsContextType['addToast'],
 	onV1FileLoad?: () => void,
 	forceDarkMode?: boolean
@@ -248,16 +286,16 @@ export async function parseAndLoadDocument(
 					tags: { parseErrorType: parseFileResult.error.type },
 				})
 				reportError(parseFileResult.error.cause)
-				description = msg('file-system.file-open-error.not-a-tldraw-file')
+				description = msg(messages.fileSystemFileOpenErrorNotATldrawFile)
 				break
 			case 'fileFormatVersionTooNew':
-				description = msg('file-system.file-open-error.file-format-version-too-new')
+				description = msg(messages.fileSystemFileOpenErrorFileFormatVersionTooNew)
 				break
 			case 'migrationFailed':
 				if (parseFileResult.error.reason === MigrationFailureReason.TargetVersionTooNew) {
-					description = msg('file-system.file-open-error.file-format-version-too-new')
+					description = msg(messages.fileSystemFileOpenErrorFileFormatVersionTooNew)
 				} else {
-					description = msg('file-system.file-open-error.generic-corrupted-file')
+					description = msg(messages.fileSystemFileOpenErrorGenericCorruptedFile)
 				}
 				break
 			case 'invalidRecords':
@@ -267,7 +305,7 @@ export async function parseAndLoadDocument(
 					tags: { parseErrorType: parseFileResult.error.type },
 				})
 				reportError(parseFileResult.error.cause)
-				description = msg('file-system.file-open-error.generic-corrupted-file')
+				description = msg(messages.fileSystemFileOpenErrorGenericCorruptedFile)
 				break
 			case 'v1File': {
 				buildFromV1Document(editor, parseFileResult.error.data.document)
@@ -278,7 +316,7 @@ export async function parseAndLoadDocument(
 				exhaustiveSwitchError(parseFileResult.error, 'type')
 		}
 		addToast({
-			title: msg('file-system.file-open-error.title'),
+			title: msg(messages.fileSystemFileOpenErrorTitle),
 			description,
 			severity: 'error',
 		})
@@ -293,26 +331,66 @@ export async function parseAndLoadDocument(
 	// this file before they'll get their camera etc.
 	// restored. we could change this in the future.
 	transact(() => {
-		const initialBounds = editor.getViewportScreenBounds().clone()
-		const isFocused = editor.getInstanceState().isFocused
-		editor.store.clear()
-		const [shapes, nonShapes] = partition(
-			parseFileResult.value.allRecords(),
-			(record) => record.typeName === 'shape'
-		)
-		editor.store.put(nonShapes, 'initialize')
-		editor.store.ensureStoreIsUsable()
-		editor.store.put(shapes, 'initialize')
-		editor.history.clear()
-		// Put the old bounds back in place
-		editor.updateViewportScreenBounds(initialBounds)
+		const snapshot = parseFileResult.value.getStoreSnapshot()
+		editor.loadSnapshot(snapshot)
+		editor.clearHistory()
+
+		extractAssets(editor, snapshot, msg, addToast)
 
 		const bounds = editor.getCurrentPageBounds()
 		if (bounds) {
-			editor.zoomToBounds(bounds, { targetZoom: 1 })
+			editor.zoomToBounds(bounds, { targetZoom: 1, immediate: true })
 		}
-		editor.updateInstanceState({ isFocused })
 	})
 
-	if (forceDarkMode) editor.user.updateUserPreferences({ isDarkMode: true })
+	if (forceDarkMode) editor.user.updateUserPreferences({ colorScheme: 'dark' })
+}
+
+async function extractAssets(
+	editor: Editor,
+	snapshot: StoreSnapshot<TLRecord>,
+	msg: ReturnType<typeof useTranslation>,
+	addToast: TLUiToastsContextType['addToast']
+) {
+	const mediaAssets = new Map<TLAssetId, TLImageAsset | TLVideoAsset>()
+	for (const record of Object.values(snapshot.store)) {
+		if (
+			record.typeName === 'asset' &&
+			record.props.src &&
+			record.props.src.startsWith('data:') &&
+			(record.type === 'image' || record.type === 'video')
+		) {
+			mediaAssets.set(record.id, record)
+		}
+	}
+
+	Promise.allSettled(
+		[...mediaAssets].map(async ([id, asset]) => {
+			try {
+				const blob = await fetch(asset.props.src!).then((r) => r.blob())
+				const file = new File([blob], asset.props.name, {
+					type: asset.props.mimeType!,
+				})
+
+				const newAsset = await editor.getAssetForExternalContent({
+					type: 'file',
+					file,
+				})
+
+				if (!newAsset) {
+					throw Error('Could not create an asset')
+				}
+
+				// Save the new asset under the old asset's id
+				editor.updateAssets([{ ...newAsset, id }])
+			} catch (error) {
+				addToast({
+					title: msg(messages.assetsFilesUploadFailed),
+					severity: 'error',
+				})
+				console.error(error)
+				return
+			}
+		})
+	)
 }

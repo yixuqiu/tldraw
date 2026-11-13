@@ -1,53 +1,86 @@
 import {
 	Editor,
 	StateNode,
-	TLArrowShape,
-	TLEventHandlers,
+	TLClickEventInfo,
 	TLHandle,
 	TLNoteShape,
 	TLPointerEventInfo,
 	Vec,
 } from '@tldraw/editor'
 import {
-	NOTE_CENTER_OFFSET,
+	clearArrowTargetState,
+	updateArrowTargetState,
+} from '../../../shapes/arrow/arrowTargetState'
+import { getArrowBindings } from '../../../shapes/arrow/shared'
+import {
 	getNoteAdjacentPositions,
 	getNoteShapeForAdjacentPosition,
+	startEditingAdjacentNote,
 } from '../../../shapes/note/noteHelpers'
-import { startEditingShapeWithLabel } from '../selectHelpers'
+import type { NoteShapeUtil } from '../../../shapes/note/NoteShapeUtil'
+import { getDisplayValues } from '../../../shapes/shared/getDisplayValues'
+import { DeferredDoubleClick, startEditingShapeWithRichText } from '../selectHelpers'
 
 export class PointingHandle extends StateNode {
 	static override id = 'pointing_handle'
 
-	info = {} as TLPointerEventInfo & { target: 'handle' }
+	didCtrlOnEnter = false
 
-	override onEnter = (info: TLPointerEventInfo & { target: 'handle' }) => {
+	info = {} as TLPointerEventInfo & { target: 'handle' }
+	private doubleClick = new DeferredDoubleClick(this)
+
+	override onEnter(info: TLPointerEventInfo & { target: 'handle' }) {
 		this.info = info
+		this.doubleClick.start(info)
+
+		this.didCtrlOnEnter = info.accelKey
 
 		const { shape } = info
-		if (this.editor.isShapeOfType<TLArrowShape>(shape, 'arrow')) {
-			const initialTerminal = shape.props[info.handle.id as 'start' | 'end']
+		if (this.editor.isShapeOfType(shape, 'arrow')) {
+			const initialBindings = getArrowBindings(this.editor, shape)
+			const currentBinding = initialBindings[info.handle.id as 'start' | 'end']
+			const oppositeBinding = initialBindings[info.handle.id === 'start' ? 'end' : 'start']
+			const arrowTransform = this.editor.getShapePageTransform(shape.id)!
 
-			if (initialTerminal?.type === 'binding') {
-				this.editor.setHintingShapes([initialTerminal.boundShapeId])
+			if (currentBinding) {
+				updateArrowTargetState({
+					editor: this.editor,
+					pointInPageSpace: arrowTransform.applyToPoint(info.handle),
+					arrow: shape,
+					isPrecise: currentBinding.props.isPrecise,
+					currentBinding: currentBinding,
+					oppositeBinding: oppositeBinding,
+				})
 			}
 		}
 
 		this.editor.setCursor({ type: 'grabbing', rotation: 0 })
 	}
 
-	override onExit = () => {
+	override onExit() {
 		this.editor.setHintingShapes([])
+		// onEnter shows the arrow's binding target; a click without a drag would leave it showing
+		clearArrowTargetState(this.editor)
 		this.editor.setCursor({ type: 'default', rotation: 0 })
 	}
 
-	override onPointerUp: TLEventHandlers['onPointerUp'] = () => {
+	override onPointerUp() {
 		const { shape, handle } = this.info
 
-		if (this.editor.isShapeOfType<TLNoteShape>(shape, 'note')) {
+		// The shape may have been deleted since pointer down (remote user, undo); the note
+		// branch below would clone a new note from the dead record
+		if (!this.editor.getShape(shape.id)) {
+			this.parent.transition('idle')
+			return
+		}
+
+		if (this.doubleClick.replay()) return
+
+		if (this.editor.isShapeOfType(shape, 'note')) {
 			const { editor } = this
-			const nextNote = getNoteForPit(editor, shape, handle, false)
+			const nextNote = getNoteForAdjacentPosition(editor, shape, handle, false)
 			if (nextNote) {
-				startEditingShapeWithLabel(editor, nextNote, true /* selectAll */)
+				startEditingAdjacentNote(editor, nextNote)
 				return
 			}
 		}
@@ -55,29 +88,52 @@ export class PointingHandle extends StateNode {
 		this.parent.transition('idle', this.info)
 	}
 
-	override onPointerMove: TLEventHandlers['onPointerMove'] = () => {
+	override onDoubleClick(info: TLClickEventInfo) {
+		this.doubleClick.defer(info)
+	}
+
+	override onPointerMove(info: TLPointerEventInfo) {
 		const { editor } = this
-		if (editor.inputs.isDragging) {
-			this.startDraggingHandle()
+		if (editor.inputs.getIsDragging()) {
+			if (this.didCtrlOnEnter) {
+				this.parent.transition('brushing', info)
+			} else {
+				this.startDraggingHandle()
+			}
 		}
 	}
 
-	override onLongPress: TLEventHandlers['onLongPress'] = () => {
+	override onLongPress() {
 		this.startDraggingHandle()
 	}
 
 	private startDraggingHandle() {
 		const { editor } = this
-		if (editor.getInstanceState().isReadonly) return
+		if (editor.getIsReadonly()) return
 		const { shape, handle } = this.info
 
-		if (editor.isShapeOfType<TLNoteShape>(shape, 'note')) {
-			const nextNote = getNoteForPit(editor, shape, handle, true)
+		if (!editor.getShape(shape.id)) {
+			this.parent.transition('idle')
+			return
+		}
+
+		if (editor.isShapeOfType(shape, 'note')) {
+			const noteUtil = editor.getShapeUtil(shape) as NoteShapeUtil
+			const dv = getDisplayValues(noteUtil, shape)
+
+			// Cancelling the drag bails to this mark, which removes the note created below
+			const creatingMarkId = editor.markHistoryStoppingPoint('creating note from handle')
+			const nextNote = getNoteForAdjacentPosition(editor, shape, handle, true)
 			if (nextNote) {
 				// Center the shape on the current pointer
 				const centeredOnPointer = editor
-					.getPointInParentSpace(nextNote, editor.inputs.originPagePoint)
-					.sub(Vec.Rot(NOTE_CENTER_OFFSET, nextNote.rotation))
+					.getPointInParentSpace(nextNote, editor.inputs.getOriginPagePoint())
+					.sub(
+						Vec.Rot(
+							new Vec(dv.noteWidth / 2, dv.noteHeight / 2).mul(shape.props.scale),
+							nextNote.rotation
+						)
+					)
 				editor.updateShape({ ...nextNote, x: centeredOnPointer.x, y: centeredOnPointer.y })
 
 				// Then select and begin translating the shape
@@ -88,11 +144,11 @@ export class PointingHandle extends StateNode {
 						...this.info,
 						target: 'shape',
 						shape: editor.getShape(nextNote),
-						onInteractionEnd: 'note',
 						isCreating: true,
+						creatingMarkId,
 						onCreate: () => {
 							// When we're done, start editing it
-							startEditingShapeWithLabel(editor, nextNote, true /* selectAll */)
+							startEditingShapeWithRichText(editor, nextNote, { selectAll: true })
 						},
 					})
 				return
@@ -102,15 +158,15 @@ export class PointingHandle extends StateNode {
 		this.parent.transition('dragging_handle', this.info)
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onCancel() {
 		this.cancel()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
+	override onComplete() {
 		this.cancel()
 	}
 
-	override onInterrupt = () => {
+	override onInterrupt() {
 		this.cancel()
 	}
 
@@ -119,13 +175,37 @@ export class PointingHandle extends StateNode {
 	}
 }
 
-function getNoteForPit(editor: Editor, shape: TLNoteShape, handle: TLHandle, forceNew: boolean) {
+function getNoteForAdjacentPosition(
+	editor: Editor,
+	shape: TLNoteShape,
+	handle: TLHandle,
+	forceNew: boolean
+) {
+	const noteUtil = editor.getShapeUtil(shape) as NoteShapeUtil
+	const dv = getDisplayValues(noteUtil, shape)
+
 	const pageTransform = editor.getShapePageTransform(shape.id)!
 	const pagePoint = pageTransform.point()
 	const pageRotation = pageTransform.rotation()
-	const pits = getNoteAdjacentPositions(pagePoint, pageRotation, shape.props.growY, 0)
-	const pit = pits[handle.index]
-	if (pit) {
-		return getNoteShapeForAdjacentPosition(editor, shape, pit, pageRotation, forceNew)
+	const positions = getNoteAdjacentPositions(editor, {
+		pagePoint,
+		pageRotation,
+		growY: shape.props.growY * shape.props.scale,
+		extraHeight: 0,
+		scale: shape.props.scale,
+		noteWidth: dv.noteWidth,
+		noteHeight: dv.noteHeight,
+	})
+	const position = positions[handle.index]
+	if (position) {
+		return getNoteShapeForAdjacentPosition(editor, {
+			shape,
+			center: position,
+			pageRotation,
+			noteWidth: dv.noteWidth,
+			noteHeight: dv.noteHeight,
+			forceNew,
+		})
 	}
+	return undefined
 }

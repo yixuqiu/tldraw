@@ -1,0 +1,244 @@
+import type { Browser } from '@playwright/test'
+import type { Connect, Plugin } from 'vite'
+
+// Stands in for Cloudflare Browser Rendering while developing. The sync worker's screenshot surfaces
+// (the MCP tool, the OG queue) need a browser to visit the render page, and local dev has no way to
+// reach Browser Run: the dev `BROWSER` binding is deliberately non-functional and `[env.dev]` pins a
+// `compatibility_date` older than the `quickAction` method needs. The worker isolate cannot drive a
+// browser itself, but this dev server is a Node process that already depends on Playwright, so it
+// can — the worker POSTs here and gets the PNG back.
+//
+// The request body is exactly what the worker would send Browser Run's `/screenshot` or `/content`
+// Quick Action (`getThumbnailScreenshotRequestBody`, `getThumbnailContentRequestBody`), named by the
+// `action` query parameter, so the wait strategy, capture target, and timeout come from
+// the same place production gets them and cannot drift here. Note this file is imported by
+// `vite.config.ts`, which Node loads directly, so it must not import `@tldraw/dotcom-shared`: that
+// package's entry re-exports extensionless paths Node cannot resolve.
+//
+// This is NOT Browser Run: different Chrome build, different flags, no billing headers. It makes the
+// local path work; it is not evidence that a render will succeed in production.
+export const LOCAL_SCREENSHOT_PATH = '/__screenshot'
+
+// The only page this will ever open. Deliberately asserted here rather than taken from the request:
+// an allowlist the caller supplies is not an allowlist. Mirrors THUMBNAIL_RENDER_PATH.
+const RENDER_PATH = '/__thumbnail-render'
+
+// The dev counterpart of the edge rewrite in scripts/build.ts. Registered before Vite's own
+// middlewares, so the SPA HTML fallback never sees the path — a broken rewrite fails loudly here
+// instead of silently serving the app shell.
+export function thumbnailRenderEntryPlugin(): Plugin {
+	const rewrite = (url: string | undefined) =>
+		url === RENDER_PATH || url?.startsWith(`${RENDER_PATH}?`)
+			? `/thumbnail-render.html${url.slice(RENDER_PATH.length)}`
+			: null
+	const middleware: Connect.NextHandleFunction = (req, _res, next) => {
+		const rewritten = rewrite(req.url)
+		if (rewritten) req.url = rewritten
+		next()
+	}
+	return {
+		name: 'thumbnail-render-entry',
+		configureServer(server) {
+			server.middlewares.use(middleware)
+		},
+		configurePreviewServer(server) {
+			server.middlewares.use(middleware)
+		},
+	}
+}
+
+export function thumbnailScreenshotPlugin(): Plugin {
+	// Chromium takes about a second to start, so it is launched once for the dev server's lifetime
+	// rather than per request.
+	let browserPromise: Promise<Browser> | undefined
+
+	// Assigns the promise synchronously, so concurrent first requests share one launch instead of
+	// each starting a Chromium and orphaning all but the last. Anything that leaves the cached
+	// browser unusable — a failed launch, or a crash later on — clears it, so the next request
+	// starts a new one rather than every request failing until the dev server restarts.
+	function getBrowser() {
+		if (!browserPromise) {
+			browserPromise = import('@playwright/test')
+				.then(({ chromium }) => chromium.launch())
+				.then((browser) => {
+					browser.on('disconnected', () => {
+						browserPromise = undefined
+					})
+					return browser
+				})
+				.catch((error) => {
+					browserPromise = undefined
+					throw error
+				})
+		}
+		return browserPromise
+	}
+
+	return {
+		name: 'thumbnail-screenshot',
+		// Dev server only: this never exists in a built client.
+		apply: 'serve',
+		configureServer(server) {
+			server.httpServer?.on('close', () => {
+				browserPromise?.then((browser) => browser.close()).catch(() => {})
+				browserPromise = undefined
+			})
+
+			server.middlewares.use(LOCAL_SCREENSHOT_PATH, async (req, res) => {
+				if (req.method !== 'POST') {
+					res.statusCode = 405
+					res.end('Use POST')
+					return
+				}
+				if (!isLocalWorkerRequest(req)) {
+					res.statusCode = 403
+					res.end('Only the sync worker may call this')
+					return
+				}
+				try {
+					const action = new URL(req.url ?? '', 'http://localhost').searchParams.get('action')
+					const request = parseRequest(
+						JSON.parse(await readBody(req)),
+						ownOrigin(server.httpServer?.address()),
+						action === 'content' ? 'content' : 'screenshot'
+					)
+					const result = await capture(await getBrowser(), request)
+					res.statusCode = 200
+					if (typeof result === 'string') {
+						// Wrapped rather than sent as text/html, which the worker could not tell apart from
+						// the SPA fallback a dev server without this plugin answers with.
+						res.setHeader('content-type', 'application/json')
+						res.end(JSON.stringify({ html: result }))
+					} else {
+						res.setHeader('content-type', 'image/png')
+						res.end(result)
+					}
+				} catch (error) {
+					// The worker turns any non-200 into a render failure, so this body is only ever read
+					// by a developer looking at why a local thumbnail did not appear.
+					res.statusCode = 500
+					res.end(error instanceof Error ? error.message : String(error))
+				}
+			})
+		},
+	}
+}
+
+// The body's addScriptTag runs in the page, so only the local worker may send one. A web page could
+// otherwise POST here (a text/plain POST needs no preflight), and so could anyone the dev server is
+// exposed to over the LAN or a tunnel. Browsers always mark a cross-origin request with these
+// headers, proxies and tunnels add forwarding ones, and the worker's fetch sends none. Anything
+// already on the loopback interface can run code on this machine anyway.
+const BROWSER_OR_PROXY_HEADERS = [
+	'origin',
+	'sec-fetch-site',
+	'forwarded',
+	'x-forwarded-for',
+	'x-forwarded-host',
+	'x-real-ip',
+	'cf-connecting-ip',
+]
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+
+export function isLocalWorkerRequest(req: {
+	socket: { remoteAddress?: string }
+	headers: Record<string, unknown>
+}) {
+	if (!LOOPBACK_ADDRESSES.has(req.socket.remoteAddress ?? '')) return false
+	return BROWSER_OR_PROXY_HEADERS.every((header) => req.headers[header] === undefined)
+}
+
+// The page opens on the dev server's own address, never the request's Host: Vite accepts any
+// `localhost:<port>` Host, so a caller-supplied one would point the injected script at whatever
+// other service listens on that port.
+export function ownOrigin(address: string | { port: number } | null | undefined) {
+	if (!address || typeof address === 'string') throw new Error('Dev server has no TCP address')
+	return `http://localhost:${address.port}`
+}
+
+interface ScreenshotRequest {
+	/** Absent on a `content` request, which returns the page's HTML instead of a capture. */
+	captureSelector?: string
+	height: number
+	settledSelector: string
+	timeoutMs: number
+	url: string
+	width: number
+	injectedScripts: string[]
+}
+
+// Reads the Browser Run `/screenshot` request body the worker sends. Only the render page is
+// reachable, and only on `origin`: the caller's host is discarded and the path is fixed, so this
+// cannot be pointed at an arbitrary URL — the same property production has, where Browser Run is
+// never handed a caller-supplied URL.
+export function parseRequest(
+	body: any,
+	origin: string,
+	action: 'screenshot' | 'content'
+): ScreenshotRequest {
+	if (typeof body?.url !== 'string') throw new Error('url is required')
+	const { pathname, search } = new URL(body.url)
+	if (pathname !== RENDER_PATH) {
+		throw new Error(`Only ${RENDER_PATH} can be captured, got ${pathname}`)
+	}
+
+	const settledSelector = body.waitForSelector?.selector
+	const captureSelector = body.selector
+	const timeoutMs = body.gotoOptions?.timeout
+	const { width, height } = body.viewport ?? {}
+	if (
+		!settledSelector ||
+		(action === 'screenshot' && !captureSelector) ||
+		!timeoutMs ||
+		!width ||
+		!height
+	) {
+		throw new Error('Request is not a thumbnail screenshot request body')
+	}
+
+	return {
+		captureSelector: action === 'screenshot' ? captureSelector : undefined,
+		height,
+		settledSelector,
+		timeoutMs,
+		url: new URL(`${RENDER_PATH}${search}`, origin).toString(),
+		width,
+		injectedScripts: Array.isArray(body.addScriptTag)
+			? body.addScriptTag.map((tag: { content?: unknown }) => String(tag?.content ?? ''))
+			: [],
+	}
+}
+
+// Settle on either terminal marker, then capture the success-only element — the same sequence the
+// Quick Action request body asks Browser Run for, so a failed render fails as soon as the page says
+// so instead of burning the timeout. A `content` request returns the HTML at that point, error or
+// not, as `/content` does.
+async function capture(browser: Browser, request: ScreenshotRequest) {
+	const page = await browser.newPage({
+		viewport: { width: request.width, height: request.height },
+		deviceScaleFactor: 1,
+	})
+	try {
+		await page.goto(request.url, { waitUntil: 'domcontentloaded', timeout: request.timeoutMs })
+		for (const content of request.injectedScripts) await page.addScriptTag({ content })
+		await page.waitForSelector(request.settledSelector, { timeout: request.timeoutMs })
+		if (!request.captureSelector) return await page.content()
+		const target = await page.$(request.captureSelector)
+		if (!target) {
+			const reason = await page.evaluate(() => document.body.dataset.thumbnailError)
+			throw new Error(`Render page failed: ${reason || '(no message)'}`)
+		}
+		return await target.screenshot({ type: 'png' })
+	} finally {
+		await page.close()
+	}
+}
+
+function readBody(req: { on(event: string, fn: (chunk?: any) => void): void }) {
+	return new Promise<string>((resolve, reject) => {
+		let body = ''
+		req.on('data', (chunk) => (body += chunk))
+		req.on('end', () => resolve(body))
+		req.on('error', reject)
+	})
+}

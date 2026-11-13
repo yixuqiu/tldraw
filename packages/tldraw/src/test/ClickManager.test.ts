@@ -1,3 +1,4 @@
+import { vi } from 'vitest'
 import { TestEditor } from './TestEditor'
 
 let editor: TestEditor
@@ -10,7 +11,7 @@ beforeEach(() => {
 	editor._transformPointerUpSpy.mockRestore()
 })
 
-jest.useFakeTimers()
+vi.useFakeTimers()
 
 describe('Handles events', () => {
 	it('Emits single click events', () => {
@@ -23,7 +24,7 @@ describe('Handles events', () => {
 		const eventsBeforeSettle = [{ name: 'pointer_down' }, { name: 'pointer_up' }]
 
 		// allow time for settle
-		jest.advanceTimersByTime(500)
+		vi.advanceTimersByTime(500)
 
 		// nothing should have settled
 		expect(events).toMatchObject(eventsBeforeSettle)
@@ -63,12 +64,12 @@ describe('Handles events', () => {
 			expect(events[i]).toMatchObject(eventsBeforeSettle[i])
 		}
 
-		// allow double click to settle
-		jest.advanceTimersByTime(500)
+		// allow double click to settle as 'settle-up'
+		vi.advanceTimersByTime(500)
 
 		expect(events).toMatchObject([
 			...eventsBeforeSettle,
-			{ name: 'double_click', type: 'click', phase: 'settle' },
+			{ name: 'double_click', type: 'click', phase: 'settle-up' },
 		])
 
 		// clear events and click again
@@ -83,7 +84,28 @@ describe('Handles events', () => {
 		])
 	})
 
-	it('Emits triple click events', () => {
+	it('Emits settle-down when pointer is still pressed at settle time', () => {
+		const events: any[] = []
+		editor.addListener('event', (info) => events.push(info))
+
+		editor.pointerDown()
+		editor.pointerUp()
+		editor.pointerDown() // second press, no pointerUp — still down at settle time
+
+		vi.advanceTimersByTime(500)
+
+		// a long_press may also fire while holding; find the settle event by type
+		const settle = events.find(
+			(e) => e.type === 'click' && e.name === 'double_click' && e.phase?.startsWith('settle')
+		)
+		expect(settle).toMatchObject({
+			name: 'double_click',
+			type: 'click',
+			phase: 'settle-down',
+		})
+	})
+
+	it('Suppresses overflow clicks after a double click', () => {
 		const events: any[] = []
 		editor.addListener('event', (info) => events.push(info))
 
@@ -102,20 +124,15 @@ describe('Handles events', () => {
 			{ name: 'pointer_up' },
 			{ name: 'double_click', type: 'click', phase: 'up' },
 			{ name: 'pointer_down' },
-			{ name: 'triple_click', type: 'click', phase: 'down' },
 			{ name: 'pointer_up' },
-			{ name: 'triple_click', type: 'click', phase: 'up' },
 		]
 
-		expect(eventsBeforeSettle).toMatchObject(eventsBeforeSettle)
+		expect(events).toMatchObject(eventsBeforeSettle)
 
-		// allow double click to settle
-		jest.advanceTimersByTime(500)
+		// allow overflow to settle without emitting another click event
+		vi.advanceTimersByTime(500)
 
-		expect(events).toMatchObject([
-			...eventsBeforeSettle,
-			{ name: 'triple_click', type: 'click', phase: 'settle' },
-		])
+		expect(events).toMatchObject(eventsBeforeSettle)
 
 		// clear events and click again
 		// the interaction should have reset
@@ -129,7 +146,7 @@ describe('Handles events', () => {
 		])
 	})
 
-	it('Emits quadruple click events', () => {
+	it('Suppresses double-double clicks until overflow settles', () => {
 		const events: any[] = []
 		editor.addListener('event', (info) => events.push(info))
 
@@ -150,24 +167,17 @@ describe('Handles events', () => {
 			{ name: 'pointer_up' },
 			{ name: 'double_click', phase: 'up' },
 			{ name: 'pointer_down' },
-			{ name: 'triple_click', phase: 'down' },
 			{ name: 'pointer_up' },
-			{ name: 'triple_click', phase: 'up' },
 			{ name: 'pointer_down' },
-			{ name: 'quadruple_click', phase: 'down' },
 			{ name: 'pointer_up' },
-			{ name: 'quadruple_click', phase: 'up' },
 		]
 
 		expect(events).toMatchObject(eventsBeforeSettle)
 
-		// allow double click to settle
-		jest.advanceTimersByTime(500)
+		// allow overflow to settle
+		vi.advanceTimersByTime(500)
 
-		expect(events).toMatchObject([
-			...eventsBeforeSettle,
-			{ name: 'quadruple_click', type: 'click', phase: 'settle' },
-		])
+		expect(events).toMatchObject(eventsBeforeSettle)
 
 		// clear events and click again
 		// the interaction should have reset
@@ -181,7 +191,7 @@ describe('Handles events', () => {
 		])
 	})
 
-	it('Emits overflow click events', () => {
+	it('Keeps suppressing clicks while overflow clicks continue', () => {
 		const events: any[] = []
 		editor.addListener('event', (info) => events.push(info))
 
@@ -204,13 +214,9 @@ describe('Handles events', () => {
 			{ name: 'pointer_up' },
 			{ name: 'double_click', type: 'click', phase: 'up' },
 			{ name: 'pointer_down' },
-			{ name: 'triple_click', type: 'click', phase: 'down' },
 			{ name: 'pointer_up' },
-			{ name: 'triple_click', type: 'click', phase: 'up' },
 			{ name: 'pointer_down' },
-			{ name: 'quadruple_click', type: 'click', phase: 'down' },
 			{ name: 'pointer_up' },
-			{ name: 'quadruple_click', type: 'click', phase: 'up' },
 			{ name: 'pointer_down' },
 			{ name: 'pointer_up' },
 		]
@@ -218,7 +224,7 @@ describe('Handles events', () => {
 		expect(events).toMatchObject(eventsBeforeSettle)
 
 		// allow double click to settle
-		jest.advanceTimersByTime(500)
+		vi.advanceTimersByTime(500)
 
 		expect(events).toMatchObject(eventsBeforeSettle)
 
@@ -247,12 +253,78 @@ it('Cancels when click moves', () => {
 	editor.pointerUp(0, 20)
 	expect(event.name).toBe('double_click')
 	editor.pointerDown(0, 45)
-	expect(event.name).toBe('triple_click')
+	expect(event.name).toBe('pointer_down')
 	editor.pointerUp(0, 45)
-	expect(event.name).toBe('triple_click')
+	expect(event.name).toBe('pointer_up')
 	// has to be 40 away from previous click location
 	editor.pointerDown(0, 86)
 	expect(event.name).toBe('pointer_down')
 	editor.pointerUp(0, 86)
 	expect(event.name).toBe('pointer_up')
+})
+
+it('Does not cancel a double click on a small move when the container is offset', () => {
+	// click points are client coordinates; comparing them against the container-relative
+	// screen point used to cancel on any movement at all in an offset container
+	editor.setScreenBounds({ x: 300, y: 100, w: 1080, h: 720 })
+	const events: any[] = []
+	editor.addListener('event', (info) => events.push(info))
+
+	editor.pointerDown(500, 400).pointerMove(501, 400).pointerUp(501, 400).pointerDown(501, 400)
+
+	expect(events).toMatchObject([
+		{ name: 'pointer_down' },
+		{ name: 'pointer_move' },
+		{ name: 'pointer_up' },
+		{ name: 'pointer_down' },
+		{ name: 'double_click', type: 'click', phase: 'down' },
+	])
+})
+
+it('Resets when the focus layer changes', () => {
+	const boxId = editor.testShapeID('box')
+	const otherBoxId = editor.testShapeID('otherBox')
+
+	editor.setCurrentTool('select')
+	editor
+		.createShapes([
+			{ id: boxId, type: 'geo', x: 0, y: 0 },
+			{ id: otherBoxId, type: 'geo', x: 200, y: 0 },
+		])
+		.select(boxId, otherBoxId)
+		.groupShapes(editor.getSelectedShapeIds())
+		.selectNone()
+
+	const groupId = editor.getCurrentPageShapes().find((shape) => shape.type === 'group')!.id
+
+	const events: any[] = []
+	editor.addListener('event', (info) => events.push(info))
+
+	editor.pointerDown(1000, 1000).pointerUp(1000, 1000)
+
+	editor.setFocusedGroup(groupId)
+	expect(editor.getFocusedGroupId()).toBe(groupId)
+
+	events.length = 0
+	editor.pointerDown(1000, 1000)
+
+	expect(events).toMatchObject([{ name: 'pointer_down' }])
+	expect(events).toHaveLength(1)
+})
+
+it('Emits double click events for an indirect pen outside pen mode', () => {
+	const events: any[] = []
+	editor.addListener('event', (info) => events.push(info))
+
+	// An indirect desktop tablet stylus reports as a pen but never enables pen mode, so
+	// its clicks still have to reach the click manager to produce double-click events.
+	const pen = { isPen: true, isPenDirect: false }
+	editor.pointerDown(0, 0, pen).pointerUp(0, 0, pen).pointerDown(0, 0, pen)
+	expect(editor.getInstanceState().isPenMode).toBe(false)
+	expect(events).toMatchObject([
+		{ name: 'pointer_down' },
+		{ name: 'pointer_up' },
+		{ name: 'pointer_down' },
+		{ name: 'double_click', type: 'click', phase: 'down' },
+	])
 })

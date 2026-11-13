@@ -1,6 +1,11 @@
+import type React from 'react'
+import { Editor } from '../editor/Editor'
+import { isAccelKey } from './keyboard'
+import { getPointerEventButton } from './pointer'
+
 /** @public */
-export function getPointerInfo(e: React.PointerEvent | PointerEvent) {
-	;(e as any).isKilled = true
+export function getPointerInfo(editor: Editor, e: React.PointerEvent | PointerEvent) {
+	editor.markEventAsHandled(e)
 
 	return {
 		point: {
@@ -11,8 +16,10 @@ export function getPointerInfo(e: React.PointerEvent | PointerEvent) {
 		shiftKey: e.shiftKey,
 		altKey: e.altKey,
 		ctrlKey: e.metaKey || e.ctrlKey,
+		metaKey: e.metaKey,
+		accelKey: isAccelKey(e),
 		pointerId: e.pointerId,
-		button: e.button,
+		button: getPointerEventButton(e),
 		isPen: e.pointerType === 'pen',
 	}
 }

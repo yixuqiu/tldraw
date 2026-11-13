@@ -1,24 +1,31 @@
-import { PI, TLShapeId } from '@tldraw/editor'
+import { createShapeId, PI, TLShapeId } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { TestEditor } from '../TestEditor'
-import { TL } from '../test-jsx'
 
 let editor: TestEditor
 let ids: Record<string, TLShapeId>
 
-jest.useFakeTimers()
+vi.useFakeTimers()
 
 function createVideoShape() {
-	return editor.createShapesFromJsx(<TL.video ref="video1" x={0} y={0} w={160} h={90} />).video1
+	const ids = { video1: createShapeId('video1') }
+	editor.createShapes([{ id: ids.video1, type: 'video', x: 0, y: 0, props: { w: 160, h: 90 } }])
+	return ids.video1
 }
 
 beforeEach(() => {
 	editor = new TestEditor()
 	editor.selectAll()
 	editor.deleteShapes(editor.getSelectedShapeIds())
-	ids = editor.createShapesFromJsx([
-		<TL.geo ref="boxA" x={0} y={0} w={100} h={100} />,
-		<TL.geo ref="boxB" x={100} y={100} w={50} h={50} />,
-		<TL.geo ref="boxC" x={400} y={400} w={100} h={100} />,
+	ids = {
+		boxA: createShapeId('boxA'),
+		boxB: createShapeId('boxB'),
+		boxC: createShapeId('boxC'),
+	}
+	editor.createShapes([
+		{ id: ids.boxA, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } },
+		{ id: ids.boxB, type: 'geo', x: 100, y: 100, props: { w: 50, h: 50 } },
+		{ id: ids.boxC, type: 'geo', x: 400, y: 400, props: { w: 100, h: 100 } },
 	])
 	editor.selectAll()
 })
@@ -26,10 +33,10 @@ beforeEach(() => {
 describe('when less than two shapes are selected', () => {
 	it('does nothing', () => {
 		editor.setSelectedShapes([ids.boxB])
-		const fn = jest.fn()
+		const fn = vi.fn()
 		editor.store.listen(fn)
 		editor.stretchShapes(editor.getSelectedShapeIds(), 'horizontal')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		expect(fn).not.toHaveBeenCalled()
 	})
@@ -39,7 +46,7 @@ describe('when multiple shapes are selected', () => {
 	it('stretches horizontally', () => {
 		editor.selectAll()
 		editor.stretchShapes(editor.getSelectedShapeIds(), 'horizontal')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.expectShapeToMatch(
 			{ id: ids.boxA, x: 0, y: 0, props: { w: 500 } },
 			{ id: ids.boxB, x: 0, y: 100, props: { w: 500 } },
@@ -52,7 +59,7 @@ describe('when multiple shapes are selected', () => {
 		editor.selectAll()
 		expect(editor.getSelectedShapes().length).toBe(4)
 		editor.stretchShapes(editor.getSelectedShapeIds(), 'horizontal')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		const newHeight = (500 * 9) / 16
 		editor.expectShapeToMatch(
 			{ id: ids.boxA, x: 0, y: 0, props: { w: 500 } },
@@ -65,7 +72,7 @@ describe('when multiple shapes are selected', () => {
 	it('stretches vertically', () => {
 		editor.selectAll()
 		editor.stretchShapes(editor.getSelectedShapeIds(), 'vertical')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.expectShapeToMatch(
 			{ id: ids.boxA, x: 0, y: 0, props: { h: 500 } },
 			{ id: ids.boxB, x: 100, y: 0, props: { h: 500 } },
@@ -78,7 +85,7 @@ describe('when multiple shapes are selected', () => {
 		editor.selectAll()
 		expect(editor.getSelectedShapes().length).toBe(4)
 		editor.stretchShapes(editor.getSelectedShapeIds(), 'vertical')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		const newWidth = (500 * 16) / 9
 		editor.expectShapeToMatch(
 			{ id: ids.boxA, x: 0, y: 0, props: { h: 500 } },
@@ -89,9 +96,9 @@ describe('when multiple shapes are selected', () => {
 	})
 
 	it('does, undoes and redoes command', () => {
-		editor.mark('stretch')
+		editor.markHistoryStoppingPoint('stretch')
 		editor.stretchShapes(editor.getSelectedShapeIds(), 'horizontal')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 
 		editor.expectShapeToMatch({ id: ids.boxB, x: 0, props: { w: 500 } })
 		editor.undo()
@@ -106,7 +113,7 @@ describe('When shapes are the child of another shape.', () => {
 		editor.reparentShapes([ids.boxB], ids.boxA)
 		editor.select(ids.boxB, ids.boxC)
 		editor.stretchShapes(editor.getSelectedShapeIds(), 'horizontal')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.expectShapeToMatch(
 			{ id: ids.boxB, x: 100, y: 100, props: { w: 400 } },
 			{ id: ids.boxC, x: 100, y: 400, props: { w: 400 } }
@@ -117,7 +124,7 @@ describe('When shapes are the child of another shape.', () => {
 		editor.reparentShapes([ids.boxB], ids.boxA)
 		editor.select(ids.boxB, ids.boxC)
 		editor.stretchShapes(editor.getSelectedShapeIds(), 'vertical')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.expectShapeToMatch(
 			{ id: ids.boxB, x: 100, y: 100, props: { h: 400 } },
 			{ id: ids.boxC, x: 400, y: 100, props: { h: 400 } }
@@ -126,50 +133,35 @@ describe('When shapes are the child of another shape.', () => {
 })
 
 describe('When shapes are the child of a rotated shape.', () => {
-	beforeEach(() => {
+	it('does not stretches rotated shapes (when not PI/2 rotations)', () => {
 		editor = new TestEditor()
 		editor.selectAll()
 		editor.deleteShapes(editor.getSelectedShapeIds())
-		ids = editor.createShapesFromJsx([
-			<TL.geo ref="boxA" x={0} y={0} w={100} h={100} rotation={PI}>
-				<TL.geo ref="boxB" x={100} y={100} w={50} h={50} />
-			</TL.geo>,
-			<TL.geo ref="boxC" x={200} y={200} w={100} h={100} />,
+		ids = {
+			boxA: createShapeId('boxA'),
+			boxB: createShapeId('boxB'),
+			boxC: createShapeId('boxC'),
+		}
+		editor.createShapes([
+			{ id: ids.boxA, type: 'geo', x: 0, y: 0, rotation: PI / 3, props: { w: 100, h: 100 } },
+			{ id: ids.boxB, type: 'geo', x: 100, y: 100, parentId: ids.boxA, props: { w: 50, h: 50 } },
+			{ id: ids.boxC, type: 'geo', x: 200, y: 200, props: { w: 100, h: 100 } },
 		])
 		editor.selectAll()
-	})
 
-	it('does not stretches rotated shapes', () => {
-		editor.select(ids.boxB, ids.boxC)
+		editor.select(ids.boxA, ids.boxC)
 		editor.stretchShapes(editor.getSelectedShapeIds(), 'horizontal')
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.expectShapeToMatch(
 			{
-				id: ids.boxB,
-				x: 100,
-				y: 100,
+				id: ids.boxA,
+				x: 0,
+				y: 0,
 				props: {
-					w: 50,
-					h: 50,
-				},
-			},
-			{
-				id: ids.boxC,
-				x: -150,
-				y: 200,
-				props: {
-					w: 450,
+					w: 100,
 					h: 100,
 				},
-			}
-		)
-	})
-
-	it('does not stretches rotated shapes', () => {
-		editor.select(ids.boxB, ids.boxC)
-		editor.stretchShapes(editor.getSelectedShapeIds(), 'vertical')
-		jest.advanceTimersByTime(1000)
-		editor.expectShapeToMatch(
+			},
 			{
 				id: ids.boxB,
 				x: 100,
@@ -182,10 +174,60 @@ describe('When shapes are the child of a rotated shape.', () => {
 			{
 				id: ids.boxC,
 				x: 200,
-				y: -150,
+				y: 200,
 				props: {
 					w: 100,
-					h: 450,
+					h: 100,
+				},
+			}
+		)
+	})
+
+	it('stretches rotated shapes when pi2 rotations', () => {
+		editor = new TestEditor()
+		editor.selectAll()
+		editor.deleteShapes(editor.getSelectedShapeIds())
+		ids = {
+			boxA: createShapeId('boxA'),
+			boxB: createShapeId('boxB'),
+			boxC: createShapeId('boxC'),
+		}
+		editor.createShapes([
+			{ id: ids.boxA, type: 'geo', x: 0, y: 0, rotation: PI / 2, props: { w: 100, h: 100 } },
+			{ id: ids.boxB, type: 'geo', x: 100, y: 100, props: { w: 50, h: 50 } },
+			{ id: ids.boxC, type: 'geo', x: 200, y: 200, props: { w: 100, h: 100 } },
+		])
+		editor.selectAll()
+
+		editor.stretchShapes(editor.getSelectedShapeIds(), 'vertical')
+		vi.advanceTimersByTime(1000)
+		editor.expectShapeToMatch(
+			{
+				id: ids.boxA,
+				x: 0,
+				y: 0,
+				rotation: PI / 2,
+				props: {
+					w: 300,
+					h: 100,
+				},
+			},
+			{
+				id: ids.boxB,
+				x: 100,
+				y: 0,
+				props: {
+					w: 50,
+					h: 300,
+				},
+			},
+			{
+				id: ids.boxC,
+				x: 200,
+				y: 0,
+				props: {
+					w: 100,
+					h: 300,
 				},
 			}
 		)

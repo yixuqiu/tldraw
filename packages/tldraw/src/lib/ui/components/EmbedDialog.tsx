@@ -1,8 +1,15 @@
-import { EMBED_DEFINITIONS, EmbedDefinition, track, useEditor } from '@tldraw/editor'
+import { defineMessages, track, useEditor } from '@tldraw/editor'
 import { useRef, useState } from 'react'
-import { TLEmbedResult, getEmbedInfo } from '../../utils/embeds/embeds'
+import {
+	TLEmbedDefinition,
+	isCustomEmbedDefinition,
+	isDefaultEmbedDefinitionType,
+} from '../../defaultEmbedDefinitions'
+import { TLEmbedResult } from '../../utils/embeds/embeds'
 import { useAssetUrls } from '../context/asset-urls'
 import { TLUiDialogProps } from '../context/dialogs'
+import { useGetEmbedDefinition } from '../hooks/useGetEmbedDefinition'
+import { useGetEmbedDefinitions } from '../hooks/useGetEmbedDefinitions'
 import { untranslated, useTranslation } from '../hooks/useTranslation/useTranslation'
 import { TldrawUiButton } from './primitives/Button/TldrawUiButton'
 import { TldrawUiButtonLabel } from './primitives/Button/TldrawUiButtonLabel'
@@ -13,8 +20,24 @@ import {
 	TldrawUiDialogHeader,
 	TldrawUiDialogTitle,
 } from './primitives/TldrawUiDialog'
-import { TldrawUiIcon } from './primitives/TldrawUiIcon'
 import { TldrawUiInput } from './primitives/TldrawUiInput'
+
+const messages = defineMessages({
+	embedDialogBack: { id: 'embed-dialog.back', defaultMessage: 'Back' },
+	embedDialogCancel: { id: 'embed-dialog.cancel', defaultMessage: 'Cancel' },
+	embedDialogCreate: { id: 'embed-dialog.create', defaultMessage: 'Create' },
+	embedDialogInstruction: {
+		id: 'embed-dialog.instruction',
+		defaultMessage: 'Paste in the site’s URL to create the embed.',
+	},
+	embedDialogInvalidUrl: {
+		id: 'embed-dialog.invalid-url',
+		defaultMessage: 'We could not create an embed from that URL.',
+	},
+	embedDialogLearnMore: { id: 'embed-dialog.learn-more', defaultMessage: 'Learn more' },
+	embedDialogTitle: { id: 'embed-dialog.title', defaultMessage: 'Insert embed' },
+	embedDialogUrl: { id: 'embed-dialog.url', defaultMessage: 'URL' },
+})
 
 export const EmbedDialog = track(function EmbedDialog({ onClose }: TLUiDialogProps) {
 	const editor = useEditor()
@@ -22,7 +45,7 @@ export const EmbedDialog = track(function EmbedDialog({ onClose }: TLUiDialogPro
 	const assetUrls = useAssetUrls()
 
 	// The embed definition for the user's selected embed (set by the user clicking on an embed in stage 1)
-	const [embedDefinition, setEmbedDefinition] = useState<null | EmbedDefinition>(null)
+	const [embedDefinition, setEmbedDefinition] = useState<null | TLEmbedDefinition>(null)
 
 	// The URL that the user has typed into (in stage 2)
 	const [url, setUrl] = useState<string>('')
@@ -34,13 +57,16 @@ export const EmbedDialog = track(function EmbedDialog({ onClose }: TLUiDialogPro
 	const [showError, setShowError] = useState(false)
 	const rShowErrorTimeout = useRef<any>(-1)
 
+	const definitions = useGetEmbedDefinitions()
+	const getEmbedDefinition = useGetEmbedDefinition()
+
 	return (
 		<>
 			<TldrawUiDialogHeader>
 				<TldrawUiDialogTitle>
 					{embedDefinition
-						? `${msg('embed-dialog.title')} — ${embedDefinition.title}`
-						: msg('embed-dialog.title')}
+						? `${msg(messages.embedDialogTitle)} — ${embedDefinition.title}`
+						: msg(messages.embedDialogTitle)}
 				</TldrawUiDialogTitle>
 				<TldrawUiDialogCloseButton />
 			</TldrawUiDialogHeader>
@@ -49,9 +75,9 @@ export const EmbedDialog = track(function EmbedDialog({ onClose }: TLUiDialogPro
 					<TldrawUiDialogBody className="tlui-embed-dialog__enter">
 						<TldrawUiInput
 							className="tlui-embed-dialog__input"
-							label="embed-dialog.url"
-							placeholder="http://example.com"
-							autofocus
+							label={messages.embedDialogUrl.id}
+							placeholder="https://example.com"
+							autoFocus
 							onValueChange={(value) => {
 								// Set the url that the user has typed into the input
 								setUrl(value)
@@ -59,7 +85,7 @@ export const EmbedDialog = track(function EmbedDialog({ onClose }: TLUiDialogPro
 								// Set the embed info to either the embed info for the URL (if
 								// that embed info can be found and of a type that matches the
 								// user's selected definition type)
-								const embedInfo = getEmbedInfo(value)
+								const embedInfo = getEmbedDefinition(value)
 								setEmbedInfoForUrl(
 									embedInfo && embedInfo.definition.type === embedDefinition.type ? embedInfo : null
 								)
@@ -69,27 +95,33 @@ export const EmbedDialog = track(function EmbedDialog({ onClose }: TLUiDialogPro
 								// has not yet entered a valid URL.
 								setShowError(false)
 								clearTimeout(rShowErrorTimeout.current)
-								rShowErrorTimeout.current = setTimeout(() => setShowError(!embedInfo), 320)
+
+								rShowErrorTimeout.current = editor.timers.setTimeout(
+									() => setShowError(!embedInfo),
+									320
+								)
 							}}
 						/>
 						{url === '' ? (
 							<div className="tlui-embed-dialog__instruction">
-								<span>{msg('embed-dialog.instruction')}</span>{' '}
+								<span>{msg(messages.embedDialogInstruction)}</span>{' '}
 								{embedDefinition.instructionLink && (
-									<a
-										target="_blank"
-										rel="noopener noreferrer"
-										href={embedDefinition.instructionLink}
-										className="tlui-embed-dialog__instruction__link"
-									>
-										Learn more.
-										<TldrawUiIcon icon="external-link" small />
-									</a>
+									<>
+										<a
+											target="_blank"
+											rel="noopener noreferrer"
+											href={embedDefinition.instructionLink}
+											className="tlui-embed-dialog__instruction__link"
+										>
+											{msg(messages.embedDialogLearnMore)}
+										</a>
+										.
+									</>
 								)}
 							</div>
 						) : (
 							<div className="tlui-embed-dialog__warning">
-								{showError ? msg('embed-dialog.invalid-url') : '\xa0'}
+								{showError ? msg(messages.embedDialogInvalidUrl) : '\xa0'}
 							</div>
 						)}
 					</TldrawUiDialogBody>
@@ -102,11 +134,11 @@ export const EmbedDialog = track(function EmbedDialog({ onClose }: TLUiDialogPro
 								setUrl('')
 							}}
 						>
-							<TldrawUiButtonLabel>{msg('embed-dialog.back')}</TldrawUiButtonLabel>
+							<TldrawUiButtonLabel>{msg(messages.embedDialogBack)}</TldrawUiButtonLabel>
 						</TldrawUiButton>
 						<div className="tlui-embed__spacer" />
 						<TldrawUiButton type="normal" onClick={onClose}>
-							<TldrawUiButtonLabel>{msg('embed-dialog.cancel')}</TldrawUiButtonLabel>
+							<TldrawUiButtonLabel>{msg(messages.embedDialogCancel)}</TldrawUiButtonLabel>
 						</TldrawUiButton>
 						<TldrawUiButton
 							type="primary"
@@ -124,26 +156,31 @@ export const EmbedDialog = track(function EmbedDialog({ onClose }: TLUiDialogPro
 								onClose()
 							}}
 						>
-							<TldrawUiButtonLabel>{msg('embed-dialog.create')}</TldrawUiButtonLabel>
+							<TldrawUiButtonLabel>{msg(messages.embedDialogCreate)}</TldrawUiButtonLabel>
 						</TldrawUiButton>
 					</TldrawUiDialogFooter>
 				</>
 			) : (
-				<>
-					<TldrawUiDialogBody className="tlui-embed-dialog__list">
-						{EMBED_DEFINITIONS.map((def) => {
-							return (
-								<TldrawUiButton type="menu" key={def.type} onClick={() => setEmbedDefinition(def)}>
-									<TldrawUiButtonLabel>{untranslated(def.title)}</TldrawUiButtonLabel>
+				<TldrawUiDialogBody className="tlui-embed-dialog__list">
+					{definitions.map((def) => {
+						const icon = isDefaultEmbedDefinitionType(def.type)
+							? assetUrls.embedIcons[def.type]
+							: isCustomEmbedDefinition(def)
+								? def.icon
+								: undefined
+						return (
+							<TldrawUiButton type="menu" key={def.type} onClick={() => setEmbedDefinition(def)}>
+								<TldrawUiButtonLabel>{untranslated(def.title)}</TldrawUiButtonLabel>
+								{icon && (
 									<div
 										className="tlui-embed-dialog__item__image"
-										style={{ backgroundImage: `url(${assetUrls.embedIcons[def.type]})` }}
+										style={{ backgroundImage: `url(${icon})` }}
 									/>
-								</TldrawUiButton>
-							)
-						})}
-					</TldrawUiDialogBody>
-				</>
+								)}
+							</TldrawUiButton>
+						)
+					})}
+				</TldrawUiDialogBody>
 			)}
 		</>
 	)

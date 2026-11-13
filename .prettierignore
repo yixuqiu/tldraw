@@ -5,6 +5,7 @@
 **/dist-esm/*
 **/.next/*
 **/api/*
+!**/app/api/*
 !**/pages/api/*
 **/.tsbuild*
 **/.next/*
@@ -17,8 +18,12 @@ content.json
 apps/docs/utils/vector-db/index.json
 **/gen/**/*.md
 .github/pull_request_template.md
+skills
+.agents
+.cursor
 
 **/api-report.md
+**/api-report.api.md
 **/CHANGELOG.md
 apps/docs/content/releases/**/*
 apps/docs/content/reference/**/*
@@ -27,4 +32,14 @@ apps/docs/content/reference/**/*
 **/.wrangler/*
 **/.out/*
 **/.temp/*
-apps/dotcom/public/**/*.*
+apps/dotcom/client/public/**/*.*
+apps/analytics/public/**/*
+
+**/.clasp.json
+
+apps/dotcom/zero-cache/docker/docker-compose.yml
+
+lerna.json
+
+internal/scripts/eslint/eslint-plugin.mjs
+apps/dotcom/zero-cache/.schema.js

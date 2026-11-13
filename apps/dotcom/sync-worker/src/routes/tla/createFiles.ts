@@ -1,0 +1,56 @@
+import { CreateFilesRequestBody, CreateFilesResponseBody } from '@tldraw/dotcom-shared'
+import { RoomSnapshot } from '@tldraw/sync-core'
+import { createTLSchema } from '@tldraw/tlschema'
+import { uniqueId } from '@tldraw/utils'
+import { IRequest } from 'itty-router'
+import { getR2KeyForRoom } from '../../r2'
+import { Environment } from '../../types'
+import { getUserIdFromRequest } from '../../utils/tla/permissions'
+import { validateSnapshot } from '../../utils/validateSnapshot'
+
+// Create new files based on snapshots. This is used when dropping .tldr files onto the app.
+export async function createFiles(request: IRequest, env: Environment): Promise<Response> {
+	// The data sent from the client will include the data for the new room
+
+	const userId = await getUserIdFromRequest(request, env)
+	if (!userId) {
+		return Response.json({ error: true, code: 'unauthorized' } satisfies CreateFilesResponseBody, {
+			status: 401,
+		})
+	}
+
+	const slugs: string[] = []
+	const data = (await request.json()) as CreateFilesRequestBody
+
+	for (const _snapshot of data.snapshots) {
+		// There's a chance the data will be invalid, so we check it first
+		// need to maybe migrate the snapshot
+		const snapshotResult = validateSnapshot(_snapshot)
+		if (!snapshotResult.ok) {
+			console.error('Invalid .tldr snapshot:', snapshotResult.error)
+			return Response.json({ error: true, code: 'bad_request' } satisfies CreateFilesResponseBody, {
+				status: 400,
+			})
+		}
+
+		// Create the new snapshot
+		const snapshot: RoomSnapshot = {
+			schema: createTLSchema().serialize(),
+			clock: 0,
+			documents: Object.values(snapshotResult.value).map((r) => ({
+				state: r,
+				lastChangedClock: 0,
+			})),
+			tombstones: {},
+		}
+
+		// Create a new slug for the room
+		const newSlug = uniqueId()
+
+		// Bang the snapshot into the database
+		await env.ROOMS.put(getR2KeyForRoom({ slug: newSlug, isApp: true }), JSON.stringify(snapshot))
+
+		slugs.push(newSlug)
+	}
+	return Response.json({ error: false, slugs } satisfies CreateFilesResponseBody)
+}

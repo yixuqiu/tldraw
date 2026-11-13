@@ -1,4 +1,4 @@
-# @tldraw/vscode
+# VS Code extension
 
 This folder contains the source for the tldraw VS Code extension.
 
@@ -6,19 +6,19 @@ This folder contains the source for the tldraw VS Code extension.
 
 ## 1. Install dependencies
 
-- Run `yarn` from the root folder
+- Run `pnpm` from the root folder
 
 ## 2. Start the editor
 
 In the root folder:
 
-- Run `yarn dev-vscode`.
+- Run `pnpm dev-vscode`.
 
 This will start the development server for the `apps/vscode/editor` project and open the `apps/vscode/extension` folder in a new VS Code window.
 
 In the `apps/vscode/extension` window, open the terminal and:
 
-- Install dependencies (`yarn`)
+- Install dependencies (`pnpm`)
 - Start the VS Code debugger (`Menu > Run > Start Debugging` or by pressing `F5`). This will open another VS Code window with the extension running.
 
 Open a `.tldr` file from the file explorer or create a new `.tldr` file from the command palette.
@@ -40,8 +40,8 @@ To publish:
 
 In the `apps/vscode/extension` folder:
 
-- Run `yarn package`
-- Run `yarn publish`
+- Run `pnpm package`
+- Run `pnpm run publish`
 
 ## Project overview
 
@@ -69,7 +69,7 @@ When users interact with tldraw we listen for changes and when changes happen we
 
 ### Overview of the communication between VS Code, Extension, and the Editor
 
-VS Code actives our extension when needed - when a user opens the first `.tldr` file or when a user runs our registered command. Then, VS Code calls into `TldrawEditorProvider` to open the custom editor, which in turn creates a `TldrawDocument` instance. We read the file contents from disk and send them to the WebView, which then shows the Editor. When the user interacts with the editor we send the changes back to the Extension, which then updates the `TldrawDocument` instance. Since the instance is always kept up to date we can correctly handle user actions like `save`, `save as`, `undo`, `redo`, and `revert`.
+VS Code activates our extension when needed - when a user opens the first `.tldr` file or when a user runs our registered command. Then, VS Code calls into `TldrawEditorProvider` to open the custom editor, which in turn creates a `TldrawDocument` instance. We read the file contents from disk and send them to the WebView, which then shows the Editor. When the user interacts with the editor we send the changes back to the Extension, which then updates the `TldrawDocument` instance. Since the instance is always kept up to date we can correctly handle user actions like `save`, `save as`, `undo`, `redo`, and `revert`.
 
 ![VS Code Extension](VS-Code-Extension-1.png)
 
@@ -89,28 +89,26 @@ VS Code actives our extension when needed - when a user opens the first `.tldr` 
 - [Extensions Guide -> Webviews](https://code.visualstudio.com/api/extension-guides/webview)
 - [Publishing Extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)
 
-## Community
-
-Have questions, comments or feedback? [Join our discord](https://discord.gg/rhsyWMUJxd) or [start a discussion](https://github.com/tldraw/tldraw/discussions/new).
-
 ## Distributions
 
 You can find tldraw on npm [here](https://www.npmjs.com/package/@tldraw/tldraw?activeTab=versions).
 
 ## Contribution
 
-Please see our [contributing guide](https://github.com/tldraw/tldraw/blob/main/CONTRIBUTING.md). Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
+Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
 
 ## License
 
-The tldraw source code and its distributions are provided under the [tldraw license](https://github.com/tldraw/tldraw/blob/master/LICENSE.md). This license does not permit commercial use.
-
-If you wish to use this project in commercial product, you need to purchase a commercial license. Please contact us at [hello@tldraw.com](mailto:hello@tldraw.com) for more inforion about obtaining a commercial license.
+The code in this folder is Copyright (c) 2024-present tldraw Inc. The tldraw SDK is provided under the [tldraw license](https://github.com/tldraw/tldraw/blob/main/LICENSE.md).
 
 ## Trademarks
 
-Copyright (c) 2023-present tldraw Inc. The tldraw name and logo are trademarks of tldraw. Please see our [trademark guidelines](https://github.com/tldraw/tldraw/blob/main/TRADEMARKS.md) for info on acceptable usage.
+Copyright (c) 2024-present tldraw Inc. The tldraw name and logo are trademarks of tldraw. Please see our [trademark guidelines](https://github.com/tldraw/tldraw/blob/main/TRADEMARKS.md) for info on acceptable usage.
 
 ## Contact
 
-Find us on Twitter at [@tldraw](https://twitter.com/tldraw) or email [hello@tldraw.com](mailto://hello@tldraw.com). You can also [join our discord](https://discord.gg/rhsyWMUJxd) for quick help and support.
+Find us on Twitter/X at [@tldraw](https://twitter.com/tldraw).
+
+## Community
+
+Have questions, comments or feedback? [Join our discord](https://discord.tldraw.com/?utm_source=github&utm_medium=readme&utm_campaign=sociallink). For the latest news and release notes, visit [tldraw.dev](https://tldraw.dev).

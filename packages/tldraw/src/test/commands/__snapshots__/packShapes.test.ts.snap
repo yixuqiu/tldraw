@@ -1,6 +1,6 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`editor.packShapes packs rotated shapes: packed shapes 1`] = `
+exports[`editor.packShapes > packs rotated shapes > packed shapes 1`] = `
 [
   {
     "id": "shape:boxA",
@@ -14,13 +14,23 @@ exports[`editor.packShapes packs rotated shapes: packed shapes 1`] = `
       "color": "black",
       "dash": "draw",
       "fill": "none",
+      "flipX": false,
+      "flipY": false,
       "font": "draw",
       "geo": "rectangle",
       "growY": 0,
       "h": 100,
       "labelColor": "black",
+      "richText": {
+        "content": [
+          {
+            "type": "paragraph",
+          },
+        ],
+        "type": "doc",
+      },
+      "scale": 1,
       "size": "m",
-      "text": "",
       "url": "",
       "verticalAlign": "middle",
       "w": 100,
@@ -43,13 +53,23 @@ exports[`editor.packShapes packs rotated shapes: packed shapes 1`] = `
       "color": "black",
       "dash": "draw",
       "fill": "none",
+      "flipX": false,
+      "flipY": false,
       "font": "draw",
       "geo": "rectangle",
       "growY": 0,
       "h": 100,
       "labelColor": "black",
+      "richText": {
+        "content": [
+          {
+            "type": "paragraph",
+          },
+        ],
+        "type": "doc",
+      },
+      "scale": 1,
       "size": "m",
-      "text": "",
       "url": "",
       "verticalAlign": "middle",
       "w": 100,
@@ -72,13 +92,23 @@ exports[`editor.packShapes packs rotated shapes: packed shapes 1`] = `
       "color": "black",
       "dash": "draw",
       "fill": "none",
+      "flipX": false,
+      "flipY": false,
       "font": "draw",
       "geo": "rectangle",
       "growY": 0,
       "h": 100,
       "labelColor": "black",
+      "richText": {
+        "content": [
+          {
+            "type": "paragraph",
+          },
+        ],
+        "type": "doc",
+      },
+      "scale": 1,
       "size": "m",
-      "text": "",
       "url": "",
       "verticalAlign": "middle",
       "w": 100,
@@ -92,7 +122,7 @@ exports[`editor.packShapes packs rotated shapes: packed shapes 1`] = `
 ]
 `;
 
-exports[`editor.packShapes packs shapes: packed shapes 1`] = `
+exports[`editor.packShapes > packs shapes > packed shapes 1`] = `
 [
   {
     "id": "shape:boxA",
@@ -106,13 +136,23 @@ exports[`editor.packShapes packs shapes: packed shapes 1`] = `
       "color": "black",
       "dash": "draw",
       "fill": "none",
+      "flipX": false,
+      "flipY": false,
       "font": "draw",
       "geo": "rectangle",
       "growY": 0,
       "h": 100,
       "labelColor": "black",
+      "richText": {
+        "content": [
+          {
+            "type": "paragraph",
+          },
+        ],
+        "type": "doc",
+      },
+      "scale": 1,
       "size": "m",
-      "text": "",
       "url": "",
       "verticalAlign": "middle",
       "w": 100,
@@ -135,13 +175,23 @@ exports[`editor.packShapes packs shapes: packed shapes 1`] = `
       "color": "black",
       "dash": "draw",
       "fill": "none",
+      "flipX": false,
+      "flipY": false,
       "font": "draw",
       "geo": "rectangle",
       "growY": 0,
       "h": 100,
       "labelColor": "black",
+      "richText": {
+        "content": [
+          {
+            "type": "paragraph",
+          },
+        ],
+        "type": "doc",
+      },
+      "scale": 1,
       "size": "m",
-      "text": "",
       "url": "",
       "verticalAlign": "middle",
       "w": 100,
@@ -164,13 +214,23 @@ exports[`editor.packShapes packs shapes: packed shapes 1`] = `
       "color": "black",
       "dash": "draw",
       "fill": "none",
+      "flipX": false,
+      "flipY": false,
       "font": "draw",
       "geo": "rectangle",
       "growY": 0,
       "h": 100,
       "labelColor": "black",
+      "richText": {
+        "content": [
+          {
+            "type": "paragraph",
+          },
+        ],
+        "type": "doc",
+      },
+      "scale": 1,
       "size": "m",
-      "text": "",
       "url": "",
       "verticalAlign": "middle",
       "w": 100,
@@ -179,6 +239,128 @@ exports[`editor.packShapes packs shapes: packed shapes 1`] = `
     "type": "geo",
     "typeName": "shape",
     "x": 316,
+    "y": 200,
+  },
+]
+`;
+
+exports[`editor.packShapes > packs shapes using the adjacent shape margin option > packed shapes 1`] = `
+[
+  {
+    "id": "shape:boxA",
+    "index": "a1",
+    "isLocked": false,
+    "meta": {},
+    "opacity": 1,
+    "parentId": "wahtever",
+    "props": {
+      "align": "middle",
+      "color": "black",
+      "dash": "draw",
+      "fill": "none",
+      "flipX": false,
+      "flipY": false,
+      "font": "draw",
+      "geo": "rectangle",
+      "growY": 0,
+      "h": 100,
+      "labelColor": "black",
+      "richText": {
+        "content": [
+          {
+            "type": "paragraph",
+          },
+        ],
+        "type": "doc",
+      },
+      "scale": 1,
+      "size": "m",
+      "url": "",
+      "verticalAlign": "middle",
+      "w": 100,
+    },
+    "rotation": 0,
+    "type": "geo",
+    "typeName": "shape",
+    "x": 99,
+    "y": 200,
+  },
+  {
+    "id": "shape:boxB",
+    "index": "a2",
+    "isLocked": false,
+    "meta": {},
+    "opacity": 1,
+    "parentId": "wahtever",
+    "props": {
+      "align": "middle",
+      "color": "black",
+      "dash": "draw",
+      "fill": "none",
+      "flipX": false,
+      "flipY": false,
+      "font": "draw",
+      "geo": "rectangle",
+      "growY": 0,
+      "h": 100,
+      "labelColor": "black",
+      "richText": {
+        "content": [
+          {
+            "type": "paragraph",
+          },
+        ],
+        "type": "doc",
+      },
+      "scale": 1,
+      "size": "m",
+      "url": "",
+      "verticalAlign": "middle",
+      "w": 100,
+    },
+    "rotation": 0,
+    "type": "geo",
+    "typeName": "shape",
+    "x": 200,
+    "y": 200,
+  },
+  {
+    "id": "shape:boxC",
+    "index": "a3",
+    "isLocked": false,
+    "meta": {},
+    "opacity": 1,
+    "parentId": "wahtever",
+    "props": {
+      "align": "middle",
+      "color": "black",
+      "dash": "draw",
+      "fill": "none",
+      "flipX": false,
+      "flipY": false,
+      "font": "draw",
+      "geo": "rectangle",
+      "growY": 0,
+      "h": 100,
+      "labelColor": "black",
+      "richText": {
+        "content": [
+          {
+            "type": "paragraph",
+          },
+        ],
+        "type": "doc",
+      },
+      "scale": 1,
+      "size": "m",
+      "url": "",
+      "verticalAlign": "middle",
+      "w": 100,
+    },
+    "rotation": 0,
+    "type": "geo",
+    "typeName": "shape",
+    "x": 301,
     "y": 200,
   },
 ]

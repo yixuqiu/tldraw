@@ -25,11 +25,14 @@ defaults:
   run:
     shell: bash
 
+permissions:
+  contents: read
+
 jobs:
   update_snapshots:
     name: 'Run'
     timeout-minutes: 60
-    runs-on: ubuntu-latest-16-cores-open
+    runs-on: ubuntu-latest-8-cores-open
     if: github.event.label.name == 'update-snapshots'
 
     permissions:
@@ -45,7 +48,7 @@ jobs:
           labels: update-snapshots
 
       - name: Check out code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         with:
           fetch-depth: 5
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -54,19 +57,28 @@ jobs:
       - name: Run our setup
         uses: ./.github/actions/setup
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium chrome
+      - name: Set up Playwright
+        uses: ./.github/actions/setup-playwright
+
+      - name: Build examples
+        run: pnpm exec turbo run refresh-assets && cd apps/examples && pnpm build
 
       - name: Run Playwright tests & update snapshots
-        run: 'yarn e2e --update-snapshots'
+        run: 'pnpm e2e --update-snapshots'
         working-directory: 'apps/examples'
 
       - name: Commit and push changes
         if: always()
         run: |
+          set -eux
           git config --global user.name 'huppy-bot[bot]'
           git config --global user.email '128400622+huppy-bot[bot]@users.noreply.github.com'
           git add -A
+          if git diff --cached --quiet; then
+            echo 'No snapshot changes to commit.'
+            exit 0
+          fi
           git commit --no-verify -m '[automated] update snapshots'
+          git add -A && git reset --hard HEAD # we sometimes get a dirty tree because husky makes changes for some reason
           git pull --rebase
           git push

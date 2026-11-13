@@ -1,79 +1,99 @@
 import {
-	Box,
 	GeoShapeGeoStyle,
 	StateNode,
-	TLEventHandlers,
 	TLGeoShape,
+	TLPointerEventInfo,
+	Vec,
 	createShapeId,
+	maybeSnapToGrid,
 } from '@tldraw/editor'
+import { GeoShapeUtil } from '../GeoShapeUtil'
+import { getGeoTypeDefinition } from '../getGeoShapePath'
 
 export class Pointing extends StateNode {
 	static override id = 'pointing'
 
-	markId = ''
-
-	override onPointerUp: TLEventHandlers['onPointerUp'] = () => {
+	override onPointerUp() {
 		this.complete()
 	}
 
-	override onPointerMove: TLEventHandlers['onPointerMove'] = (info) => {
-		if (this.editor.inputs.isDragging) {
-			const { originPagePoint } = this.editor.inputs
+	override onLongPress() {
+		// On a touch (coarse pointer) long-press, cancel the pending shape so it leaves nothing behind.
+		if (this.editor.getInstanceState().isCoarsePointer) this.cancel()
+	}
+
+	override onPointerMove(info: TLPointerEventInfo) {
+		if (this.editor.inputs.getIsDragging()) {
+			const originPagePoint = this.editor.inputs.getOriginPagePoint()
 
 			const id = createShapeId()
 
-			this.markId = `creating:${id}`
-
-			this.editor.mark(this.markId)
-
+			const creatingMarkId = this.editor.markHistoryStoppingPoint(`creating_geo:${id}`)
+			const newPoint = maybeSnapToGrid(originPagePoint, this.editor)
 			this.editor
-				.createShapes<TLGeoShape>([
+				.createShapes([
 					{
 						id,
 						type: 'geo',
-						x: originPagePoint.x,
-						y: originPagePoint.y,
+						x: newPoint.x,
+						y: newPoint.y,
 						props: {
 							w: 1,
 							h: 1,
 							geo: this.editor.getStyleForNextShape(GeoShapeGeoStyle),
+							scale: this.editor.getResizeScaleFactor(),
 						},
 					},
 				])
 				.select(id)
-				.setCurrentTool('select.resizing', {
-					...info,
-					target: 'selection',
-					handle: 'bottom_right',
-					isCreating: true,
-					creationCursorOffset: { x: 1, y: 1 },
-					onInteractionEnd: 'geo',
-				})
+
+			const shape = this.editor.getShape(id)
+			if (!shape) {
+				this.cancel()
+				return
+			}
+
+			this.editor.setCurrentTool('select.resizing', {
+				...info,
+				target: 'selection',
+				handle: 'bottom_right',
+				isCreating: true,
+				creatingMarkId,
+				creationCursorOffset: { x: 1, y: 1 },
+				onInteractionEnd: 'geo',
+			})
 		}
 	}
 
-	override onCancel: TLEventHandlers['onCancel'] = () => {
+	override onCancel() {
 		this.cancel()
 	}
 
-	override onComplete: TLEventHandlers['onComplete'] = () => {
-		this.complete()
+	override onComplete() {
+		// Not a release: see BaseBoxShapeTool's Pointing state for why this cancels.
+		this.cancel()
 	}
 
-	override onInterrupt: TLEventHandlers['onInterrupt'] = () => {
+	override onInterrupt() {
 		this.cancel()
 	}
 
 	private complete() {
-		const { originPagePoint } = this.editor.inputs
+		const originPagePoint = this.editor.inputs.getOriginPagePoint()
 
 		const id = createShapeId()
 
-		this.markId = `creating:${id}`
+		this.editor.markHistoryStoppingPoint(`creating_geo:${id}`)
 
-		this.editor.mark(this.markId)
+		const scale = this.editor.getResizeScaleFactor()
 
-		this.editor.createShapes<TLGeoShape>([
+		const geo = this.editor.getStyleForNextShape(GeoShapeGeoStyle)
+		const geoShapeUtil = this.editor.getShapeUtil<GeoShapeUtil>('geo')
+
+		const def = getGeoTypeDefinition(geo, geoShapeUtil.options.customGeoTypes)
+		const size = def?.defaultSize ?? { w: 200, h: 200 }
+
+		this.editor.createShapes([
 			{
 				id,
 				type: 'geo',
@@ -81,40 +101,36 @@ export class Pointing extends StateNode {
 				y: originPagePoint.y,
 				props: {
 					geo: this.editor.getStyleForNextShape(GeoShapeGeoStyle),
-					w: 1,
-					h: 1,
+					scale,
+					...size,
 				},
 			},
 		])
 
 		const shape = this.editor.getShape<TLGeoShape>(id)!
-		if (!shape) return
+		if (!shape) {
+			this.cancel()
+			return
+		}
 
-		const bounds =
-			shape.props.geo === 'star'
-				? new Box(0, 0, 200, 190)
-				: shape.props.geo === 'cloud'
-					? new Box(0, 0, 300, 180)
-					: new Box(0, 0, 200, 200)
+		const { w, h } = shape.props
 
-		const delta = bounds.center
+		const delta = new Vec(w / 2, h / 2).mul(scale)
 		const parentTransform = this.editor.getShapeParentTransform(shape)
 		if (parentTransform) delta.rot(-parentTransform.rotation())
-
+		const newPoint = maybeSnapToGrid(new Vec(shape.x - delta.x, shape.y - delta.y), this.editor)
 		this.editor.select(id)
-		this.editor.updateShapes<TLGeoShape>([
-			{
-				id: shape.id,
-				type: 'geo',
-				x: shape.x - delta.x,
-				y: shape.y - delta.y,
-				props: {
-					geo: this.editor.getStyleForNextShape(GeoShapeGeoStyle),
-					w: bounds.width,
-					h: bounds.height,
-				},
+		this.editor.updateShape({
+			id: shape.id,
+			type: 'geo',
+			x: newPoint.x,
+			y: newPoint.y,
+			props: {
+				geo: this.editor.getStyleForNextShape(GeoShapeGeoStyle),
+				w: w * scale,
+				h: h * scale,
 			},
-		])
+		})
 
 		if (this.editor.getInstanceState().isToolLocked) {
 			this.parent.transition('idle')

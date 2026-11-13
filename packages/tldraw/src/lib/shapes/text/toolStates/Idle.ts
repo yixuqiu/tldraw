@@ -1,10 +1,14 @@
-import { StateNode, TLEventHandlers } from '@tldraw/editor'
-import { updateHoveredShapeId } from '../../../tools/selection-logic/updateHoveredShapeId'
+import { StateNode, TLKeyboardEventInfo, TLPointerEventInfo } from '@tldraw/editor'
+import {
+	cancelUpdateHoveredShapeId,
+	updateHoveredShapeId,
+} from '../../../tools/selection-logic/updateHoveredShapeId'
+import { startEditingShape } from '../../../tools/SelectTool/selectHelpers'
 
 export class Idle extends StateNode {
 	static override id = 'idle'
 
-	override onPointerMove: TLEventHandlers['onPointerMove'] = (info) => {
+	override onPointerMove(info: TLPointerEventInfo) {
 		switch (info.target) {
 			case 'shape':
 			case 'canvas': {
@@ -13,35 +17,28 @@ export class Idle extends StateNode {
 		}
 	}
 
-	override onPointerDown: TLEventHandlers['onPointerDown'] = (info) => {
+	override onPointerDown(info: TLPointerEventInfo) {
 		this.parent.transition('pointing', info)
 	}
 
-	override onEnter = () => {
+	override onEnter() {
 		this.editor.setCursor({ type: 'cross', rotation: 0 })
 	}
 
-	override onKeyDown: TLEventHandlers['onKeyDown'] = (info) => {
+	override onExit() {
+		cancelUpdateHoveredShapeId(this.editor)
+	}
+
+	override onKeyDown(info: TLKeyboardEventInfo) {
 		if (info.key === 'Enter') {
-			if (this.editor.getInstanceState().isReadonly) return null
 			const onlySelectedShape = this.editor.getOnlySelectedShape()
-			// If the only selected shape is editable, start editing it
-			if (
-				onlySelectedShape &&
-				this.editor.getShapeUtil(onlySelectedShape).canEdit(onlySelectedShape)
-			) {
-				this.editor.setCurrentTool('select')
-				this.editor.setEditingShape(onlySelectedShape.id)
-				this.editor.root.getCurrent()?.transition('editing_shape', {
-					...info,
-					target: 'shape',
-					shape: onlySelectedShape,
-				})
-			}
+			if (!this.editor.canEditShape(onlySelectedShape)) return
+			this.editor.setCurrentTool('select')
+			startEditingShape(this.editor, onlySelectedShape, { info })
 		}
 	}
 
-	override onCancel = () => {
+	override onCancel() {
 		this.editor.setCurrentTool('select')
 	}
 }

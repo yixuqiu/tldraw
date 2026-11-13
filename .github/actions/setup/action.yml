@@ -1,5 +1,5 @@
 name: Setup tldraw/tldraw
-description: Set up node & yarn
+description: Set up node & pnpm
 
 runs:
   using: composite
@@ -7,15 +7,16 @@ runs:
     # see https://github.com/actions/setup-node/issues/899 for one of the reasons why this
     # needs to be done before action/setup-node
     - name: Enable corepack
-      run: corepack enable
+      run: npm i -g corepack
       shell: bash
 
     - name: Setup Node.js Environment
-      uses: actions/setup-node@v3
+      id: setup-node
+      uses: actions/setup-node@v6
       with:
-        node-version: 20.11.0
-        cache: 'yarn'
+        node-version: 24.17.0
+        cache: pnpm
 
     - name: Install dependencies
-      run: yarn install --immutable
+      run: pnpm install --frozen-lockfile
       shell: bash

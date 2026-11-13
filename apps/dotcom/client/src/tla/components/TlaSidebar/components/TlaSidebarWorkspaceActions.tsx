@@ -1,0 +1,77 @@
+import classNames from 'classnames'
+import { ReactNode, useCallback } from 'react'
+import { defineMessages, useDialogs, useTranslation } from 'tldraw'
+import { useTldrawAppUiEvents } from '../../../utils/app-ui-events'
+import { WorkspaceSettingsDialog } from '../../dialogs/WorkspaceSettingsDialog'
+import { TlaIcon } from '../../TlaIcon/TlaIcon'
+import { useHandleSidebarCreateFile } from './TlaSidebarCreateFileButton'
+import { TlaSidebarSearch } from './TlaSidebarSearch'
+import styles from '../sidebar.module.css'
+
+const messages = defineMessages({
+	newFile: { defaultMessage: 'New file' },
+	workspaceSettings: { defaultMessage: 'Manage' },
+})
+
+/**
+ * The action rows shown below the workspace switcher. Both the home space and
+ * non-home workspaces get the search, new-board, and settings actions. (The home
+ * workspace's settings are limited: it can be renamed but not shared or managed —
+ * see WorkspaceSettingsDialog.)
+ */
+export function TlaSidebarWorkspaceActions({ workspaceId }: { workspaceId: string }) {
+	const msg = useTranslation()
+	const { addDialog } = useDialogs()
+	const trackEvent = useTldrawAppUiEvents()
+	const handleCreateFile = useHandleSidebarCreateFile()
+
+	const handleSettings = useCallback(() => {
+		addDialog({
+			component: ({ onClose }) => (
+				<WorkspaceSettingsDialog workspaceId={workspaceId} onClose={onClose} />
+			),
+		})
+		trackEvent('open-share-menu', { source: 'sidebar' })
+	}, [addDialog, workspaceId, trackEvent])
+
+	return (
+		<div className={styles.sidebarSection}>
+			<TlaSidebarSearch />
+			<TlaSidebarActionButton
+				icon="edit"
+				label={msg(messages.newFile)}
+				onClick={handleCreateFile}
+				testId="tla-sidebar-new-board"
+			/>
+			<TlaSidebarActionButton
+				icon="settings"
+				label={msg(messages.workspaceSettings)}
+				onClick={handleSettings}
+				testId="tla-sidebar-workspace-settings"
+			/>
+		</div>
+	)
+}
+
+export function TlaSidebarActionButton({
+	icon,
+	label,
+	onClick,
+	testId,
+}: {
+	icon?: string
+	label: ReactNode
+	onClick(): void
+	testId: string
+}) {
+	return (
+		<button
+			className={classNames(styles.sidebarActionButton, styles.hoverable, 'tla-text_ui__regular')}
+			onClick={onClick}
+			data-testid={testId}
+		>
+			{icon && <TlaIcon icon={icon} />}
+			<span className={styles.sidebarActionButtonLabel}>{label}</span>
+		</button>
+	)
+}
